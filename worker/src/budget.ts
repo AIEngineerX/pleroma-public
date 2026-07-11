@@ -22,6 +22,16 @@ export async function underCap(db: D1Database, category: SpendCategory): Promise
   return (await spentToday(db, category)) < CAPS_USD[category];
 }
 
+// Hard pre-call reservation: true if today's spend PLUS this call's conservative cost
+// estimate would still fit under the cap. Callers must check this BEFORE making the billed
+// call (see mind.ts askMind) so the cap is a hard ceiling, not a check-then-record race that
+// a single large call can overshoot.
+export async function reserveEstimate(
+  db: D1Database, category: SpendCategory, estimateUsd: number,
+): Promise<boolean> {
+  return (await spentToday(db, category)) + estimateUsd <= CAPS_USD[category];
+}
+
 export async function asleep(db: D1Database): Promise<boolean> {
   return !(await underCap(db, "llm"));
 }
