@@ -86,6 +86,39 @@ describe("offering intake", () => {
     expect(await env.RELICS.get(`offerings/${id}`)).toBeNull();
   });
 
+  it("a duplicate submission from the same wallet never increments offering_count a second time", async () => {
+    const bytes = new Uint8Array([...PNG, 4, 2]); // unique bytes -> unique sha
+    const first = await submit(bytes, true);
+    expect(first.status).toBe(201);
+
+    const dupe = await submit(bytes, true); // same image, fresh nonce+sig, same wallet
+    expect(dupe.status).toBe(409);
+
+    const row = await env.DB.prepare(`SELECT offering_count FROM wallets WHERE address = ?1`)
+      .bind(wallet).first<{ offering_count: number }>();
+    expect(row?.offering_count).toBe(1);
+  });
+
+  it("cleans up the quarantine object on ANY insert failure, not just a UNIQUE conflict", async () => {
+    const bytes = new Uint8Array([...PNG, 6, 6]); // unique bytes -> unique sha
+    // Force a non-UNIQUE D1 insert failure via a trigger that aborts every INSERT (the
+    // offeringBySha pre-check SELECT is unaffected, so we still reach the R2 write and the
+    // real insertOffering() call) — proves the R2 cleanup isn't scoped to
+    // message.includes("UNIQUE"). @cloudflare/vitest-pool-workers isolates D1/R2 storage
+    // per it() block, so this trigger doesn't leak into other tests.
+    await env.DB.exec(
+      `CREATE TRIGGER force_insert_fail BEFORE INSERT ON offerings BEGIN SELECT RAISE(ABORT, 'forced test failure'); END`
+    );
+    const res = await submit(bytes, false);
+    expect(res.status).toBe(500);
+
+    // The R2 object written during intake must not be orphaned in quarantine even though
+    // the insert failure had nothing to do with a duplicate hash: nothing should be left
+    // under quarantine/ at all from this submission.
+    const objects = await env.RELICS.list({ prefix: "quarantine/" });
+    expect(objects.objects).toEqual([]);
+  });
+
   it("rejects a bad signature with 401", async () => {
     const bytes = new Uint8Array([...PNG, 1, 2]);
     const form = new FormData();
