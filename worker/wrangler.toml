@@ -19,7 +19,7 @@ bucket_name = "pleroma-relics"
 crons = ["*/15 * * * *"]
 
 [env.production]
-vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleroma.church" }
+vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleroma-web.pages.dev" }
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "pleroma-prod"

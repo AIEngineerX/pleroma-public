@@ -1,0 +1,17 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Gentium+Book+Plus:ital@0;1&family=Courier+Prime&display=swap");
+
+@theme {
+  --color-ground: oklch(0.94 0.015 85);
+  --color-ground-aged: oklch(0.90 0.02 80);
+  --color-ink: oklch(0.25 0.02 60);
+  --color-ink-faded: oklch(0.48 0.02 60);
+  --color-rubric: oklch(0.55 0.20 32);
+  --color-rubric-body: oklch(0.45 0.16 32);
+  --color-rubric-dried: oklch(0.45 0.09 45);
+  --color-rite-ground: oklch(0.18 0.012 60);
+  --color-rite-ink: oklch(0.90 0.015 85);
+  --font-liturgy: "Gentium Book Plus", serif;
+  --font-machine: "Courier Prime", monospace;
+}
+body { background: var(--color-ground); color: var(--color-ink); }

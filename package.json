@@ -1,0 +1,7 @@
+{
+  "name": "pleroma",
+  "private": true,
+  "scripts": {
+    "verify": "npm run verify --prefix worker && npm run verify --prefix web"
+  }
+}
