@@ -1,0 +1,31 @@
+name = "pleroma-worker"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[vars]
+ENVIRONMENT = "dev"
+CORS_ORIGIN = "http://localhost:5173"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pleroma"
+database_id = "1c3f1d37-2699-4399-963d-8287a1325721"
+
+[[r2_buckets]]
+binding = "RELICS"
+bucket_name = "pleroma-relics"
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+[env.production]
+vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleroma.church" }
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "pleroma-prod"
+database_id = "a826652a-fa1b-424d-b63a-7365a1005484"
+[[env.production.r2_buckets]]
+binding = "RELICS"
+bucket_name = "pleroma-relics-prod"
+[env.production.triggers]
+crons = ["*/15 * * * *"]
