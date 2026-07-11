@@ -94,7 +94,7 @@ export async function runEyeBatch(
         continue;
       }
       const bytes = new Uint8Array(await obj.arrayBuffer());
-      const m = await moderate(env, bytes, "image/png");
+      const m = await moderate(env, bytes, o.media_type ?? "image/png");
       if (m.verdict === "allow") {
         await promoteFromQuarantine(env, o);
         await setOfferingStatus(env.DB, o.id, "perceivable");
@@ -141,7 +141,7 @@ export async function runEyeBatch(
       const dataB64 = toBase64(new Uint8Array(await obj.arrayBuffer()));
       const res = await askMind(env, {
         model: "claude-sonnet-5", system: EYE_SYSTEM, maxTokens: 200,
-        user: [{ type: "image", mediaType: "image/png", dataB64 },
+        user: [{ type: "image", mediaType: o.media_type ?? "image/png", dataB64 },
                { type: "text", text: "Perceive this offering." }],
       });
       const { verse } = JSON.parse(res.text.trim()) as { verse: string };

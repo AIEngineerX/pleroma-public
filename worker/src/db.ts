@@ -5,6 +5,9 @@ export interface OfferingRow {
   id: string; wallet: string | null; sig: string | null; image_key: string;
   sha256: string; status: OfferingStatus; attempts: number;
   created_at: number; perceived_at: number | null;
+  // Optional on insert (defaults to 'image/png', matching the migration 0003 column
+  // default); always present as a real string on rows read back from D1.
+  media_type?: string;
 }
 
 export interface TranscriptRow {
@@ -15,9 +18,12 @@ export interface TranscriptRow {
 
 export async function insertOffering(db: D1Database, o: OfferingRow): Promise<void> {
   await db.prepare(
-    `INSERT INTO offerings (id, wallet, sig, image_key, sha256, status, attempts, created_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
-  ).bind(o.id, o.wallet, o.sig, o.image_key, o.sha256, o.status, o.attempts, o.created_at).run();
+    `INSERT INTO offerings (id, wallet, sig, image_key, sha256, status, attempts, created_at, media_type)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
+  ).bind(
+    o.id, o.wallet, o.sig, o.image_key, o.sha256, o.status, o.attempts, o.created_at,
+    o.media_type ?? "image/png",
+  ).run();
 }
 
 export async function offeringBySha(db: D1Database, sha256: string): Promise<OfferingRow | null> {

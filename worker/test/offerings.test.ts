@@ -21,9 +21,9 @@ async function sha256hex(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function submit(bytes: Uint8Array, signed: boolean) {
+async function submit(bytes: Uint8Array, signed: boolean, mediaType = "image/png") {
   const form = new FormData();
-  form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+  form.set("image", new Blob([bytes], { type: mediaType }), "o.png");
   if (signed) {
     const nres = await SELF.fetch("http://x/api/nonce");
     const { nonce, expires_at } = await nres.json<{ nonce: string; expires_at: number }>();
@@ -117,6 +117,20 @@ describe("offering intake", () => {
     // under quarantine/ at all from this submission.
     const objects = await env.RELICS.list({ prefix: "quarantine/" });
     expect(objects.objects).toEqual([]);
+  });
+
+  it("persists the uploaded media type, defaulting png but honoring webp", async () => {
+    const pngBytes = new Uint8Array([...PNG, 8, 1]);
+    const pngRes = await submit(pngBytes, false, "image/png");
+    expect(pngRes.status).toBe(201);
+    const pngRow = await offeringBySha(env.DB, await sha256hex(pngBytes));
+    expect(pngRow?.media_type).toBe("image/png");
+
+    const webpBytes = new Uint8Array([...PNG, 8, 2]);
+    const webpRes = await submit(webpBytes, false, "image/webp");
+    expect(webpRes.status).toBe(201);
+    const webpRow = await offeringBySha(env.DB, await sha256hex(webpBytes));
+    expect(webpRow?.media_type).toBe("image/webp");
   });
 
   it("rejects a bad signature with 401", async () => {

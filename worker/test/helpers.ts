@@ -1,5 +1,6 @@
 import migration1 from "../migrations/0001_spine.sql?raw";
 import migration2 from "../migrations/0002_config.sql?raw";
+import migration3 from "../migrations/0003_media_type.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -11,6 +12,10 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   }
 
   for (const stmt of migration2.split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt);
+  }
+
+  for (const stmt of migration3.split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt);
   }
 }

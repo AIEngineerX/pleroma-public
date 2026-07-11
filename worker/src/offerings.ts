@@ -50,7 +50,7 @@ export async function handleOffering(env: Env, form: FormData): Promise<Response
   await env.RELICS.put(key, bytes, { httpMetadata: { contentType: image.type } });
   try {
     await insertOffering(env.DB, {
-      id, wallet, sig, image_key: key, sha256,
+      id, wallet, sig, image_key: key, sha256, media_type: image.type,
       status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null,
     });
   } catch (e) {

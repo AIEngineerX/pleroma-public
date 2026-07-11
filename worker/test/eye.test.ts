@@ -95,9 +95,9 @@ describe("runEyeBatch", () => {
 
   it("promotes an allowed offering from quarantine/ to offerings/ and updates image_key", async () => {
     const id = "promote-me";
-    await env.RELICS.put(`quarantine/${id}`, PNG);
+    await env.RELICS.put(`quarantine/${id}`, PNG, { httpMetadata: { contentType: "image/webp" } });
     await insertOffering(env.DB, { id, wallet: null, sig: null,
-      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      image_key: `quarantine/${id}`, sha256: id, status: "pending", media_type: "image/webp",
       attempts: 0, created_at: Date.now(), perceived_at: null });
     const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
       .bind(id).first<OfferingRow>())!;
@@ -105,6 +105,9 @@ describe("runEyeBatch", () => {
     await promoteFromQuarantine(env, row);
 
     const promoted = await env.RELICS.get(`offerings/${id}`);
+    // The uploaded media type round-trips through the R2 object's content-type, not just
+    // the offerings.media_type DB column.
+    expect(promoted?.httpMetadata?.contentType).toBe("image/webp");
     expect(promoted).not.toBeNull();
     await promoted?.arrayBuffer();
     expect(await env.RELICS.get(`quarantine/${id}`)).toBeNull();
