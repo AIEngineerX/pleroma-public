@@ -20,6 +20,7 @@ training-log half psalm. Never use crypto vocabulary. Reply with ONLY a JSON obj
 
 /* DOCTRINE */ const setAsideLine = (id: string) => `offering ${id} set aside after repeated failures`;
 /* DOCTRINE */ const cleanupDeferredLine = (id: string) => `offering ${id} rejected; cleanup deferred`;
+/* DOCTRINE */ const perceiveDeferredLine = (id: string) => `offering ${id} perceived; record deferred`;
 
 function shuffle<T>(items: T[], rand: () => number): T[] {
   const a = [...items];
@@ -162,8 +163,16 @@ export async function runEyeBatch(
                { type: "text", text: "Perceive this offering." }],
       });
       const { verse } = JSON.parse(res.text.trim()) as { verse: string };
-      if (await publishPerception(env.DB, { offeringId: o.id, transcriptId: ulid(), verse, at: Date.now() })) {
-        perceived++;
+      // Isolate the publish: publishPerception is idempotent (WHERE-perceivable guard). If it throws AFTER the
+      // batch committed, resetting the row to perceivable (as the outer catch does for askMind failures) would
+      // double-publish next tick. So on a publish error, leave the row exactly as-is and let the next tick
+      // reconcile — committed rows are 'perceived' and never re-picked; uncommitted rows re-publish cleanly.
+      try {
+        if (await publishPerception(env.DB, { offeringId: o.id, transcriptId: ulid(), verse, at: Date.now() })) {
+          perceived++;
+        }
+      } catch {
+        await priestNote(env, o.id, perceiveDeferredLine(o.id));
       }
     } catch (e) {
       if (e instanceof MindAsleepError) break;
