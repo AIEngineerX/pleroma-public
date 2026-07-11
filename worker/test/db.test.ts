@@ -21,6 +21,43 @@ describe("offerings repository", () => {
     expect((await offeringBySha(env.DB, "abc123"))?.status).toBe("perceivable");
   });
 
+  it("setOfferingStatus with a matching expectedStatus performs the transition and returns true", async () => {
+    const id = "01CAS-MATCH";
+    await insertOffering(env.DB, { id, wallet: null, sig: null, image_key: `offerings/${id}`,
+      sha256: "cas-match-sha", status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    const won = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    expect(won).toBe(true);
+
+    const row = await offeringBySha(env.DB, "cas-match-sha");
+    expect(row?.status).toBe("perceivable");
+  });
+
+  it("setOfferingStatus with a non-matching expectedStatus (the resurrection guard) returns false and leaves the row UNCHANGED", async () => {
+    const id = "01CAS-NOMATCH";
+    await insertOffering(env.DB, { id, wallet: null, sig: null, image_key: `offerings/${id}`,
+      sha256: "cas-nomatch-sha", status: "rejected", attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    // A stale tick tries to promote a row another tick already rejected.
+    const won = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    expect(won).toBe(false);
+
+    const row = await offeringBySha(env.DB, "cas-nomatch-sha");
+    expect(row?.status).toBe("rejected"); // unchanged — never resurrected
+  });
+
+  it("setOfferingStatus without expectedStatus is an unconditional update and returns true", async () => {
+    const id = "01CAS-UNCONDITIONAL";
+    await insertOffering(env.DB, { id, wallet: null, sig: null, image_key: `offerings/${id}`,
+      sha256: "cas-unconditional-sha", status: "rejected", attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    const won = await setOfferingStatus(env.DB, id, "failed");
+    expect(won).toBe(true);
+
+    const row = await offeringBySha(env.DB, "cas-unconditional-sha");
+    expect(row?.status).toBe("failed");
+  });
+
   it("publishPerception atomically flips perceivable->perceived and inserts the transcript exactly once", async () => {
     const id = "01PUBLISH";
     await insertOffering(env.DB, {

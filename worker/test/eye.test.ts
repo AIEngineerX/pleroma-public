@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
 import { runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine, parseVerse } from "../src/eye";
-import { insertOffering, publishPerception, type OfferingRow } from "../src/db";
+import { insertOffering, publishPerception, setOfferingStatus, type OfferingRow } from "../src/db";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -189,6 +189,32 @@ describe("runEyeBatch", () => {
     expect(row?.status).toBe("rejected");
     expect(await env.RELICS.get(`quarantine/${id}`)).toBeNull();
     expect(await env.RELICS.get(`offerings/${id}`)).toBeNull();
+  });
+
+  it("moderation status transitions are CAS-guarded: once a real tick rejects an offering, a stale overlapping tick's pending->perceivable attempt does not resurrect it", async () => {
+    const id = "reject-then-stale-allow";
+    await env.RELICS.put(`quarantine/${id}`, PNG);
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    // A real tick moderates and rejects (fail-closed: no live ANTHROPIC_API_KEY in this suite),
+    // winning the pending->rejected CAS and purging the quarantine object.
+    await runEyeBatch(env);
+    const afterReject = await env.DB.prepare(`SELECT status FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ status: string }>();
+    expect(afterReject?.status).toBe("rejected");
+
+    // Simulates a second, stale tick that started before the reject landed (a lock-lease
+    // overrun) and is only now attempting to apply an "allow" verdict it computed against the
+    // pending row it originally read. The CAS's expectedStatus no longer matches, so the
+    // transition is refused — the exact resurrection this guard exists to prevent.
+    const staleWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    expect(staleWon).toBe(false);
+
+    const finalRow = await env.DB.prepare(`SELECT status FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ status: string }>();
+    expect(finalRow?.status).toBe("rejected"); // never resurrected
   });
 });
 

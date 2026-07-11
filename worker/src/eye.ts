@@ -141,28 +141,34 @@ export async function runEyeBatch(
     try {
       const obj = await env.RELICS.get(o.image_key);
       if (!obj) {
-        await setOfferingStatus(env.DB, o.id, "failed");
+        await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "pending" });
         await priestNote(env, o.id, setAsideLine(o.id));
         continue;
       }
       const bytes = new Uint8Array(await obj.arrayBuffer());
       const m = await moderate(env, bytes, o.media_type ?? "image/png");
       if (m.verdict === "allow") {
-        await promoteFromQuarantine(env, o);
-        await setOfferingStatus(env.DB, o.id, "perceivable");
+        // Only the tick that wins the pending->perceivable transition promotes the object; a stale overlapping
+        // tick that already lost sees changes===0 and does nothing.
+        if (await setOfferingStatus(env.DB, o.id, "perceivable", { expectedStatus: "pending" })) {
+          await promoteFromQuarantine(env, o);
+        }
       } else {
-        await setOfferingStatus(env.DB, o.id, "rejected");
-        try {
-          await env.RELICS.delete(o.image_key); // rejected content is never kept
-        } catch {
-          // A transient delete failure must not revert a final moderation verdict.
-          await priestNote(env, o.id, cleanupDeferredLine(o.id));
+        // Only the tick that wins the pending->rejected transition deletes the quarantine object; a stale
+        // overlapping tick that already lost must not purge an object another tick may still be promoting.
+        if (await setOfferingStatus(env.DB, o.id, "rejected", { expectedStatus: "pending" })) {
+          try {
+            await env.RELICS.delete(o.image_key); // rejected content is never kept
+          } catch {
+            // A transient delete failure must not revert a final moderation verdict.
+            await priestNote(env, o.id, cleanupDeferredLine(o.id));
+          }
         }
       }
     } catch (e) {
       if (e instanceof MindAsleepError) return 0;
       const dead = o.attempts >= 2;
-      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true });
+      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true, expectedStatus: "pending" });
       if (dead) await priestNote(env, o.id, setAsideLine(o.id));
     }
   }
@@ -186,7 +192,7 @@ export async function runEyeBatch(
     try {
       const obj = await env.RELICS.get(o.image_key);
       if (!obj) {
-        await setOfferingStatus(env.DB, o.id, "failed");
+        await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "perceivable" });
         await priestNote(env, o.id, setAsideLine(o.id));
         continue;
       }
@@ -215,7 +221,7 @@ export async function runEyeBatch(
     } catch (e) {
       if (e instanceof MindAsleepError) break;
       const dead = o.attempts >= 2;
-      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "perceivable", { bumpAttempts: true });
+      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "perceivable", { bumpAttempts: true, expectedStatus: "perceivable" });
       if (dead) await priestNote(env, o.id, setAsideLine(o.id));
     }
   }

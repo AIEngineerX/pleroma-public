@@ -44,16 +44,27 @@ export async function pendingOfferings(db: D1Database, limit: number): Promise<O
   return r.results;
 }
 
+// Every transition is a compare-and-swap when `expectedStatus` is given: the UPDATE only fires if
+// the row's CURRENT status still matches, so a stale tick that lost a race (its lock-lease overrun
+// while a newer tick already moved the row past the expected state) sees changes===0 and does
+// nothing further — guarding against e.g. resurrecting an already-rejected offering. Returns
+// whether this call performed the transition, so callers can gate R2 side effects on winning the
+// CAS. Without `expectedStatus` this is an unconditional update (existing callers that ignore the
+// return value keep working).
 export async function setOfferingStatus(
   db: D1Database, id: string, status: OfferingStatus,
-  opts?: { bumpAttempts?: boolean; perceivedAt?: number }
-): Promise<void> {
-  await db.prepare(
-    `UPDATE offerings SET status = ?2,
-       attempts = attempts + ?3,
-       perceived_at = COALESCE(?4, perceived_at)
-     WHERE id = ?1`
-  ).bind(id, status, opts?.bumpAttempts ? 1 : 0, opts?.perceivedAt ?? null).run();
+  opts?: { bumpAttempts?: boolean; perceivedAt?: number; expectedStatus?: OfferingStatus }
+): Promise<boolean> {
+  const guard = opts?.expectedStatus ? " AND status = ?5" : "";
+  const stmt = db.prepare(
+    `UPDATE offerings SET status = ?2, attempts = attempts + ?3, perceived_at = COALESCE(?4, perceived_at)
+     WHERE id = ?1${guard}`
+  );
+  const bound = opts?.expectedStatus
+    ? stmt.bind(id, status, opts.bumpAttempts ? 1 : 0, opts.perceivedAt ?? null, opts.expectedStatus)
+    : stmt.bind(id, status, opts?.bumpAttempts ? 1 : 0, opts?.perceivedAt ?? null);
+  const r = await bound.run();
+  return r.meta.changes === 1;
 }
 
 export async function setOfferingImageKey(db: D1Database, id: string, imageKey: string): Promise<void> {
