@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
 import { runEyeBatch, selectForPerception, promoteFromQuarantine } from "../src/eye";
-import { addTranscript, claimPerceived, insertOffering, type OfferingRow } from "../src/db";
+import { insertOffering, publishPerception, type OfferingRow } from "../src/db";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -136,21 +136,24 @@ describe("runEyeBatch", () => {
 });
 
 describe("EYE publish idempotency", () => {
-  it("claimPerceived flips perceivable->perceived exactly once; a re-run on an already-perceived offering cannot re-claim it", async () => {
+  it("publishPerception flips perceivable->perceived and publishes the transcript exactly once in one atomic batch; a re-run is a clean no-op", async () => {
     const id = "idempotent-perceive-me";
     await insertOffering(env.DB, { id, wallet: null, sig: null,
       image_key: `offerings/${id}`, sha256: id, status: "perceivable",
       attempts: 0, created_at: Date.now(), perceived_at: null });
 
-    // First attempt: claims the row and (per the guard) publishes the transcript.
-    expect(await claimPerceived(env.DB, id)).toBe(true);
-    await addTranscript(env.DB, { id: ulid(), organ: "EYE", register: "verse",
-      text: "first verse", offering_id: id, rite_id: null, created_at: Date.now() });
+    // First call: claim + transcript insert commit together in one D1 batch.
+    expect(await publishPerception(env.DB, {
+      offeringId: id, transcriptId: ulid(), verse: "first verse", at: Date.now(),
+    })).toBe(true);
 
-    // Simulated re-run (e.g. a retry after a downstream failure elsewhere): status is no
-    // longer 'perceivable', so the claim fails and — per the guard — no second transcript
-    // is ever inserted, preventing the double-publish the old insert-then-update order allowed.
-    expect(await claimPerceived(env.DB, id)).toBe(false);
+    // Simulated re-run (e.g. a retry after the client observed an error even though the
+    // batch had already committed server-side): status is no longer 'perceivable', so both
+    // statements in the batch are no-ops — no second transcript, preventing the double-publish
+    // the old claim-then-insert-as-separate-writes order allowed.
+    expect(await publishPerception(env.DB, {
+      offeringId: id, transcriptId: ulid(), verse: "second verse", at: Date.now(),
+    })).toBe(false);
 
     const row = await env.DB.prepare(`SELECT status FROM offerings WHERE id = ?1`)
       .bind(id).first<{ status: string }>();
