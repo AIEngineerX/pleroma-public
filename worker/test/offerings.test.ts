@@ -1,0 +1,73 @@
+import { SELF, env } from "cloudflare:test";
+import { beforeAll, describe, expect, it } from "vitest";
+import { ed25519 } from "@noble/curves/ed25519";
+import { base58 } from "@scure/base";
+import { offeringMessage } from "../src/signature";
+import { applyMigrations } from "./helpers";
+
+beforeAll(() => applyMigrations(env.DB));
+
+const priv = ed25519.utils.randomPrivateKey();
+const wallet = base58.encode(ed25519.getPublicKey(priv));
+
+// Minimal valid 1x1 PNG.
+const PNG = Uint8Array.from(atob(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+), c => c.charCodeAt(0));
+
+async function sha256hex(bytes: Uint8Array): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function submit(bytes: Uint8Array, signed: boolean) {
+  const form = new FormData();
+  form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+  if (signed) {
+    const nres = await SELF.fetch("http://x/api/nonce");
+    const { nonce, expires_at } = await nres.json<{ nonce: string; expires_at: number }>();
+    const msg = offeringMessage(await sha256hex(bytes), nonce, expires_at);
+    form.set("wallet", wallet);
+    form.set("sig", base58.encode(ed25519.sign(new TextEncoder().encode(msg), priv)));
+    form.set("nonce", nonce);
+    form.set("expires_at", String(expires_at));
+  }
+  return SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
+}
+
+describe("offering intake", () => {
+  // NOTE: merged with the "rejects a duplicate image" case. @cloudflare/vitest-pool-workers
+  // isolates D1/R2 storage per `it()` block (mutations are rolled back after each test, not
+  // after each file), so the duplicate check must run in the same test as the original insert
+  // to see it. See task-5-report.md "Deviations" for the empirical evidence and root cause.
+  it("accepts a signed offering, stores the image, and rejects a duplicate", async () => {
+    const res = await submit(PNG, true);
+    expect(res.status).toBe(201);
+    const { id, status } = await res.json<{ id: string; status: string }>();
+    expect(status).toBe("pending");
+    const stored = await env.RELICS.get(`offerings/${id}.png`);
+    expect(stored).not.toBeNull();
+    await stored?.arrayBuffer(); // consume the body: unread R2ObjectBody streams break storage teardown
+
+    const dupe = await submit(PNG, false);
+    expect(dupe.status).toBe(409);
+  });
+
+  it("accepts anonymous offerings", async () => {
+    const other = new Uint8Array([...PNG, 0]); // different bytes -> different sha
+    const res = await submit(other, false);
+    expect(res.status).toBe(201);
+  });
+
+  it("rejects a bad signature with 401", async () => {
+    const bytes = new Uint8Array([...PNG, 1, 2]);
+    const form = new FormData();
+    form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+    form.set("wallet", wallet);
+    form.set("sig", base58.encode(new Uint8Array(64)));
+    form.set("nonce", "c".repeat(32));
+    form.set("expires_at", String(Date.now() + 60_000));
+    const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
+    expect(res.status).toBe(401);
+  });
+});
