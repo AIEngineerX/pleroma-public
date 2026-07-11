@@ -12,7 +12,11 @@ const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", (c, next) => cors({ origin: c.env.CORS_ORIGIN })(c, next));
 app.get("/api/health", (c) => c.json({ ok: true, env: c.env.ENVIRONMENT }));
 app.get("/api/nonce", async (c) => c.json(await issueNonce(c.env.DB)));
-app.post("/api/offerings", async (c) => handleOffering(c.env, await c.req.formData()));
+app.post("/api/offerings", async (c) => {
+  const len = Number(c.req.header("content-length") ?? 0);
+  if (len > 1_500_000) return c.json({ error: "image too large" }, 413); // 512KB image + multipart overhead
+  return handleOffering(c.env, await c.req.formData());
+});
 app.get("/api/codex", (c) => getCodex(c.env, c.req.query("cursor") ?? null));
 app.get("/api/state", (c) => getState(c.env));
 

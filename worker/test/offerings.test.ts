@@ -112,24 +112,26 @@ describe("offering intake", () => {
     expect(row?.offering_count).toBe(1);
   });
 
-  it("cleans up the quarantine object on ANY insert failure, not just a UNIQUE conflict", async () => {
+  it("does NOT clean up the quarantine object on an ambiguous (non-UNIQUE) insert failure — the commit may have landed", async () => {
     const bytes = new Uint8Array([...PNG, 6, 6]); // unique bytes -> unique sha
     // Force a non-UNIQUE D1 insert failure via a trigger that aborts every INSERT (the
     // offeringBySha pre-check SELECT is unaffected, so we still reach the R2 write and the
-    // real insertOffering() call) — proves the R2 cleanup isn't scoped to
-    // message.includes("UNIQUE"). @cloudflare/vitest-pool-workers isolates D1/R2 storage
-    // per it() block, so this trigger doesn't leak into other tests.
+    // real commitOffering() call) — proves the R2 object is left alone on a failure that is
+    // provably NOT a duplicate-hash/nonce race, since an ambiguous failure (commit landed,
+    // response lost) must not destroy an accepted offering's image. @cloudflare/vitest-pool-workers
+    // isolates D1/R2 storage per it() block, so this trigger doesn't leak into other tests.
     await env.DB.exec(
       `CREATE TRIGGER force_insert_fail BEFORE INSERT ON offerings BEGIN SELECT RAISE(ABORT, 'forced test failure'); END`
     );
     const res = await submit(bytes, false);
     expect(res.status).toBe(500);
 
-    // The R2 object written during intake must not be orphaned in quarantine even though
-    // the insert failure had nothing to do with a duplicate hash: nothing should be left
-    // under quarantine/ at all from this submission.
+    // The R2 object written during intake is left in quarantine/ — deleting it here could
+    // destroy a durably-committed offering's image if the abort happened after the write landed.
     const objects = await env.RELICS.list({ prefix: "quarantine/" });
-    expect(objects.objects).toEqual([]);
+    expect(objects.objects.length).toBe(1);
+    const stored = await env.RELICS.get(objects.objects[0].key);
+    await stored?.arrayBuffer(); // consume the body: unread R2ObjectBody streams break storage teardown
   });
 
   it("persists the uploaded media type, defaulting png but honoring webp", async () => {
@@ -166,12 +168,18 @@ describe("offering intake", () => {
 
     const first = await submitWithNonce(bytesA, nonce, expires_at);
     expect(first.status).toBe(201);
+    const afterFirst = await env.RELICS.list({ prefix: "quarantine/" });
 
     // nonceIsFresh is validate-only (no consumption), so the second request passes signature +
-    // freshness checks and reaches insertOffering — where the UNIQUE(nonce) partial index
+    // freshness checks and reaches commitOffering — where the UNIQUE(nonce) partial index
     // rejects the second row with a UNIQUE constraint violation, mapped to 409.
     const second = await submitWithNonce(bytesB, nonce, expires_at);
     expect(second.status).toBe(409);
+
+    // The second submission's UNIQUE(nonce) violation provably means its row never committed,
+    // so B1 cleans up its quarantine object — the object count is unchanged from after the first.
+    const afterSecond = await env.RELICS.list({ prefix: "quarantine/" });
+    expect(afterSecond.objects.length).toBe(afterFirst.objects.length);
 
     const row = await env.DB.prepare(`SELECT offering_count FROM wallets WHERE address = ?1`)
       .bind(wallet).first<{ offering_count: number }>();
@@ -195,5 +203,16 @@ describe("offering intake", () => {
     const bytesB = new Uint8Array([...PNG, 6, 4]); // different image, unique sha
     const retry = await submitWithNonce(bytesB, M, expires_at);
     expect(retry.status).toBe(201);
+  });
+
+  it("rejects an oversized multipart body with 413 from the content-length pre-check, before formData() parses it", async () => {
+    const form = new FormData();
+    form.set("image", new Blob([PNG], { type: "image/png" }), "o.png");
+    // A filler field pushes the actual multipart body (and thus the browser/runtime-computed
+    // content-length header) over the 1.5MB pre-parse ceiling, even though the image field
+    // itself is tiny — proving the guard fires from content-length alone, ahead of formData().
+    form.set("filler", new Blob([new Uint8Array(2_000_000)]), "filler.bin");
+    const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
+    expect(res.status).toBe(413);
   });
 });

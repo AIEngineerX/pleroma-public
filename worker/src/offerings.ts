@@ -2,7 +2,7 @@ import { ulid } from "ulid";
 import type { Env } from "./env";
 import { nonceIsFresh } from "./nonce";
 import { verifyOffering } from "./signature";
-import { insertOffering, offeringBySha, touchWallet } from "./db";
+import { commitOffering, offeringBySha } from "./db";
 
 const MAX_BYTES = 512 * 1024;
 const TYPES = new Set(["image/png", "image/webp"]);
@@ -47,26 +47,23 @@ export async function handleOffering(env: Env, form: FormData): Promise<Response
   const key = `quarantine/${id}`;
   await env.RELICS.put(key, bytes, { httpMetadata: { contentType: image.type } });
   try {
-    await insertOffering(env.DB, {
+    // Atomic: the offering insert and (for signed offerings) the wallet's offering_count bump
+    // commit together in one D1 batch, so the count can never drift from the accepted offering.
+    await commitOffering(env.DB, {
       id, wallet, sig, image_key: key, sha256, media_type: image.type,
       status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null,
       nonce: wallet ? nonce : null,
-    });
+    }, wallet);
   } catch (e) {
-    // Any insert failure — a lost duplicate-sha race with a concurrent submission, or
-    // anything else — must not orphan the R2 object we just wrote.
-    try { await env.RELICS.delete(key); } catch { /* best-effort; do not mask the original error */ }
-    // A UNIQUE violation is either the sha256 (duplicate image) or the nonce (already used by
-    // another committed offering) — both are single-use invariants enforced atomically by the
-    // insert itself, not by a separate consume/release step.
     if (e instanceof Error && e.message.includes("UNIQUE")) {
+      // sha256 or nonce already used — this id provably did not commit, so cleaning its R2 object now is safe.
+      try { await env.RELICS.delete(key); } catch { /* best-effort */ }
       return Response.json({ error: "already offered" }, { status: 409 });
     }
+    // Ambiguous failure: the insert may have committed with the response lost. Do NOT delete — if it committed,
+    // EYE perceives it normally; if it truly didn't, the 24h quarantine sweep reclaims the orphan.
     throw e;
   }
 
-  // The offering row is now durably inserted — the acceptance is real, and (for signed
-  // offerings) the nonce is spent by virtue of being in this committed row.
-  if (wallet) await touchWallet(env.DB, wallet);
   return Response.json({ id, status: "pending" }, { status: 201 });
 }

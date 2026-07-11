@@ -19,14 +19,18 @@ export interface TranscriptRow {
   text: string; offering_id: string | null; rite_id: string | null; created_at: number;
 }
 
-export async function insertOffering(db: D1Database, o: OfferingRow): Promise<void> {
-  await db.prepare(
+function offeringInsertStmt(db: D1Database, o: OfferingRow): D1PreparedStatement {
+  return db.prepare(
     `INSERT INTO offerings (id, wallet, sig, image_key, sha256, status, attempts, created_at, media_type, nonce)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
   ).bind(
     o.id, o.wallet, o.sig, o.image_key, o.sha256, o.status, o.attempts, o.created_at,
     o.media_type ?? "image/png", o.nonce ?? null,
-  ).run();
+  );
+}
+
+export async function insertOffering(db: D1Database, o: OfferingRow): Promise<void> {
+  await offeringInsertStmt(db, o).run();
 }
 
 export async function offeringBySha(db: D1Database, sha256: string): Promise<OfferingRow | null> {
@@ -84,9 +88,22 @@ export async function addTranscript(db: D1Database, t: TranscriptRow): Promise<v
   ).bind(t.id, t.organ, t.register, t.text, t.offering_id, t.rite_id, t.created_at).run();
 }
 
-export async function touchWallet(db: D1Database, address: string): Promise<void> {
-  await db.prepare(
+function walletTouchStmt(db: D1Database, address: string, atMs: number): D1PreparedStatement {
+  return db.prepare(
     `INSERT INTO wallets (address, first_seen, offering_count) VALUES (?1, ?2, 1)
      ON CONFLICT(address) DO UPDATE SET offering_count = offering_count + 1`
-  ).bind(address, Date.now()).run();
+  ).bind(address, atMs);
+}
+
+export async function touchWallet(db: D1Database, address: string): Promise<void> {
+  await walletTouchStmt(db, address, Date.now()).run();
+}
+
+// Atomically insert the offering and (for signed offerings) bump the wallet's offering_count in one D1
+// transaction, so the count can never drift from the committed offering. A UNIQUE(sha256|nonce) violation
+// rolls back both.
+export async function commitOffering(db: D1Database, o: OfferingRow, touchWalletAddr: string | null): Promise<void> {
+  const stmts = [offeringInsertStmt(db, o)];
+  if (touchWalletAddr) stmts.push(walletTouchStmt(db, touchWalletAddr, o.created_at));
+  await db.batch(stmts);
 }

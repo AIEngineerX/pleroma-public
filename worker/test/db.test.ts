@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
-  insertOffering, offeringBySha, pendingOfferings, publishPerception, setOfferingStatus,
+  commitOffering, insertOffering, offeringBySha, pendingOfferings, publishPerception, setOfferingStatus,
 } from "../src/db";
 import { applyMigrations } from "./helpers";
 
@@ -48,5 +48,44 @@ describe("offerings repository", () => {
       `SELECT COUNT(*) AS n FROM transcripts WHERE offering_id = ?1`
     ).bind(id).first<{ n: number }>();
     expect(count?.n).toBe(1);
+  });
+
+  it("commitOffering atomically inserts the offering and bumps the wallet's offering_count exactly once", async () => {
+    const wallet = "wallet-commit-1";
+    const row = {
+      id: "01COMMIT1", wallet, sig: "sig1", image_key: "quarantine/01COMMIT1",
+      sha256: "commit-sha-1", status: "pending" as const, attempts: 0,
+      created_at: Date.now(), perceived_at: null, nonce: "nonce-1",
+    };
+    await commitOffering(env.DB, row, wallet);
+
+    expect((await offeringBySha(env.DB, "commit-sha-1"))?.id).toBe("01COMMIT1");
+    const walletRow = await env.DB.prepare(`SELECT offering_count FROM wallets WHERE address = ?1`)
+      .bind(wallet).first<{ offering_count: number }>();
+    expect(walletRow?.offering_count).toBe(1);
+  });
+
+  it("commitOffering rolls back the wallet bump when the insert UNIQUE-violates: the count never drifts from the committed offering", async () => {
+    const wallet = "wallet-commit-2";
+    const row1 = {
+      id: "01COMMIT2A", wallet, sig: "sig2", image_key: "quarantine/01COMMIT2A",
+      sha256: "commit-sha-2", status: "pending" as const, attempts: 0,
+      created_at: Date.now(), perceived_at: null, nonce: "nonce-2",
+    };
+    await commitOffering(env.DB, row1, wallet);
+
+    // Same sha256 -> the insert's UNIQUE(sha256) constraint fires inside the batch.
+    const row2 = { ...row1, id: "01COMMIT2B", image_key: "quarantine/01COMMIT2B", nonce: "nonce-2b" };
+    await expect(commitOffering(env.DB, row2, wallet)).rejects.toThrow();
+
+    const walletRow = await env.DB.prepare(`SELECT offering_count FROM wallets WHERE address = ?1`)
+      .bind(wallet).first<{ offering_count: number }>();
+    // db.batch() runs as one D1 transaction: the offering insert's UNIQUE(sha256) violation
+    // rolls back the wallet bump too, so the count reflects only the first committed offering.
+    expect(walletRow?.offering_count).toBe(1);
+    // And no second offering row was created.
+    const offeringCount = await env.DB.prepare(`SELECT COUNT(*) AS n FROM offerings WHERE id = ?1`)
+      .bind("01COMMIT2B").first<{ n: number }>();
+    expect(offeringCount?.n).toBe(0);
   });
 });
