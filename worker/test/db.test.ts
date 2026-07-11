@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
-  commitOffering, insertOffering, offeringBySha, pendingOfferings, publishPerception, setOfferingStatus,
+  commitOffering, insertOffering, offeringBySha, offeringStatusById, pendingOfferings, publishPerception,
+  setOfferingStatus,
 } from "../src/db";
 import { applyMigrations } from "./helpers";
 
@@ -56,6 +57,19 @@ describe("offerings repository", () => {
 
     const row = await offeringBySha(env.DB, "cas-unconditional-sha");
     expect(row?.status).toBe("failed");
+  });
+
+  it("offeringStatusById returns the row's current status, and null for an absent id", async () => {
+    const id = "01STATUS-BY-ID";
+    await insertOffering(env.DB, { id, wallet: null, sig: null, image_key: `offerings/${id}`,
+      sha256: "status-by-id-sha", status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    expect(await offeringStatusById(env.DB, id)).toBe("pending");
+
+    await setOfferingStatus(env.DB, id, "rejected");
+    expect(await offeringStatusById(env.DB, id)).toBe("rejected");
+
+    expect(await offeringStatusById(env.DB, "no-such-offering")).toBeNull();
   });
 
   it("publishPerception atomically flips perceivable->perceived and inserts the transcript exactly once", async () => {

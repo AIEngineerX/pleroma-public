@@ -4,7 +4,7 @@ import { askMind, MindAsleepError } from "./mind";
 import { moderate } from "./moderation";
 import { toBase64 } from "./encoding";
 import {
-  addTranscript, pendingOfferings, publishPerception, setOfferingImageKey, setOfferingStatus,
+  addTranscript, offeringStatusById, pendingOfferings, publishPerception, setOfferingImageKey, setOfferingStatus,
   type OfferingRow,
 } from "./db";
 
@@ -148,10 +148,20 @@ export async function runEyeBatch(
       const bytes = new Uint8Array(await obj.arrayBuffer());
       const m = await moderate(env, bytes, o.media_type ?? "image/png");
       if (m.verdict === "allow") {
-        // Only the tick that wins the pending->perceivable transition promotes the object; a stale overlapping
-        // tick that already lost sees changes===0 and does nothing.
-        if (await setOfferingStatus(env.DB, o.id, "perceivable", { expectedStatus: "pending" })) {
-          await promoteFromQuarantine(env, o);
+        // Promote to permanent storage BEFORE the row becomes perceivable, so a perceivable row's image is always
+        // in sweep-immune offerings/ storage. (CAS-then-promote left a window: a CAS that committed with a lost
+        // response never ran promotion, and the 24h quarantine sweep could then delete the only copy of an
+        // accepted image.) promoteFromQuarantine is idempotent, so a concurrent overlapping allow tick
+        // re-promoting the same key is safe.
+        await promoteFromQuarantine(env, o);
+        if (!(await setOfferingStatus(env.DB, o.id, "perceivable", { expectedStatus: "pending" }))) {
+          // Lost the transition to a concurrent overlapping tick. If that tick REJECTED the row, the object we
+          // just promoted is an orphan the reject path could not see (it only deletes the quarantine key) —
+          // reclaim it. If the winner was another ALLOW, it points at the same offerings/<id> key and needs it,
+          // so leave it.
+          if ((await offeringStatusById(env.DB, o.id)) === "rejected") {
+            try { await env.RELICS.delete(`offerings/${o.id}`); } catch { /* best-effort */ }
+          }
         }
       } else {
         // Only the tick that wins the pending->rejected transition deletes the quarantine object; a stale

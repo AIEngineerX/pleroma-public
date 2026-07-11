@@ -44,6 +44,11 @@ export async function pendingOfferings(db: D1Database, limit: number): Promise<O
   return r.results;
 }
 
+export async function offeringStatusById(db: D1Database, id: string): Promise<OfferingStatus | null> {
+  const row = await db.prepare(`SELECT status FROM offerings WHERE id = ?1`).bind(id).first<{ status: OfferingStatus }>();
+  return row?.status ?? null;
+}
+
 // Every transition is a compare-and-swap when `expectedStatus` is given: the UPDATE only fires if
 // the row's CURRENT status still matches, so a stale tick that lost a race (its lock-lease overrun
 // while a newer tick already moved the row past the expected state) sees changes===0 and does

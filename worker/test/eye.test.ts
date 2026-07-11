@@ -2,7 +2,9 @@ import { env } from "cloudflare:test";
 import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
 import { runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine, parseVerse } from "../src/eye";
-import { insertOffering, publishPerception, setOfferingStatus, type OfferingRow } from "../src/db";
+import {
+  insertOffering, offeringStatusById, publishPerception, setOfferingStatus, type OfferingRow,
+} from "../src/db";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -245,6 +247,104 @@ describe("EYE publish idempotency", () => {
       `SELECT COUNT(*) AS n FROM transcripts WHERE organ = 'EYE' AND offering_id = ?1`
     ).bind(id).first<{ n: number }>();
     expect(count?.n).toBe(1);
+  });
+});
+
+// Fix Wave 6: the allow branch now promotes BEFORE the pending->perceivable CAS (instead of
+// CAS-then-promote), so a perceivable row's image is always durably at offerings/<id> and can
+// never be left pointing at a quarantine/ key the 24h sweep could delete. moderate() can't be
+// driven to an "allow" verdict in this suite (no live ANTHROPIC_API_KEY), so these tests exercise
+// the R2/D1 pieces the allow branch composes directly, matching the pattern the existing
+// promoteFromQuarantine tests above already use. The true end-to-end happy path is covered by the
+// live suite.
+describe("allow-path promote-before-perceivable ordering (Fix Wave 6)", () => {
+  it("promotes to offerings/<id> before the pending->perceivable transition runs, so the image is never left pointing at quarantine/", async () => {
+    const id = "promote-before-perceivable";
+    await env.RELICS.put(`quarantine/${id}`, PNG);
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
+      .bind(id).first<OfferingRow>())!;
+
+    // Simulate the allow branch's new order: promote first, then attempt the CAS.
+    await promoteFromQuarantine(env, row);
+
+    // Even before the status transition runs, the image is already durably at offerings/<id> —
+    // a perceivable row's image_key can never point at a quarantine/ key the sweep could delete.
+    const midway = await env.DB.prepare(`SELECT image_key FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ image_key: string }>();
+    expect(midway?.image_key).toBe(`offerings/${id}`);
+    const promoted = await env.RELICS.get(`offerings/${id}`);
+    expect(promoted).not.toBeNull();
+    await promoted?.arrayBuffer();
+
+    const won = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    expect(won).toBe(true);
+    const final = await env.DB.prepare(`SELECT status, image_key FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ status: string; image_key: string }>();
+    expect(final?.status).toBe("perceivable");
+    expect(final?.image_key).toBe(`offerings/${id}`);
+  });
+
+  it("reclaims the promoted object when the pending->perceivable CAS is lost to a concurrent reject", async () => {
+    const id = "lost-cas-reclaim";
+    await env.RELICS.put(`quarantine/${id}`, PNG);
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
+      .bind(id).first<OfferingRow>())!;
+
+    // This tick promotes the object — the winning tick's first step in the new order.
+    await promoteFromQuarantine(env, row);
+    const promoted = await env.RELICS.get(`offerings/${id}`);
+    expect(promoted).not.toBeNull();
+    await promoted?.arrayBuffer();
+
+    // ...but loses the race: a concurrent tick reaches a "reject" verdict on the same row first.
+    const rejectWon = await setOfferingStatus(env.DB, id, "rejected", { expectedStatus: "pending" });
+    expect(rejectWon).toBe(true);
+
+    // This tick's own CAS to perceivable now fails (status is no longer 'pending').
+    const allowWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    expect(allowWon).toBe(false);
+
+    // Per the eye.ts allow-branch reclaim logic: the row is now 'rejected', so the object this
+    // tick promoted is an orphan the reject path could not see (it only deletes the quarantine
+    // key) — reclaim it.
+    expect(await offeringStatusById(env.DB, id)).toBe("rejected");
+    await env.RELICS.delete(`offerings/${id}`);
+    expect(await env.RELICS.get(`offerings/${id}`)).toBeNull();
+  });
+
+  it("does NOT reclaim the promoted object when the pending->perceivable CAS is lost to a concurrent allow — the winner needs that key", async () => {
+    const id = "lost-cas-no-reclaim";
+    await env.RELICS.put(`quarantine/${id}`, PNG);
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
+      .bind(id).first<OfferingRow>())!;
+
+    // This tick promotes...
+    await promoteFromQuarantine(env, row);
+
+    // ...but another overlapping tick, also with an "allow" verdict for the same row, wins the
+    // transition to perceivable first.
+    const winnerWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    expect(winnerWon).toBe(true);
+
+    // This tick's own CAS now fails, but the row is 'perceivable', not 'rejected' — the reclaim
+    // guard must NOT fire, because the winning tick's row still points at this exact key.
+    const allowWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    expect(allowWon).toBe(false);
+    expect(await offeringStatusById(env.DB, id)).toBe("perceivable");
+
+    // The object must survive: it is not deleted.
+    const obj = await env.RELICS.get(`offerings/${id}`);
+    expect(obj).not.toBeNull();
+    await obj?.arrayBuffer();
   });
 });
 
