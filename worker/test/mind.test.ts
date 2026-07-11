@@ -38,4 +38,23 @@ describe("askMind — hard budget reservation", () => {
     // billed work, so spentToday is unchanged.
     expect(await spentToday(env.DB, "llm")).toBeCloseTo(before, 5);
   });
+
+  it("reserves the estimate before calling out, then releases it in full when the call never bills", async () => {
+    const req = {
+      model: "claude-sonnet-5" as const,
+      system: "system",
+      user: [{ type: "text" as const, text: "hi" }],
+      maxTokens: 50,
+    };
+    const before = await spentToday(env.DB, "llm");
+
+    // No real ANTHROPIC_API_KEY in this suite ("test-not-set"), so the real network call to
+    // Anthropic returns a non-2xx status and askMind throws without ever billing.
+    await expect(askMind(env, req)).rejects.toThrow();
+
+    // The finally-settle path releases the full reservation (delta = -reserved) because the
+    // call never billed: spend returns to its pre-call baseline, proving the reservation
+    // doesn't leak on a failed call.
+    expect(await spentToday(env.DB, "llm")).toBeCloseTo(before, 5);
+  });
 });

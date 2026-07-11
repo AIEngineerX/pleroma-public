@@ -22,14 +22,22 @@ export async function underCap(db: D1Database, category: SpendCategory): Promise
   return (await spentToday(db, category)) < CAPS_USD[category];
 }
 
-// Hard pre-call reservation: true if today's spend PLUS this call's conservative cost
-// estimate would still fit under the cap. Callers must check this BEFORE making the billed
-// call (see mind.ts askMind) so the cap is a hard ceiling, not a check-then-record race that
-// a single large call can overshoot.
+// Atomically reserve `estimateUsd` against today's cap. The increment and the cap check are
+// ONE statement, so two callers cannot both pass at the boundary. Returns true iff the
+// reservation was applied (spend was incremented). Callers MUST settle the reservation after
+// the billed call resolves (see mind.ts): recordSpend(db, cat, actualUsd - estimateUsd) on a
+// known cost, or recordSpend(db, cat, -estimateUsd) to release it if the call never billed.
 export async function reserveEstimate(
   db: D1Database, category: SpendCategory, estimateUsd: number,
 ): Promise<boolean> {
-  return (await spentToday(db, category)) + estimateUsd <= CAPS_USD[category];
+  if (estimateUsd > CAPS_USD[category]) return false;
+  const row = await db.prepare(
+    `INSERT INTO spend (day, category, usd) VALUES (?1, ?2, ?3)
+     ON CONFLICT(day, category) DO UPDATE SET usd = usd + excluded.usd
+       WHERE spend.usd + excluded.usd <= ?4
+     RETURNING usd`
+  ).bind(dayKey(), category, estimateUsd, CAPS_USD[category]).first<{ usd: number }>();
+  return row !== null;
 }
 
 export async function asleep(db: D1Database): Promise<boolean> {
