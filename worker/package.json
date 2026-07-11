@@ -8,7 +8,7 @@
     "verify": "vitest run --exclude '**/*.live.test.ts'",
     "verify:live": "vitest run --dir test/live",
     "migrate:local": "wrangler d1 migrations apply pleroma --local",
-    "migrate:prod": "wrangler d1 migrations apply pleroma --remote"
+    "migrate:prod": "wrangler d1 migrations apply pleroma-prod --remote --env production"
   },
   "dependencies": {
     "hono": "^4",

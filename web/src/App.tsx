@@ -3,12 +3,14 @@ import { formatCountdown } from "./countdown";
 
 interface State { phase: string; asleep: boolean; countdown_to: number | null }
 
+const API = import.meta.env.VITE_API_BASE ?? "";
+
 export default function App() {
   const [state, setState] = useState<State | null>(null);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
-    const poll = () => fetch("/api/state").then(r => r.json()).then(setState).catch(() => {});
+    const poll = () => fetch(`${API}/api/state`).then(r => r.json()).then(setState).catch(() => {});
     poll();
     const p = setInterval(poll, 5000);
     const t = setInterval(() => setNow(Date.now()), 1000);
