@@ -22,7 +22,10 @@ export default {
     const holder = ulid();
     if (!(await acquireLock(env.DB, "tick", holder, 10 * 60_000))) return;
     ctx.waitUntil((async () => {
-      try { await runEyeBatch(env); }
+      // 8 minutes: safely inside the 10-minute lock lease and the 15-minute cron interval,
+      // so a slow batch of sequential LLM calls can't let the next tick overlap this one.
+      const deadlineMs = Date.now() + 8 * 60_000;
+      try { await runEyeBatch(env, deadlineMs); }
       finally { await releaseLock(env.DB, "tick", holder); }
     })());
   },

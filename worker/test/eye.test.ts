@@ -64,4 +64,27 @@ describe("runEyeBatch", () => {
     ).bind(id).first<{ text: string }>();
     expect(note?.text).toContain(id);
   });
+
+  it("stops immediately when the deadline has already passed, before touching any item", async () => {
+    const pendingId = "deadline-pending";
+    const perceivableId = "deadline-perceivable";
+    await insertOffering(env.DB, { id: pendingId, wallet: null, sig: null,
+      image_key: `offerings/${pendingId}.png`, sha256: pendingId, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    await insertOffering(env.DB, { id: perceivableId, wallet: null, sig: null,
+      image_key: `offerings/${perceivableId}.png`, sha256: perceivableId, status: "perceivable",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    const n = await runEyeBatch(env, Date.now() - 1_000); // deadline already in the past
+    expect(n).toBe(0);
+
+    // Neither item was touched at all — proves the loop broke before the first iteration's
+    // R2 get / moderate / askMind, not merely that it failed a call.
+    const pendingRow = await env.DB.prepare(`SELECT status FROM offerings WHERE id = ?1`)
+      .bind(pendingId).first<{ status: string }>();
+    expect(pendingRow?.status).toBe("pending");
+    const perceivableRow = await env.DB.prepare(`SELECT status FROM offerings WHERE id = ?1`)
+      .bind(perceivableId).first<{ status: string }>();
+    expect(perceivableRow?.status).toBe("perceivable");
+  });
 });

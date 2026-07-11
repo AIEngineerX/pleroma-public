@@ -59,9 +59,19 @@ async function countsToday(env: Env): Promise<{ nonHolder: number; total: number
   return { nonHolder: row?.nonHolder ?? 0, total: row?.total ?? 0 };
 }
 
-export async function runEyeBatch(env: Env): Promise<number> {
+const DEFAULT_DEADLINE_MS = 8 * 60_000;
+
+// deadlineMs bounds a batch inside the scheduled tick's lock lease (10 min) and the cron
+// interval (15 min): a batch of up to 24 sequential LLM calls (2x30s each) could otherwise
+// outlive the lease and let the next tick overlap it. Checked before starting each
+// moderation item and each perception item; remaining offerings are left pending/perceivable
+// for the next tick to pick up (both stages are idempotent).
+export async function runEyeBatch(
+  env: Env, deadlineMs: number = Date.now() + DEFAULT_DEADLINE_MS,
+): Promise<number> {
   // 1. Moderate pending offerings.
   for (const o of await pendingOfferings(env.DB, BATCH)) {
+    if (Date.now() > deadlineMs) break;
     try {
       const obj = await env.RELICS.get(o.image_key);
       if (!obj) {
@@ -105,6 +115,7 @@ export async function runEyeBatch(env: Env): Promise<number> {
 
   let perceived = 0;
   for (const o of picked) {
+    if (Date.now() > deadlineMs) break;
     try {
       const obj = await env.RELICS.get(o.image_key);
       if (!obj) {
