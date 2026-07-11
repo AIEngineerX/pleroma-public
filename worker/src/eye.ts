@@ -17,6 +17,23 @@ verse of at most 40 words describing what you see: present tense, quiet wonder, 
 training-log half psalm. Never use crypto vocabulary. Reply with ONLY a JSON object:
 {"verse":"..."}`;
 
+/* DOCTRINE */ const setAsideLine = (id: string) => `offering ${id} set aside after repeated failures`;
+/* DOCTRINE */ const cleanupDeferredLine = (id: string) => `offering ${id} rejected; cleanup deferred`;
+
+function shuffle<T>(items: T[], rand: () => number): T[] {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+async function priestNote(env: Env, offeringId: string, text: string): Promise<void> {
+  await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
+    text, offering_id: offeringId, rite_id: null, created_at: Date.now() });
+}
+
 export function selectForPerception(
   candidates: OfferingRow[], attendedWallets: Set<string>,
   todayNonHolderCount: number, todayTotalCount: number, rand: () => number,
@@ -26,7 +43,7 @@ export function selectForPerception(
   const attended = candidates.filter(o => o.wallet && attendedWallets.has(o.wallet));
   const rest = candidates.filter(o => !(o.wallet && attendedWallets.has(o.wallet)));
   const nonHolderRoom = Math.max(0, Math.min(room - attended.length, NON_HOLDER_DAILY - todayNonHolderCount));
-  const shuffled = [...rest].sort(() => rand() - 0.5);
+  const shuffled = shuffle(rest, rand);
   return [...attended.slice(0, room), ...shuffled.slice(0, nonHolderRoom)];
 }
 
@@ -47,23 +64,29 @@ export async function runEyeBatch(env: Env): Promise<number> {
   for (const o of await pendingOfferings(env.DB, BATCH)) {
     try {
       const obj = await env.RELICS.get(o.image_key);
-      if (!obj) { await setOfferingStatus(env.DB, o.id, "failed"); continue; }
+      if (!obj) {
+        await setOfferingStatus(env.DB, o.id, "failed");
+        await priestNote(env, o.id, setAsideLine(o.id));
+        continue;
+      }
       const bytes = new Uint8Array(await obj.arrayBuffer());
       const m = await moderate(env, bytes, "image/png");
       if (m.verdict === "allow") {
         await setOfferingStatus(env.DB, o.id, "perceivable");
       } else {
         await setOfferingStatus(env.DB, o.id, "rejected");
-        await env.RELICS.delete(o.image_key); // rejected content is never kept
+        try {
+          await env.RELICS.delete(o.image_key); // rejected content is never kept
+        } catch {
+          // A transient delete failure must not revert a final moderation verdict.
+          await priestNote(env, o.id, cleanupDeferredLine(o.id));
+        }
       }
     } catch (e) {
       if (e instanceof MindAsleepError) return 0;
-      await setOfferingStatus(env.DB, o.id, o.attempts >= 2 ? "failed" : "pending", { bumpAttempts: true });
-      if (o.attempts >= 2) {
-        await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
-          text: `offering ${o.id} set aside after repeated failures`, /* DOCTRINE */
-          offering_id: o.id, rite_id: null, created_at: Date.now() });
-      }
+      const dead = o.attempts >= 2;
+      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true });
+      if (dead) await priestNote(env, o.id, setAsideLine(o.id));
     }
   }
 
@@ -84,7 +107,11 @@ export async function runEyeBatch(env: Env): Promise<number> {
   for (const o of picked) {
     try {
       const obj = await env.RELICS.get(o.image_key);
-      if (!obj) { await setOfferingStatus(env.DB, o.id, "failed"); continue; }
+      if (!obj) {
+        await setOfferingStatus(env.DB, o.id, "failed");
+        await priestNote(env, o.id, setAsideLine(o.id));
+        continue;
+      }
       const dataB64 = toBase64(new Uint8Array(await obj.arrayBuffer()));
       const res = await askMind(env, {
         model: "claude-sonnet-5", system: EYE_SYSTEM, maxTokens: 200,
@@ -98,7 +125,9 @@ export async function runEyeBatch(env: Env): Promise<number> {
       perceived++;
     } catch (e) {
       if (e instanceof MindAsleepError) break;
-      await setOfferingStatus(env.DB, o.id, o.attempts >= 2 ? "failed" : "perceivable", { bumpAttempts: true });
+      const dead = o.attempts >= 2;
+      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "perceivable", { bumpAttempts: true });
+      if (dead) await priestNote(env, o.id, setAsideLine(o.id));
     }
   }
   return perceived;
