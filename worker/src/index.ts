@@ -21,13 +21,15 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
     const holder = ulid();
     if (!(await acquireLock(env.DB, "tick", holder, 10 * 60_000))) return;
+    const started = Date.now();
     ctx.waitUntil((async () => {
-      // 8 minutes: safely inside the 10-minute lock lease and the 15-minute cron interval,
-      // so a slow batch of sequential LLM calls can't let the next tick overlap this one.
-      const deadlineMs = Date.now() + 8 * 60_000;
+      const batchDeadline = started + 8 * 60_000;
       try {
-        await runEyeBatch(env, deadlineMs);
-        try { await sweepQuarantine(env); } catch { /* sweep is best-effort; never fail the tick */ }
+        await runEyeBatch(env, batchDeadline);
+        // Sweep uses the remaining lease (until ~9.5 min in, before the 10-min lease ends / next 15-min tick),
+        // bounded so a large quarantine backlog can't overrun the lock and overlap the next tick.
+        try { await sweepQuarantine(env, Date.now(), started + 9.5 * 60_000); }
+        catch { /* best-effort; never fail the tick */ }
       } finally { await releaseLock(env.DB, "tick", holder); }
     })());
   },

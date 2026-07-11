@@ -190,4 +190,26 @@ describe("sweepQuarantine", () => {
     expect(fresh).not.toBeNull();
     await fresh?.arrayBuffer();
   });
+
+  it("is bounded by deadlineMs: an already-past deadline deletes nothing even when aged objects exist", async () => {
+    await env.RELICS.put("quarantine/stale-bounded", PNG);
+    // `now` (the TTL-comparison clock) is far enough in the future for the object to read as
+    // aged, but `deadlineMs` is checked against the REAL wall clock (Date.now()) and is already
+    // in the past, so the loop must break before ever listing/deleting anything.
+    const now = Date.now() + 25 * 60 * 60_000;
+    const deleted = await sweepQuarantine(env, now, Date.now() - 1);
+    expect(deleted).toBe(0);
+    const stillThere = await env.RELICS.get("quarantine/stale-bounded");
+    expect(stillThere).not.toBeNull();
+    await stillThere?.arrayBuffer();
+  });
+
+  it("is bounded by maxDeletes: caps the number of stale objects deleted in one call", async () => {
+    for (let i = 0; i < 5; i++) await env.RELICS.put(`quarantine/cap-${i}`, PNG);
+    const future = Date.now() + 25 * 60 * 60_000; // all 5 objects read as aged
+    const deleted = await sweepQuarantine(env, future, future + 90_000, 3);
+    expect(deleted).toBe(3);
+    const remaining = await env.RELICS.list({ prefix: "quarantine/cap-" });
+    expect(remaining.objects.length).toBe(2);
+  });
 });
