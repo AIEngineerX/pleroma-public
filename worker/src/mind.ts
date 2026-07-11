@@ -2,6 +2,7 @@ import type { Env } from "./env";
 import { recordSpend, underCap } from "./budget";
 
 export class MindAsleepError extends Error {}
+export class NonRetryableError extends Error {}
 
 // USD per 1M tokens: [input, output].
 const PRICES: Record<string, [number, number]> = {
@@ -50,7 +51,7 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
         signal: AbortSignal.timeout(30_000),
       });
       if (res.status === 429 || res.status >= 500) { lastErr = new Error(`HTTP ${res.status}`); }
-      else if (!res.ok) { throw new Error(`anthropic ${res.status}: ${await res.text()}`); }
+      else if (!res.ok) { throw new NonRetryableError(`anthropic ${res.status}: ${await res.text()}`); }
       else {
         const data = await res.json<{
           content: Array<{ type: string; text?: string }>;
@@ -62,8 +63,11 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
         const text = data.content.filter(c => c.type === "text").map(c => c.text).join("");
         return { text, usd };
       }
-    } catch (e) { lastErr = e; }
-    await new Promise(r => setTimeout(r, 2_000));
+    } catch (e) {
+      if (e instanceof NonRetryableError || e instanceof MindAsleepError) throw e;
+      lastErr = e;
+    }
+    if (attempt === 0) await new Promise(r => setTimeout(r, 2_000));
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
