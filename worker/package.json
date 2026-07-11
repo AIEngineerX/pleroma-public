@@ -18,8 +18,12 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8",
+    "@cloudflare/workers-types": "^4",
     "typescript": "^5",
     "vitest": "^3",
     "wrangler": "^4"
+  },
+  "overrides": {
+    "@cloudflare/workers-types": "$@cloudflare/workers-types"
   }
 }
