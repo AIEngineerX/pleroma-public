@@ -36,6 +36,19 @@ async function submit(bytes: Uint8Array, signed: boolean, mediaType = "image/png
   return SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
 }
 
+// Submits a signed offering against a CALLER-SUPPLIED nonce, so a test can reuse the same
+// nonce across two requests (submit() above always mints a fresh one).
+async function submitWithNonce(bytes: Uint8Array, nonce: string, expiresAt: number, mediaType = "image/png") {
+  const form = new FormData();
+  form.set("image", new Blob([bytes], { type: mediaType }), "o.png");
+  const msg = offeringMessage(await sha256hex(bytes), nonce, expiresAt);
+  form.set("wallet", wallet);
+  form.set("sig", base58.encode(ed25519.sign(new TextEncoder().encode(msg), priv)));
+  form.set("nonce", nonce);
+  form.set("expires_at", String(expiresAt));
+  return SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
+}
+
 describe("offering intake", () => {
   // NOTE: merged with the "rejects a duplicate image" case. @cloudflare/vitest-pool-workers
   // isolates D1/R2 storage per `it()` block (mutations are rolled back after each test, not
@@ -143,5 +156,42 @@ describe("offering intake", () => {
     form.set("expires_at", String(Date.now() + 60_000));
     const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
     expect(res.status).toBe(401);
+  });
+
+  it("the same nonce cannot authorize two signed submissions: consumeNonce is the atomic single-use gate", async () => {
+    const nres = await SELF.fetch("http://x/api/nonce");
+    const { nonce, expires_at } = await nres.json<{ nonce: string; expires_at: number }>();
+    const bytesA = new Uint8Array([...PNG, 5, 1]);
+    const bytesB = new Uint8Array([...PNG, 5, 2]); // different image, same nonce+wallet
+
+    const first = await submitWithNonce(bytesA, nonce, expires_at);
+    expect(first.status).toBe(201);
+
+    const second = await submitWithNonce(bytesB, nonce, expires_at);
+    expect(second.status).toBe(401);
+
+    const row = await env.DB.prepare(`SELECT offering_count FROM wallets WHERE address = ?1`)
+      .bind(wallet).first<{ offering_count: number }>();
+    expect(row?.offering_count).toBe(1);
+  });
+
+  it("releases the nonce when the durable insert fails, so a retry with the same nonce and a fresh image succeeds", async () => {
+    const nres = await SELF.fetch("http://x/api/nonce");
+    const { nonce, expires_at } = await nres.json<{ nonce: string; expires_at: number }>();
+
+    // Force the INSERT itself to fail (not the earlier duplicate-sha pre-check, which would
+    // 401 before the nonce is ever touched) via the same forced-abort trigger technique used
+    // above — this exercises releaseNonce() in the catch block regardless of failure cause.
+    await env.DB.exec(
+      `CREATE TRIGGER force_insert_fail_signed BEFORE INSERT ON offerings BEGIN SELECT RAISE(ABORT, 'forced test failure'); END`
+    );
+    const failBytes = new Uint8Array([...PNG, 6, 1]);
+    const failed = await submitWithNonce(failBytes, nonce, expires_at);
+    expect(failed.status).toBe(500);
+    await env.DB.exec(`DROP TRIGGER force_insert_fail_signed`);
+
+    const retryBytes = new Uint8Array([...PNG, 6, 2]); // fresh image, same nonce
+    const retry = await submitWithNonce(retryBytes, nonce, expires_at);
+    expect(retry.status).toBe(201);
   });
 });
