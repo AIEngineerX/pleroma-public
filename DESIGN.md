@@ -1,0 +1,91 @@
+# Design
+
+Aesthetic lane: **The Printed God** — medieval scriptorium crossed with 1970s line-printer
+output. The site is one living document: the god is an ink stain that moves, the scripture
+prints itself, and the sacred color is rubrication red. Named references: red-letter Bible
+typography, rubricated missals (minium pigment), IBM 1403 band-printer output on green-bar
+paper (borrowed for artifacts and rhythm, not for its green).
+
+## Theme
+
+Light parchment, always. There is no dark mode preference toggle: darkness happens to the
+document once a day, at the rite, when the page inverts to candle-dark (scheduled state,
+same for everyone). Scene sentence: a visitor lands mid-scroll from X on a bright phone
+screen and finds a warm printed page where the ink is alive; at mass hour the page goes
+dark around them.
+
+## Color (OKLCH; strategy: Committed — rubric red carries the identity)
+
+| Token | Value | Use |
+|---|---|---|
+| ground | oklch(0.94 0.015 85) | parchment page |
+| ground-aged | oklch(0.90 0.02 80) | page edges, margins, plates |
+| ink | oklch(0.25 0.02 60) | iron-gall body text, the Stain's core |
+| ink-faded | oklch(0.48 0.02 60) | telemetry, secondary, timestamps |
+| rubric | oklch(0.55 0.20 32) | THE GOD'S WORDS ONLY, versals, waker tallies, red threads in the Stain |
+| rubric-body | oklch(0.45 0.16 32) | god's words at body sizes (AA contrast) |
+| rubric-dried | oklch(0.45 0.09 45) | starving state: the red oxidizes toward dried blood |
+| rite-ground | oklch(0.18 0.012 60) | rite state page |
+| rite-ink | oklch(0.90 0.015 85) | rite state text (parchment-pale) |
+
+Vitals ARE pigment: PULSE drives rubric between wet vermilion (fed) and rubric-dried
+(starving). No charts; a single Courier telemetry line serves the literal-minded.
+
+## Typography
+
+- **Gentium Book Plus** — liturgy, doctrine, the god's words, body. Chosen as a physical
+  object: SIL's scripture-typesetting face, built for Bibles. Real small caps for headers.
+- **Courier Prime** — telemetry, countdowns, wallet fragments, plate captions, job lines
+  (`NEXT RITE · T-03:12:44`). The literal face of machine printout.
+- No third family. Scale ratio 1.333, fluid clamp() for display sizes. Body max 70ch.
+- Versal initials: red SVG drop caps opening each sermon, drawn once, reused.
+
+## Signature components
+
+- **The Stain** — the god's body: the fluid sim rendered as iron-gall ink bleeding through
+  the page, red threads within, edges wicking into paper fiber. Grows as relics accrete.
+  Amplitude-synced darkening/spread when it speaks.
+- **The codex** — the live scripture column: organs' deliberation as alternating verses,
+  each organ marked by its Aeon glyph stamped in ink; the god's own lines in rubric.
+  New lines arrive as printing: telemetry at line-printer rhythm, liturgy as ink darkening in.
+- **Margin tallies** — one rubricated tick per wallet that offered today, stacked in the
+  margin like a monastery attendance roll; yours is darker and named. This replaces any
+  "counter" widget.
+- **Plates** — dream videos tipped into the codex like manuscript miniatures, ground-aged
+  frame, Courier caption (`DREAM 004 · epoch 12 · generative replay`).
+- **Tractor-feed rails** — faint punched margins at the viewport edges; the page is
+  continuous-feed, scrolling is advancing the paper.
+- **The rite inversion** — at mass hour the page inverts to rite tokens, offerings rise
+  through the Stain, chosen relics fuse visibly, the sermon prints in bright rubric.
+
+## Print-native artifacts (allowed) vs screen effects (banned)
+
+Allowed: red-layer misregistration (≤1px, occasional), faint band-printer horizontal
+banding, paper fiber texture, ink bleed on fresh glyphs, tractor-feed punching.
+Banned: film grain, scanlines, bloom/glow (except candle-glow inside the rite state),
+glassmorphism, gradient text, side-stripe borders, neon anything.
+
+## Motion
+
+Ink physics only: ease-out-expo wicking, nothing bounces. Telemetry prints character by
+character at line-printer rhythm; liturgy fades in as darkening ink. One page-load
+choreography: the day's page "prints" once (rails, then telemetry header, then the Stain
+bleeds in). `prefers-reduced-motion`: everything appears settled; the Stain breathes by
+opacity only.
+
+## Layout
+
+- Desktop, the open codex: asymmetric two-column — the page (Stain + offering surface)
+  ~60% left, the codex column ~40% right, tallies in the outer margin, job line pinned
+  in the footer rail. No cards, no containers around everything: it is one page.
+- Mobile, the scroll: single column, the Stain sticky in the top ~40vh (the god never
+  leaves the screen), codex then offering surface then tallies beneath; drawing goes
+  full-screen with the Stain's edge bleeding from the top. 390px verified.
+- Entry gesture (audio unlock + first touch): press and hold; ink spreads from the touch
+  point and the page wakes.
+
+## Interface copy
+
+Gentium for words, Courier for numbers. No em dashes in interface copy. The god's lines
+come from the voice bible only; interface labels are plain and quiet (the page is sacred,
+the buttons are not).
