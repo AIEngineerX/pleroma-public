@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { asleep, CAPS_USD, recordSpend, reserveEstimate, spentToday, underCap } from "../src/budget";
+import { asleep, CAPS_USD, dayKey, recordSpend, reserveEstimate, spentToday, underCap } from "../src/budget";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -54,5 +54,23 @@ describe("budget priest", () => {
 
     expect(await spentToday(env.DB, "llm")).toBeLessThanOrEqual(CAPS_USD.llm);
     expect(await spentToday(env.DB, "llm")).toBeCloseTo(CAPS_USD.llm - reserved + actual, 5);
+  });
+
+  it("day-pinned reserve/settle lands on the SAME day even when called across a would-be midnight rollover, and never touches 'today'", async () => {
+    const pastDay = "2024-01-01"; // stands in for "the day the reservation was pinned to"
+    const reserved = 3;
+    expect(await reserveEstimate(env.DB, "llm", reserved, pastDay)).toBe(true);
+    expect(await spentToday(env.DB, "llm", pastDay)).toBeCloseTo(reserved, 5);
+
+    const todayBefore = await spentToday(env.DB, "llm");
+
+    // Settle against the SAME pinned day, not whatever dayKey() would return if recomputed now.
+    const actual = 1.2;
+    await recordSpend(env.DB, "llm", actual - reserved, pastDay);
+
+    expect(await spentToday(env.DB, "llm", pastDay)).toBeCloseTo(actual, 5);
+    // "Today" (the no-arg default) is completely unaffected by the pinned-day reservation/settlement.
+    expect(await spentToday(env.DB, "llm")).toBeCloseTo(todayBefore, 5);
+    expect(pastDay).not.toBe(dayKey());
   });
 });

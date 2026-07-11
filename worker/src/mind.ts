@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { recordSpend, reserveEstimate } from "./budget";
+import { dayKey, recordSpend, reserveEstimate } from "./budget";
 
 export class MindAsleepError extends Error {}
 export class NonRetryableError extends Error {}
@@ -20,11 +20,13 @@ export interface MindRequest {
 }
 export interface MindResponse { text: string; usd: number }
 
-// A single image bills ~ (w*h)/750 tokens; the API downscales to <=1568px/edge, so a 1568^2 image is
-// ~3279 tokens. 4000 is a safe constant ceiling — and far below the base64 length, which must NOT drive
-// the estimate. For text, UTF-8 byte length is a provable upper bound on token count (a token is >= 1
-// byte), so the estimate is guaranteed >= actual input cost.
-const IMAGE_TOKENS_MAX = 4000;
+// Sonnet's auto high-res tier can bill up to ~4784 visual tokens for a single image (the API
+// downscales to <=1568px/edge). 8000 is a safe constant ceiling above that — and far below the
+// base64 length, which must NOT drive the estimate. For text, UTF-8 byte length is a provable
+// upper bound on token count (a token is >= 1 byte), so the estimate is guaranteed >= actual
+// input cost.
+const IMAGE_TOKENS_MAX = 8000; // safe upper bound over Sonnet's auto high-res image billing (~<=4784 tok/image);
+                               // over-reserving is harmless — settle() reconciles down to actual.
 const FRAMING_TOKENS = 20; // role/message framing not present in the payload strings.
 
 // Provable pre-call upper bound: maxTokens at the model's OUTPUT price, plus an input estimate that is
@@ -49,7 +51,11 @@ export function estimateCostUsd(req: MindRequest): number {
 // scheduled + lock.ts); do not call from fetch handlers.
 export async function askMind(env: Env, req: MindRequest): Promise<MindResponse> {
   const reserved = estimateCostUsd(req);
-  if (!(await reserveEstimate(env.DB, "llm", reserved))) {
+  // Pinned once so the reservation and its settlement always land on the same accounting day,
+  // even if the call straddles UTC midnight (dayKey() recomputed later would settle a delta
+  // against the wrong day's row).
+  const day = dayKey();
+  if (!(await reserveEstimate(env.DB, "llm", reserved, day))) {
     throw new MindAsleepError("llm budget cap reached (reservation)");
   }
 
@@ -57,7 +63,7 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
   const settle = async (actualUsd: number) => {
     if (settled) return; settled = true;
     const delta = actualUsd - reserved;
-    if (delta !== 0) await recordSpend(env.DB, "llm", delta);
+    if (delta !== 0) await recordSpend(env.DB, "llm", delta, day);
   };
 
   try {
@@ -110,8 +116,16 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
           await settle(reserved);
           throw new NonRetryableError(`mind response parse failure: ${String(parseErr)}`);
         }
+        const usage = data?.usage;
+        if (!usage || typeof usage.input_tokens !== "number" || typeof usage.output_tokens !== "number") {
+          // HTTP 200 with a schema-invalid body = billed but cost unknown. Keep the reservation
+          // (do not let this TypeError escape to the finally, which would settle(0) and release
+          // a call that WAS billed); terminal (retrying re-bills).
+          await settle(reserved);
+          throw new NonRetryableError("mind response missing usage");
+        }
         const [inP, outP] = PRICES[req.model] ?? [3, 15];
-        const usd = (data.usage.input_tokens * inP + data.usage.output_tokens * outP) / 1_000_000;
+        const usd = (usage.input_tokens * inP + usage.output_tokens * outP) / 1_000_000;
         await settle(usd);
         return { text: data.content.filter(c => c.type === "text").map(c => c.text).join(""), usd };
       }

@@ -49,6 +49,17 @@ describe("askMind — hard budget reservation", () => {
     expect(plausibleActual).toBeLessThanOrEqual(estimateCostUsd(reqSmallImage));
   });
 
+  it("reserves against the 8000-token IMAGE_TOKENS_MAX ceiling per image (raised from 4000 to stay above Sonnet's ~4784 tok/image auto high-res billing)", () => {
+    const est = estimateCostUsd({
+      model: "claude-sonnet-5",
+      system: "",
+      user: [{ type: "image", mediaType: "image/png", dataB64: "a" }],
+      maxTokens: 0,
+    });
+    // input: (8000 + 20 framing) tok * 3/1e6 ; output: 0
+    expect(est).toBeCloseTo((8020 * 3) / 1_000_000, 8);
+  });
+
   it("rejects with MindAsleepError BEFORE any fetch when the estimate would exceed the cap, and records no spend", async () => {
     await recordSpend(env.DB, "llm", CAPS_USD.llm - 1); // $1 of headroom left today
     const before = await spentToday(env.DB, "llm");
