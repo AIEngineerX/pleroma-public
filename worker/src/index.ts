@@ -13,7 +13,7 @@ app.use("/api/*", (c, next) => cors({ origin: c.env.CORS_ORIGIN })(c, next));
 app.get("/api/health", (c) => c.json({ ok: true, env: c.env.ENVIRONMENT }));
 app.get("/api/nonce", async (c) => c.json(await issueNonce(c.env.DB)));
 app.post("/api/offerings", async (c) => handleOffering(c.env, await c.req.formData()));
-app.get("/api/codex", (c) => getCodex(c.env, c.req.query("cursor") ? Number(c.req.query("cursor")) : null));
+app.get("/api/codex", (c) => getCodex(c.env, c.req.query("cursor") ?? null));
 app.get("/api/state", (c) => getState(c.env));
 
 export default {
