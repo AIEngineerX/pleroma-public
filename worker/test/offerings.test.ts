@@ -215,4 +215,35 @@ describe("offering intake", () => {
     const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
     expect(res.status).toBe(413);
   });
+
+  it("rejects a body with no Content-Length header (e.g. a chunked-encoded request) with 411, before formData() ever materializes it", async () => {
+    // A ReadableStream body has no known length, so fetch sends it chunked with no
+    // Content-Length header — the exact bypass the missing-header guard closes. A browser
+    // FormData upload always sets Content-Length, so this shape only arises from a
+    // non-browser client trying to dodge the size cap.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("irrelevant, never parsed"));
+        controller.close();
+      },
+    });
+    const res = await SELF.fetch("http://x/api/offerings", {
+      method: "POST",
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    expect(res.status).toBe(411);
+  });
+
+  it("accepts a normal signed upload with a real Content-Length (201), and the missing-header guard does not affect it", async () => {
+    const bytes = new Uint8Array([...PNG, 3, 3]); // unique bytes -> unique sha
+    const res = await submit(bytes, true);
+    expect(res.status).toBe(201);
+  });
+
+  it("accepts a normal anonymous upload with a real Content-Length (201)", async () => {
+    const bytes = new Uint8Array([...PNG, 3, 4]); // unique bytes -> unique sha
+    const res = await submit(bytes, false);
+    expect(res.status).toBe(201);
+  });
 });
