@@ -47,6 +47,17 @@ export async function setOfferingImageKey(db: D1Database, id: string, imageKey: 
   await db.prepare(`UPDATE offerings SET image_key = ?2 WHERE id = ?1`).bind(id, imageKey).run();
 }
 
+// Conditional status transition: only succeeds if the row is currently 'perceivable'.
+// Callers must claim the row (and see true) BEFORE publishing the EYE transcript, so a retry
+// or re-run against an already-perceived offering (changes === 0) can never double-publish.
+export async function claimPerceived(db: D1Database, id: string): Promise<boolean> {
+  const r = await db.prepare(
+    `UPDATE offerings SET status = 'perceived', perceived_at = ?2
+     WHERE id = ?1 AND status = 'perceivable'`
+  ).bind(id, Date.now()).run();
+  return r.meta.changes === 1;
+}
+
 export async function addTranscript(db: D1Database, t: TranscriptRow): Promise<void> {
   await db.prepare(
     `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)

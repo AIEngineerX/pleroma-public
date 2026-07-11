@@ -4,7 +4,8 @@ import { askMind, MindAsleepError } from "./mind";
 import { moderate } from "./moderation";
 import { toBase64 } from "./encoding";
 import {
-  addTranscript, pendingOfferings, setOfferingImageKey, setOfferingStatus, type OfferingRow,
+  addTranscript, claimPerceived, pendingOfferings, setOfferingImageKey, setOfferingStatus,
+  type OfferingRow,
 } from "./db";
 
 const BATCH = 12;
@@ -144,10 +145,15 @@ export async function runEyeBatch(
                { type: "text", text: "Perceive this offering." }],
       });
       const { verse } = JSON.parse(res.text.trim()) as { verse: string };
-      await addTranscript(env.DB, { id: ulid(), organ: "EYE", register: "verse",
-        text: verse, offering_id: o.id, rite_id: null, created_at: Date.now() });
-      await setOfferingStatus(env.DB, o.id, "perceived", { perceivedAt: Date.now() });
-      perceived++;
+      // Claim the perceivable->perceived transition FIRST; only publish the transcript if
+      // the claim succeeds. A retry or re-run against a row that's already perceived (e.g.
+      // after a prior attempt's post-insert step failed) sees changes===0 and is a clean
+      // no-op instead of a second transcript (double-publish, double spend).
+      if (await claimPerceived(env.DB, o.id)) {
+        await addTranscript(env.DB, { id: ulid(), organ: "EYE", register: "verse",
+          text: verse, offering_id: o.id, rite_id: null, created_at: Date.now() });
+        perceived++;
+      }
     } catch (e) {
       if (e instanceof MindAsleepError) break;
       const dead = o.attempts >= 2;

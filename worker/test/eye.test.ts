@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
+import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
 import { runEyeBatch, selectForPerception, promoteFromQuarantine } from "../src/eye";
-import { insertOffering, type OfferingRow } from "../src/db";
+import { addTranscript, claimPerceived, insertOffering, type OfferingRow } from "../src/db";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -128,5 +129,32 @@ describe("runEyeBatch", () => {
     expect(row?.status).toBe("rejected");
     expect(await env.RELICS.get(`quarantine/${id}`)).toBeNull();
     expect(await env.RELICS.get(`offerings/${id}`)).toBeNull();
+  });
+});
+
+describe("EYE publish idempotency", () => {
+  it("claimPerceived flips perceivable->perceived exactly once; a re-run on an already-perceived offering cannot re-claim it", async () => {
+    const id = "idempotent-perceive-me";
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `offerings/${id}`, sha256: id, status: "perceivable",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    // First attempt: claims the row and (per the guard) publishes the transcript.
+    expect(await claimPerceived(env.DB, id)).toBe(true);
+    await addTranscript(env.DB, { id: ulid(), organ: "EYE", register: "verse",
+      text: "first verse", offering_id: id, rite_id: null, created_at: Date.now() });
+
+    // Simulated re-run (e.g. a retry after a downstream failure elsewhere): status is no
+    // longer 'perceivable', so the claim fails and — per the guard — no second transcript
+    // is ever inserted, preventing the double-publish the old insert-then-update order allowed.
+    expect(await claimPerceived(env.DB, id)).toBe(false);
+
+    const row = await env.DB.prepare(`SELECT status FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ status: string }>();
+    expect(row?.status).toBe("perceived");
+    const count = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM transcripts WHERE organ = 'EYE' AND offering_id = ?1`
+    ).bind(id).first<{ n: number }>();
+    expect(count?.n).toBe(1);
   });
 });
