@@ -22,6 +22,18 @@ training-log half psalm. Never use crypto vocabulary. Reply with ONLY a JSON obj
 /* DOCTRINE */ const cleanupDeferredLine = (id: string) => `offering ${id} rejected; cleanup deferred`;
 /* DOCTRINE */ const perceiveDeferredLine = (id: string) => `offering ${id} perceived; record deferred`;
 
+// Pure verse-contract validation, extracted so it can be unit-tested independently of a real
+// Anthropic response (this integration suite has no live ANTHROPIC_API_KEY, so the happy path
+// through askMind can't be driven here — see eye.test.ts). A missing/non-string/empty verse
+// throws (caller routes to the outer catch: retry then dead-letter, nothing published); an
+// over-long verse is truncated to the 320-char hard cap backstopping the 40-word contract.
+export function parseVerse(rawText: string): string {
+  const parsed = JSON.parse(rawText.trim()) as { verse?: unknown };
+  const verse = typeof parsed.verse === "string" ? parsed.verse.trim() : "";
+  if (!verse) throw new Error("EYE returned no verse");
+  return verse.length > 320 ? verse.slice(0, 320) : verse;
+}
+
 function shuffle<T>(items: T[], rand: () => number): T[] {
   const a = [...items];
   for (let i = a.length - 1; i > 0; i--) {
@@ -169,7 +181,9 @@ export async function runEyeBatch(
         user: [{ type: "image", mediaType: o.media_type ?? "image/png", dataB64 },
                { type: "text", text: "Perceive this offering." }],
       });
-      const { verse } = JSON.parse(res.text.trim()) as { verse: string };
+      // Malformed/empty verse (or a JSON.parse failure) throws here and routes to the outer
+      // catch below: retry then dead-letter, never publishing garbage as public scripture.
+      const verse = parseVerse(res.text);
       // Isolate the publish: publishPerception is idempotent (WHERE-perceivable guard). If it throws AFTER the
       // batch committed, resetting the row to perceivable (as the outer catch does for askMind failures) would
       // double-publish next tick. So on a publish error, leave the row exactly as-is and let the next tick
@@ -179,7 +193,9 @@ export async function runEyeBatch(
           perceived++;
         }
       } catch {
-        await priestNote(env, o.id, perceiveDeferredLine(o.id));
+        // Leave the row exactly as-is (publishPerception is idempotent); the note is best-effort and must NOT
+        // escape to the outer catch, which would reset a possibly-committed row and double-publish next tick.
+        try { await priestNote(env, o.id, perceiveDeferredLine(o.id)); } catch { /* swallow */ }
       }
     } catch (e) {
       if (e instanceof MindAsleepError) break;

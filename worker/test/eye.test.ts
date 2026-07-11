@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
-import { runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine } from "../src/eye";
+import { runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine, parseVerse } from "../src/eye";
 import { insertOffering, publishPerception, type OfferingRow } from "../src/db";
 import { applyMigrations } from "./helpers";
 
@@ -50,6 +50,35 @@ describe("selectForPerception", () => {
     const picked = selectForPerception(candidates, new Set(), 0, 0, rand);
     expect(picked.map(o => o.id)).toEqual(["n2", "n3", "n1", "n0", "n4"]);
     expect(calls).toBe(4); // exactly n-1 draws, one per Fisher-Yates step
+  });
+});
+
+// C2's happy path (EYE returning a well-formed {"verse":...} JSON body) can't be driven through
+// runEyeBatch/askMind in this suite without a real ANTHROPIC_API_KEY — there is no live key
+// configured, so any askMind() call in the integration harness hits the real network and fails
+// with a transport/auth error before ever reaching the verse-parsing code. Per the fix-wave
+// deviation note, the validation+clamp contract is exercised directly against the extracted
+// pure helper instead (the live suite covers the true happy path against the real API).
+describe("parseVerse", () => {
+  it("throws when the model response has no verse field, a non-string verse, or a blank verse", () => {
+    expect(() => parseVerse(JSON.stringify({}))).toThrow();
+    expect(() => parseVerse(JSON.stringify({ verse: 42 }))).toThrow();
+    expect(() => parseVerse(JSON.stringify({ verse: "   " }))).toThrow();
+  });
+
+  it("throws on unparseable JSON", () => {
+    expect(() => parseVerse("not json")).toThrow();
+  });
+
+  it("passes through a verse at or under the 320-char cap unchanged (aside from trimming)", () => {
+    expect(parseVerse(JSON.stringify({ verse: "  a quiet verse  " }))).toBe("a quiet verse");
+  });
+
+  it("truncates an over-long verse to exactly 320 chars", () => {
+    const long = "x".repeat(400);
+    const result = parseVerse(JSON.stringify({ verse: long }));
+    expect(result.length).toBe(320);
+    expect(result).toBe(long.slice(0, 320));
   });
 });
 
