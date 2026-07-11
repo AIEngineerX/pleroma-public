@@ -51,14 +51,28 @@ async function priestNote(env: Env, offeringId: string, text: string): Promise<v
 // PLANNING.md safety: rejects are never kept in permanent R2; uploads are quarantined until
 // a moderation ALLOW promotes them. Moves the object from o.image_key (quarantine/<id>) to
 // offerings/<id> and durably records the new key.
+//
+// D1 sets the D1 pointer BEFORE removing the old key: if the OLD order (put -> delete quarantine
+// -> setImageKey) lost the setImageKey response after the quarantine object was already deleted,
+// a retry would find no quarantine object (early return) while D1 still pointed at the
+// now-gone quarantine/<id> — EYE would fail the offering forever despite the image being safe at
+// offerings/<id>. Reordering so D1 is updated first means a retry always has a path to converge.
 export async function promoteFromQuarantine(env: Env, o: OfferingRow): Promise<void> {
-  const obj = await env.RELICS.get(o.image_key);
-  if (!obj) return; // already promoted or missing; nothing to move
-  const bytes = new Uint8Array(await obj.arrayBuffer());
   const key = `offerings/${o.id}`;
-  await env.RELICS.put(key, bytes, { httpMetadata: obj.httpMetadata });
-  await env.RELICS.delete(o.image_key);
-  await setOfferingImageKey(env.DB, o.id, key);
+  const obj = await env.RELICS.get(o.image_key);
+  if (obj) {
+    await env.RELICS.put(key, new Uint8Array(await obj.arrayBuffer()), { httpMetadata: obj.httpMetadata });
+  } else if (!(await env.RELICS.head(key))) {
+    return; // neither source nor destination exists — nothing to promote (already handled)
+  }
+  await setOfferingImageKey(env.DB, o.id, key); // D1 points at the permanent key…
+  try {
+    // Guard against o.image_key already being the destination (a re-entrant call after a prior
+    // promotion fully landed, e.g. a retry driven by a stale-in-memory `o` or a re-moderated row
+    // whose status-update response was lost): deleting o.image_key in that case would delete the
+    // object we just wrote. Only ever remove a DIFFERENT (quarantine) key.
+    if (o.image_key !== key) await env.RELICS.delete(o.image_key); // …then drop quarantine; a leftover is swept in 24h
+  } catch { /* best-effort; a leftover quarantine object is swept in 24h */ }
 }
 
 const QUARANTINE_TTL_MS = 24 * 60 * 60_000;
@@ -77,7 +91,7 @@ export async function sweepQuarantine(
     if (Date.now() > deadlineMs || deleted >= maxDeletes) break;
     const list = await env.RELICS.list({ prefix: "quarantine/", cursor, limit: 200 });
     for (const o of list.objects) {
-      if (deleted >= maxDeletes) break;
+      if (Date.now() > deadlineMs || deleted >= maxDeletes) break;
       if (now - o.uploaded.getTime() > QUARANTINE_TTL_MS) { await env.RELICS.delete(o.key); deleted++; }
     }
     cursor = list.truncated ? list.cursor : undefined;

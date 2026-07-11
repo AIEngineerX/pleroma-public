@@ -145,6 +145,34 @@ describe("runEyeBatch", () => {
     expect(updated?.image_key).toBe(`offerings/${id}`);
   });
 
+  it("promoteFromQuarantine is idempotent across a repeated call, e.g. a retry after a lost D1 response", async () => {
+    const id = "promote-idempotent";
+    await env.RELICS.put(`quarantine/${id}`, PNG, { httpMetadata: { contentType: "image/png" } });
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
+      .bind(id).first<OfferingRow>())!;
+
+    await promoteFromQuarantine(env, row);
+    // Re-fetch: image_key now reflects the permanent key, as a retry driven by a fresh D1 query
+    // (e.g. the next tick's pendingOfferings) would see it.
+    const afterFirst = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
+      .bind(id).first<OfferingRow>())!;
+    expect(afterFirst.image_key).toBe(`offerings/${id}`);
+
+    // A second call — simulating a retry that re-runs promotion against the already-promoted
+    // row — must not throw and must not destroy the object it just re-affirmed.
+    await expect(promoteFromQuarantine(env, afterFirst)).resolves.not.toThrow();
+
+    const finalRow = await env.DB.prepare(`SELECT image_key FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ image_key: string }>();
+    expect(finalRow?.image_key).toBe(`offerings/${id}`);
+    const promoted = await env.RELICS.get(`offerings/${id}`);
+    expect(promoted).not.toBeNull();
+    await promoted?.arrayBuffer();
+  });
+
   it("purges the quarantine object when a pending offering is rejected", async () => {
     const id = "reject-purge-me";
     await env.RELICS.put(`quarantine/${id}`, PNG);
