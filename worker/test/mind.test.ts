@@ -7,16 +7,46 @@ import { applyMigrations } from "./helpers";
 beforeAll(() => applyMigrations(env.DB));
 
 describe("askMind — hard budget reservation", () => {
-  it("estimates cost from maxTokens (output price) plus a chars/4 input upper bound", () => {
-    // sonnet-5 prices: [input $3/1M, output $15/1M].
+  it("estimates cost from maxTokens (output price) plus a UTF-8-byte input upper bound", () => {
+    // sonnet-5 prices: [input $3/1M, output $15/1M]. FRAMING_TOKENS = 20 is always added.
     const est = estimateCostUsd({
       model: "claude-sonnet-5",
       system: "",
-      user: [{ type: "text", text: "a".repeat(4000) }], // 4000 chars -> ~1000 input tokens
+      user: [{ type: "text", text: "a".repeat(4000) }], // 4000 single-byte chars -> 4000 input tokens
       maxTokens: 200,
     });
-    // input: 1000 tok * 3/1e6 = 0.003 ; output: 200 tok * 15/1e6 = 0.003
-    expect(est).toBeCloseTo(0.006, 5);
+    // input: (4000 + 20) tok * 3/1e6 = 0.01206 ; output: 200 tok * 15/1e6 = 0.003
+    expect(est).toBeCloseTo(0.01506, 5);
+  });
+
+  it("bounds an image's contribution by the IMAGE_TOKENS_MAX constant, not the base64 payload length", () => {
+    const reqSmallImage = {
+      model: "claude-sonnet-5" as const,
+      system: "sys",
+      user: [
+        { type: "text" as const, text: "describe this" },
+        { type: "image" as const, mediaType: "image/png", dataB64: "a".repeat(100) },
+      ],
+      maxTokens: 200,
+    };
+    const reqHugeImage = {
+      ...reqSmallImage,
+      user: [
+        reqSmallImage.user[0],
+        { type: "image" as const, mediaType: "image/png", dataB64: "a".repeat(500_000) }, // ~512KB base64
+      ],
+    };
+    // Same text + same maxTokens, wildly different base64 length -> identical estimate, because
+    // the image's contribution is the IMAGE_TOKENS_MAX constant ceiling, not proportional to
+    // base64 length.
+    expect(estimateCostUsd(reqHugeImage)).toBeCloseTo(estimateCostUsd(reqSmallImage), 10);
+
+    // A plausible actual (small real input/output token counts for a terse EYE verse response)
+    // must fall at or under the estimate — the estimate is a provable upper bound, not merely a
+    // typical one.
+    const [inP, outP] = [3, 15];
+    const plausibleActual = (600 * inP + 60 * outP) / 1_000_000; // ~600 input tok, ~60 output tok
+    expect(plausibleActual).toBeLessThanOrEqual(estimateCostUsd(reqSmallImage));
   });
 
   it("rejects with MindAsleepError BEFORE any fetch when the estimate would exceed the cap, and records no spend", async () => {

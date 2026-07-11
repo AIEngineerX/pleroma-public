@@ -20,17 +20,26 @@ export interface MindRequest {
 }
 export interface MindResponse { text: string; usd: number }
 
-// Conservative pre-call upper bound: maxTokens at the model's OUTPUT price, plus an input
-// estimate from the raw request size (chars/4 ~= tokens, a deliberately generous ratio for
-// base64 image payloads too) at the INPUT price. Used to reserve budget before the call is
-// made, since the real cost is only known after a billed response comes back.
+// A single image bills ~ (w*h)/750 tokens; the API downscales to <=1568px/edge, so a 1568^2 image is
+// ~3279 tokens. 4000 is a safe constant ceiling — and far below the base64 length, which must NOT drive
+// the estimate. For text, UTF-8 byte length is a provable upper bound on token count (a token is >= 1
+// byte), so the estimate is guaranteed >= actual input cost.
+const IMAGE_TOKENS_MAX = 4000;
+const FRAMING_TOKENS = 20; // role/message framing not present in the payload strings.
+
+// Provable pre-call upper bound: maxTokens at the model's OUTPUT price, plus an input estimate that is
+// guaranteed >= the real input token count (UTF-8 byte length for text, a constant ceiling for images).
+// Used to reserve budget before the call is made, since the real cost is only known after a billed
+// response comes back; because the estimate never undercounts, settle(actual) on success can only
+// REDUCE spend, so the daily cap (gated `spent + reserved <= cap`) is a hard ceiling.
 export function estimateCostUsd(req: MindRequest): number {
   const [inP, outP] = PRICES[req.model] ?? [3, 15];
-  const inputChars = req.system.length + req.user.reduce(
-    (sum, p) => sum + (p.type === "text" ? p.text.length : p.dataB64.length), 0,
-  );
-  const inputTokEstimate = inputChars / 4;
-  return (inputTokEstimate * inP + req.maxTokens * outP) / 1_000_000;
+  const enc = new TextEncoder();
+  let inputTokUpper = enc.encode(req.system).length + FRAMING_TOKENS;
+  for (const p of req.user) {
+    inputTokUpper += p.type === "text" ? enc.encode(p.text).length : IMAGE_TOKENS_MAX;
+  }
+  return (inputTokUpper * inP + req.maxTokens * outP) / 1_000_000;
 }
 
 // Budget reservation is atomic (see budget.ts reserveEstimate): the reservation writes the
@@ -66,8 +75,9 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
 
     let lastErr: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
+      let res: Response;
       try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
+        res = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
             "x-api-key": env.ANTHROPIC_API_KEY,
@@ -77,35 +87,37 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
           body,
           signal: AbortSignal.timeout(30_000),
         });
-        if (res.status === 429 || res.status >= 500) { lastErr = new Error(`HTTP ${res.status}`); }
-        else if (!res.ok) { throw new NonRetryableError(`anthropic ${res.status}: ${await res.text()}`); }
-        else {
-          let data: {
-            content: Array<{ type: string; text?: string }>;
-            usage: { input_tokens: number; output_tokens: number };
-          };
-          try {
-            data = await res.json();
-          } catch (parseErr) {
-            // HTTP 200 means the call was billed even though the response body can't be
-            // parsed to learn the actual cost. Settle at the reserved estimate (delta 0 —
-            // never nothing) and treat this as terminal — retrying would bill again.
-            await settle(reserved);
-            throw new NonRetryableError(`mind response parse failure: ${String(parseErr)}`);
-          }
-          const [inP, outP] = PRICES[req.model] ?? [3, 15];
-          const usd = (data.usage.input_tokens * inP + data.usage.output_tokens * outP) / 1_000_000;
-          await settle(usd);
-          const text = data.content.filter(c => c.type === "text").map(c => c.text).join("");
-          return { text, usd };
+      } catch (netErr) {
+        // No response received: the call may already be billed. Keep the reservation (do not
+        // release via the finally) and stop — a retry could bill a second time while we would
+        // settle only once.
+        await settle(reserved);
+        throw new NonRetryableError(`mind transport failure: ${String(netErr)}`);
+      }
+      if (res.status === 429 || res.status >= 500) {
+        lastErr = new Error(`HTTP ${res.status}`); // not billed; retryable
+      } else if (!res.ok) {
+        throw new NonRetryableError(`anthropic ${res.status}: ${await res.text()}`); // 4xx, not billed -> finally releases
+      } else {
+        let data: {
+          content: Array<{ type: string; text?: string }>;
+          usage: { input_tokens: number; output_tokens: number };
+        };
+        try {
+          data = await res.json();
+        } catch (parseErr) {
+          // HTTP 200 = billed but cost unknown. Keep the reserved estimate; terminal (retrying re-bills).
+          await settle(reserved);
+          throw new NonRetryableError(`mind response parse failure: ${String(parseErr)}`);
         }
-      } catch (e) {
-        if (e instanceof NonRetryableError || e instanceof MindAsleepError) throw e;
-        lastErr = e;
+        const [inP, outP] = PRICES[req.model] ?? [3, 15];
+        const usd = (data.usage.input_tokens * inP + data.usage.output_tokens * outP) / 1_000_000;
+        await settle(usd);
+        return { text: data.content.filter(c => c.type === "text").map(c => c.text).join(""), usd };
       }
       if (attempt === 0) await new Promise(r => setTimeout(r, 2_000));
     }
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr)); // 429/5xx exhausted -> finally releases
   } finally {
     // Releases the full reservation (delta = -reserved) only if nothing already settled —
     // covers every path that exits without billing: exhausted retries, and NonRetryableError

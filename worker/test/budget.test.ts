@@ -38,4 +38,21 @@ describe("budget priest", () => {
     await recordSpend(env.DB, "llm", -E);
     expect(await spentToday(env.DB, "llm")).toBeCloseTo(before, 5);
   });
+
+  it("hard-ceiling invariant: a reservation at the cap boundary, settled to a realistic (lower) actual, never leaves spend over the cap", async () => {
+    // Seed spend so only a sliver of headroom remains, then reserve exactly at the boundary —
+    // mirroring a provable-upper-bound estimate that fills all remaining headroom.
+    await recordSpend(env.DB, "llm", CAPS_USD.llm - 0.02);
+    const reserved = 0.02;
+    expect(await reserveEstimate(env.DB, "llm", reserved)).toBe(true);
+    expect(await spentToday(env.DB, "llm")).toBeCloseTo(CAPS_USD.llm, 5);
+
+    // Settlement to a realistic actual (a provable upper-bound estimate settles DOWN, never up):
+    // simulate askMind's settle(actualUsd) via recordSpend(delta).
+    const actual = 0.005; // realistic actual is well under the reserved estimate
+    await recordSpend(env.DB, "llm", actual - reserved);
+
+    expect(await spentToday(env.DB, "llm")).toBeLessThanOrEqual(CAPS_USD.llm);
+    expect(await spentToday(env.DB, "llm")).toBeCloseTo(CAPS_USD.llm - reserved + actual, 5);
+  });
 });
