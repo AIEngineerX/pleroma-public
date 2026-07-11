@@ -16,6 +16,25 @@ abstract art, symbols, short words, and doodles are allowed. When uncertain, rej
 
 export interface ModerationResult { verdict: "allow" | "reject"; category: string }
 
+const FAIL_CLOSED: ModerationResult = { verdict: "reject", category: "moderation_unavailable" };
+
+// Strict, fail-closed shape validation: an "allow" is valid ONLY paired with category "none";
+// a "reject" is valid ONLY paired with a known REJECT_CATEGORIES entry. Any other shape
+// (missing category, mismatched category, unknown verdict, non-object garbage) fails closed
+// rather than being forwarded to EYE.
+export function validateVerdict(parsed: unknown): ModerationResult {
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    const verdict = (parsed as Record<string, unknown>).verdict;
+    const category = (parsed as Record<string, unknown>).category;
+    if (verdict === "allow" && category === "none") return { verdict: "allow", category: "none" };
+    if (verdict === "reject" && typeof category === "string" &&
+        (REJECT_CATEGORIES as readonly string[]).includes(category)) {
+      return { verdict: "reject", category };
+    }
+  }
+  return FAIL_CLOSED;
+}
+
 export async function moderate(env: Env, imageBytes: Uint8Array, mediaType: string): Promise<ModerationResult> {
   try {
     const dataB64 = toBase64(imageBytes);
@@ -25,11 +44,9 @@ export async function moderate(env: Env, imageBytes: Uint8Array, mediaType: stri
       user: [{ type: "image", mediaType, dataB64 }, { type: "text", text: "Moderate this image." }],
       maxTokens: 100,
     });
-    const parsed = JSON.parse(res.text.trim()) as ModerationResult;
-    if (parsed.verdict === "allow" || parsed.verdict === "reject") return parsed;
-    return { verdict: "reject", category: "moderation_unavailable" };
+    return validateVerdict(JSON.parse(res.text.trim()));
   } catch (e) {
     if (e instanceof MindAsleepError) throw e;
-    return { verdict: "reject", category: "moderation_unavailable" }; // fail CLOSED
+    return FAIL_CLOSED; // fail CLOSED
   }
 }
