@@ -5,7 +5,7 @@ import type { Env } from "./env";
 import { issueNonce } from "./nonce";
 import { handleOffering } from "./offerings";
 import { acquireLock, releaseLock } from "./lock";
-import { runEyeBatch } from "./eye";
+import { runEyeBatch, sweepQuarantine } from "./eye";
 import { getCodex, getState } from "./read";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -25,8 +25,10 @@ export default {
       // 8 minutes: safely inside the 10-minute lock lease and the 15-minute cron interval,
       // so a slow batch of sequential LLM calls can't let the next tick overlap this one.
       const deadlineMs = Date.now() + 8 * 60_000;
-      try { await runEyeBatch(env, deadlineMs); }
-      finally { await releaseLock(env.DB, "tick", holder); }
+      try {
+        await runEyeBatch(env, deadlineMs);
+        try { await sweepQuarantine(env); } catch { /* sweep is best-effort; never fail the tick */ }
+      } finally { await releaseLock(env.DB, "tick", holder); }
     })());
   },
 };

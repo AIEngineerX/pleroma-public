@@ -11,11 +11,14 @@ binding = "DB"
 database_name = "pleroma"
 database_id = "1c3f1d37-2699-4399-963d-8287a1325721"
 
-# R2 lifecycle intent (PLANNING.md Safety & moderation — configured in the R2 dashboard,
-# not expressible in wrangler.toml today): objects under the `quarantine/` prefix expire
-# 24h after upload. Uploads land in quarantine/<id> and are either promoted to
-# offerings/<id> on a moderation ALLOW or purged immediately on REJECT (worker/src/eye.ts);
-# the 24h lifecycle rule is a backstop against anything that never gets a verdict.
+# Quarantine expiry (PLANNING.md Safety & moderation): objects under the `quarantine/` prefix
+# are deleted after 24h by sweepQuarantine() in worker/src/eye.ts, run every scheduled tick
+# (worker/src/index.ts) inside the tick lock — this is the authoritative, in-repo, tested
+# enforcement, not a comment. Uploads land in quarantine/<id> and are either promoted to
+# offerings/<id> on a moderation ALLOW or purged immediately on REJECT; the sweep is the
+# backstop for anything that never gets a verdict or whose immediate delete failed. An R2
+# dashboard lifecycle rule mirroring the same 24h window is an OPTIONAL secondary backstop,
+# not the sole mechanism.
 [[r2_buckets]]
 binding = "RELICS"
 bucket_name = "pleroma-relics"

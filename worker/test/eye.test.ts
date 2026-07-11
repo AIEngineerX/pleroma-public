@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
-import { runEyeBatch, selectForPerception, promoteFromQuarantine } from "../src/eye";
+import { runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine } from "../src/eye";
 import { insertOffering, publishPerception, type OfferingRow } from "../src/db";
 import { applyMigrations } from "./helpers";
 
@@ -162,5 +162,32 @@ describe("EYE publish idempotency", () => {
       `SELECT COUNT(*) AS n FROM transcripts WHERE organ = 'EYE' AND offering_id = ?1`
     ).bind(id).first<{ n: number }>();
     expect(count?.n).toBe(1);
+  });
+});
+
+describe("sweepQuarantine", () => {
+  it("deletes only stale quarantine/ objects, never touches offerings/, and returns the count deleted", async () => {
+    await env.RELICS.put("quarantine/stale-1", PNG);
+    await env.RELICS.put("offerings/untouched", PNG);
+
+    // R2 doesn't let us backdate an object's `uploaded` time, so drive the sweep with a `now`
+    // far enough in the future that a freshly-put object reads as older than the 24h TTL.
+    const future = Date.now() + 25 * 60 * 60_000;
+    const deleted = await sweepQuarantine(env, future);
+    expect(deleted).toBe(1);
+
+    expect(await env.RELICS.get("quarantine/stale-1")).toBeNull();
+    const untouched = await env.RELICS.get("offerings/untouched");
+    expect(untouched).not.toBeNull();
+    await untouched?.arrayBuffer();
+  });
+
+  it("does not delete a fresh quarantine/ object when swept at the current time", async () => {
+    await env.RELICS.put("quarantine/fresh-1", PNG);
+    const deleted = await sweepQuarantine(env, Date.now());
+    expect(deleted).toBe(0);
+    const fresh = await env.RELICS.get("quarantine/fresh-1");
+    expect(fresh).not.toBeNull();
+    await fresh?.arrayBuffer();
   });
 });

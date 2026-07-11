@@ -48,6 +48,23 @@ export async function promoteFromQuarantine(env: Env, o: OfferingRow): Promise<v
   await setOfferingImageKey(env.DB, o.id, key);
 }
 
+const QUARANTINE_TTL_MS = 24 * 60 * 60_000;
+
+// Deletes quarantine/ objects older than QUARANTINE_TTL_MS. This is the in-repo enforcement of the 24h
+// quarantine expiry (PLANNING.md Safety): a backstop for uploads that never received a moderation verdict
+// and for rejects whose immediate delete failed. Runs each scheduled tick, inside the lock.
+export async function sweepQuarantine(env: Env, now: number = Date.now()): Promise<number> {
+  let deleted = 0;
+  let cursor: string | undefined;
+  do {
+    const list = await env.RELICS.list({ prefix: "quarantine/", cursor });
+    const stale = list.objects.filter(o => now - o.uploaded.getTime() > QUARANTINE_TTL_MS);
+    for (const o of stale) { await env.RELICS.delete(o.key); deleted++; }
+    cursor = list.truncated ? list.cursor : undefined;
+  } while (cursor);
+  return deleted;
+}
+
 export function selectForPerception(
   candidates: OfferingRow[], attendedWallets: Set<string>,
   todayNonHolderCount: number, todayTotalCount: number, rand: () => number,
