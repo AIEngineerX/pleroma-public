@@ -4,7 +4,7 @@ export default defineWorkersConfig({
     poolOptions: {
       workers: {
         wrangler: { configPath: "./wrangler.toml" },
-        miniflare: { bindings: { ANTHROPIC_API_KEY: "test-not-set" } },
+        miniflare: { bindings: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "test-not-set" } },
       },
     },
   },
