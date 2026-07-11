@@ -8,6 +8,9 @@ export interface OfferingRow {
   // Optional on insert (defaults to 'image/png', matching the migration 0003 column
   // default); always present as a real string on rows read back from D1.
   media_type?: string;
+  // Signed offerings carry the one-time nonce; the UNIQUE(nonce) partial index (migration
+  // 0004) enforces single-use atomically at insert. Anonymous offerings leave this null.
+  nonce?: string | null;
 }
 
 export interface TranscriptRow {
@@ -18,11 +21,11 @@ export interface TranscriptRow {
 
 export async function insertOffering(db: D1Database, o: OfferingRow): Promise<void> {
   await db.prepare(
-    `INSERT INTO offerings (id, wallet, sig, image_key, sha256, status, attempts, created_at, media_type)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
+    `INSERT INTO offerings (id, wallet, sig, image_key, sha256, status, attempts, created_at, media_type, nonce)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
   ).bind(
     o.id, o.wallet, o.sig, o.image_key, o.sha256, o.status, o.attempts, o.created_at,
-    o.media_type ?? "image/png",
+    o.media_type ?? "image/png", o.nonce ?? null,
   ).run();
 }
 

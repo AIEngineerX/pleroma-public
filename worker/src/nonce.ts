@@ -8,18 +8,11 @@ export async function issueNonce(db: D1Database): Promise<{ nonce: string; expir
   return { nonce, expires_at };
 }
 
-export async function consumeNonce(db: D1Database, nonce: string): Promise<boolean> {
-  const r = await db.prepare(
-    `UPDATE nonces SET used = 1 WHERE nonce = ?1 AND used = 0 AND expires_at > ?2`
-  ).bind(nonce, Date.now()).run();
-  return r.meta.changes === 1;
-}
-
-// Compensating action for a durable write that failed AFTER the nonce was consumed: return the
-// nonce to the unused pool so a transient error does not burn a legitimate one-time token. No-op
-// if it has since expired — never re-opens an expired nonce.
-export async function releaseNonce(db: D1Database, nonce: string): Promise<void> {
-  await db.prepare(
-    `UPDATE nonces SET used = 0 WHERE nonce = ?1 AND expires_at > ?2`
-  ).bind(nonce, Date.now()).run();
+// Validate-only: a real, unexpired, server-issued nonce? Single-use is NOT enforced here — it is
+// enforced atomically at insert by offerings' UNIQUE(nonce) index (see offerings.ts), which also makes
+// it failure-safe: a nonce is "spent" only by a durably committed offering, so a failed insert (R2 or D1)
+// never burns a legitimate token, and a concurrent reuse loses the insert (409).
+export async function nonceIsFresh(db: D1Database, nonce: string): Promise<boolean> {
+  const row = await db.prepare(`SELECT 1 FROM nonces WHERE nonce = ?1 AND expires_at > ?2`).bind(nonce, Date.now()).first();
+  return row !== null;
 }

@@ -1,6 +1,6 @@
 import { ulid } from "ulid";
 import type { Env } from "./env";
-import { consumeNonce, releaseNonce } from "./nonce";
+import { nonceIsFresh } from "./nonce";
 import { verifyOffering } from "./signature";
 import { insertOffering, offeringBySha, touchWallet } from "./db";
 
@@ -35,37 +35,38 @@ export async function handleOffering(env: Env, form: FormData): Promise<Response
     const sigOk = wallet && sig &&
       verifyOffering({ wallet, sigB58: sig, sha256hex: sha256, nonce, expiresAtMs });
     if (!sigOk) return Response.json({ error: "signature rejected" }, { status: 401 });
-    // Atomic single-use gate: consuming the nonce IS the authorization. A concurrent replay
-    // sharing this nonce loses the CAS. If the durable insert below fails we release it (see
-    // catch) so a transient error doesn't burn a legitimate one-time token.
-    if (!(await consumeNonce(env.DB, nonce))) {
+    if (!(await nonceIsFresh(env.DB, nonce))) {
       return Response.json({ error: "signature rejected" }, { status: 401 });
     }
   }
 
   const id = ulid();
   // Uploads are quarantined until a moderation ALLOW promotes them to offerings/ (see
-  // eye.ts). Rejects purge the quarantine object and are never kept in permanent R2.
+  // eye.ts). Rejects purge the quarantine object and are never kept in permanent R2. The R2
+  // write happens BEFORE any D1 mutation, so a put failure touches no nonce/offering state.
   const key = `quarantine/${id}`;
   await env.RELICS.put(key, bytes, { httpMetadata: { contentType: image.type } });
   try {
     await insertOffering(env.DB, {
       id, wallet, sig, image_key: key, sha256, media_type: image.type,
       status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null,
+      nonce: wallet ? nonce : null,
     });
   } catch (e) {
     // Any insert failure — a lost duplicate-sha race with a concurrent submission, or
     // anything else — must not orphan the R2 object we just wrote.
     try { await env.RELICS.delete(key); } catch { /* best-effort; do not mask the original error */ }
-    if (wallet) { try { await releaseNonce(env.DB, nonce); } catch { /* best-effort */ } }
+    // A UNIQUE violation is either the sha256 (duplicate image) or the nonce (already used by
+    // another committed offering) — both are single-use invariants enforced atomically by the
+    // insert itself, not by a separate consume/release step.
     if (e instanceof Error && e.message.includes("UNIQUE")) {
       return Response.json({ error: "already offered" }, { status: 409 });
     }
     throw e;
   }
 
-  // The offering row is now durably inserted — the acceptance is real. The nonce is already
-  // consumed (it was the authorization gate above); only the wallet's offering count remains.
+  // The offering row is now durably inserted — the acceptance is real, and (for signed
+  // offerings) the nonce is spent by virtue of being in this committed row.
   if (wallet) await touchWallet(env.DB, wallet);
   return Response.json({ id, status: "pending" }, { status: 201 });
 }
