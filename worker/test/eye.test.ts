@@ -57,7 +57,7 @@ describe("selectForPerception", () => {
 // runEyeBatch/askMind in this suite without a real ANTHROPIC_API_KEY — there is no live key
 // configured, so any askMind() call in the integration harness hits the real network and fails
 // with a transport/auth error before ever reaching the verse-parsing code. Per the fix-wave
-// deviation note, the validation+clamp contract is exercised directly against the extracted
+// deviation note, the validation+rejection contract is exercised directly against the extracted
 // pure helper instead (the live suite covers the true happy path against the real API).
 describe("parseVerse", () => {
   it("throws when the model response has no verse field, a non-string verse, or a blank verse", () => {
@@ -70,15 +70,15 @@ describe("parseVerse", () => {
     expect(() => parseVerse("not json")).toThrow();
   });
 
-  it("passes through a verse at or under the 320-char cap unchanged (aside from trimming)", () => {
+  it("passes through a verse at or under the 40-word contract unchanged (aside from trimming)", () => {
     expect(parseVerse(JSON.stringify({ verse: "  a quiet verse  " }))).toBe("a quiet verse");
+    const exactlyForty = Array.from({ length: 40 }, (_, i) => `w${i}`).join(" ");
+    expect(parseVerse(JSON.stringify({ verse: exactlyForty }))).toBe(exactlyForty);
   });
 
-  it("truncates an over-long verse to exactly 320 chars", () => {
-    const long = "x".repeat(400);
-    const result = parseVerse(JSON.stringify({ verse: long }));
-    expect(result.length).toBe(320);
-    expect(result).toBe(long.slice(0, 320));
+  it("throws on a verse over the 40-word contract instead of truncating it — a transcript published as scripture must be genuine and unedited", () => {
+    const fortyOneWords = Array.from({ length: 41 }, (_, i) => `w${i}`).join(" ");
+    expect(() => parseVerse(JSON.stringify({ verse: fortyOneWords }))).toThrow(/40-word contract/);
   });
 });
 

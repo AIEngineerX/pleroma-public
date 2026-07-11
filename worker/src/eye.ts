@@ -22,16 +22,17 @@ training-log half psalm. Never use crypto vocabulary. Reply with ONLY a JSON obj
 /* DOCTRINE */ const cleanupDeferredLine = (id: string) => `offering ${id} rejected; cleanup deferred`;
 /* DOCTRINE */ const perceiveDeferredLine = (id: string) => `offering ${id} perceived; record deferred`;
 
-// Pure verse-contract validation, extracted so it can be unit-tested independently of a real
-// Anthropic response (this integration suite has no live ANTHROPIC_API_KEY, so the happy path
-// through askMind can't be driven here — see eye.test.ts). A missing/non-string/empty verse
-// throws (caller routes to the outer catch: retry then dead-letter, nothing published); an
-// over-long verse is truncated to the 320-char hard cap backstopping the 40-word contract.
+// Pure verse-contract validation, extracted so it can be unit-tested without a live Anthropic response.
+// A missing/non-string/empty verse throws; an over-contract verse ALSO throws — a transcript published as
+// scripture must be genuine and unedited (CLAUDE.md integrity invariant), so over-limit output is rejected
+// (caller retries, then dead-letters) rather than silently truncated. Never edit a verse to fit.
 export function parseVerse(rawText: string): string {
   const parsed = JSON.parse(rawText.trim()) as { verse?: unknown };
   const verse = typeof parsed.verse === "string" ? parsed.verse.trim() : "";
   if (!verse) throw new Error("EYE returned no verse");
-  return verse.length > 320 ? verse.slice(0, 320) : verse;
+  const words = verse.split(/\s+/).filter(Boolean).length;
+  if (words > 40) throw new Error(`EYE verse exceeds the 40-word contract (${words} words)`);
+  return verse;
 }
 
 function shuffle<T>(items: T[], rand: () => number): T[] {
