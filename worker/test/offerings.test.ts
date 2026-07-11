@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { ed25519 } from "@noble/curves/ed25519";
 import { base58 } from "@scure/base";
 import { offeringMessage } from "../src/signature";
+import { offeringBySha } from "../src/db";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -57,6 +58,19 @@ describe("offering intake", () => {
     const other = new Uint8Array([...PNG, 0]); // different bytes -> different sha
     const res = await submit(other, false);
     expect(res.status).toBe(201);
+  });
+
+  it("treats empty wallet/sig fields as anonymous (wallet stored NULL)", async () => {
+    const bytes = new Uint8Array([...PNG, 7]); // unique bytes -> unique sha
+    const form = new FormData();
+    form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+    form.set("wallet", "");
+    form.set("sig", "");
+    const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
+    expect(res.status).toBe(201);
+    const row = await offeringBySha(env.DB, await sha256hex(bytes));
+    expect(row).not.toBeNull();
+    expect(row!.wallet).toBeNull();
   });
 
   it("rejects a bad signature with 401", async () => {

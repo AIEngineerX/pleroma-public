@@ -23,8 +23,11 @@ export async function handleOffering(env: Env, form: FormData): Promise<Response
     return Response.json({ error: "already offered" }, { status: 409 });
   }
 
-  const wallet = form.get("wallet")?.toString() ?? null;
-  const sig = form.get("sig")?.toString() ?? null;
+  // Empty/whitespace-only wallet/sig fields count as anonymous: normalize to null.
+  const rawWallet = form.get("wallet")?.toString().trim();
+  const rawSig = form.get("sig")?.toString().trim();
+  const wallet = rawWallet ? rawWallet : null;
+  const sig = rawSig ? rawSig : null;
   if (wallet || sig) {
     const nonce = form.get("nonce")?.toString() ?? "";
     const expiresAtMs = Number(form.get("expires_at") ?? 0);
@@ -37,9 +40,19 @@ export async function handleOffering(env: Env, form: FormData): Promise<Response
 
   const id = ulid();
   await env.RELICS.put(`offerings/${id}.png`, bytes, { httpMetadata: { contentType: image.type } });
-  await insertOffering(env.DB, {
-    id, wallet, sig, image_key: `offerings/${id}.png`, sha256,
-    status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null,
-  });
+  try {
+    await insertOffering(env.DB, {
+      id, wallet, sig, image_key: `offerings/${id}.png`, sha256,
+      status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null,
+    });
+  } catch (e) {
+    // Lost a duplicate-sha race with a concurrent submission: same 409 as the
+    // pre-check, and remove the R2 object we just wrote so nothing is orphaned.
+    if (e instanceof Error && e.message.includes("UNIQUE")) {
+      await env.RELICS.delete(`offerings/${id}.png`);
+      return Response.json({ error: "already offered" }, { status: 409 });
+    }
+    throw e;
+  }
   return Response.json({ id, status: "pending" }, { status: 201 });
 }
