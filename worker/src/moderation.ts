@@ -1,5 +1,6 @@
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
+import { toBase64 } from "./encoding";
 
 const REJECT_CATEGORIES = [
   "sexual_minors", "explicit_sexual", "gore", "hate_symbol", "doxx_pii", "spam_text_wall",
@@ -14,15 +15,6 @@ personal identifying information such as faces in photographs, addresses, or doc
 abstract art, symbols, short words, and doodles are allowed. When uncertain, reject.`;
 
 export interface ModerationResult { verdict: "allow" | "reject"; category: string }
-
-function toBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
 
 export async function moderate(env: Env, imageBytes: Uint8Array, mediaType: string): Promise<ModerationResult> {
   try {
