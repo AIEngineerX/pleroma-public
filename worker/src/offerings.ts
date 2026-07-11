@@ -39,17 +39,20 @@ export async function handleOffering(env: Env, form: FormData): Promise<Response
   }
 
   const id = ulid();
-  await env.RELICS.put(`offerings/${id}.png`, bytes, { httpMetadata: { contentType: image.type } });
+  // Uploads are quarantined until a moderation ALLOW promotes them to offerings/ (see
+  // eye.ts). Rejects purge the quarantine object and are never kept in permanent R2.
+  const key = `quarantine/${id}`;
+  await env.RELICS.put(key, bytes, { httpMetadata: { contentType: image.type } });
   try {
     await insertOffering(env.DB, {
-      id, wallet, sig, image_key: `offerings/${id}.png`, sha256,
+      id, wallet, sig, image_key: key, sha256,
       status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null,
     });
   } catch (e) {
     // Lost a duplicate-sha race with a concurrent submission: same 409 as the
     // pre-check, and remove the R2 object we just wrote so nothing is orphaned.
     if (e instanceof Error && e.message.includes("UNIQUE")) {
-      await env.RELICS.delete(`offerings/${id}.png`);
+      await env.RELICS.delete(key);
       return Response.json({ error: "already offered" }, { status: 409 });
     }
     throw e;

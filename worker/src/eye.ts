@@ -4,7 +4,7 @@ import { askMind, MindAsleepError } from "./mind";
 import { moderate } from "./moderation";
 import { toBase64 } from "./encoding";
 import {
-  addTranscript, pendingOfferings, setOfferingStatus, type OfferingRow,
+  addTranscript, pendingOfferings, setOfferingImageKey, setOfferingStatus, type OfferingRow,
 } from "./db";
 
 const BATCH = 12;
@@ -32,6 +32,19 @@ function shuffle<T>(items: T[], rand: () => number): T[] {
 async function priestNote(env: Env, offeringId: string, text: string): Promise<void> {
   await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
     text, offering_id: offeringId, rite_id: null, created_at: Date.now() });
+}
+
+// PLANNING.md safety: rejects are never kept in permanent R2; uploads are quarantined until
+// a moderation ALLOW promotes them. Moves the object from o.image_key (quarantine/<id>) to
+// offerings/<id> and durably records the new key.
+export async function promoteFromQuarantine(env: Env, o: OfferingRow): Promise<void> {
+  const obj = await env.RELICS.get(o.image_key);
+  if (!obj) return; // already promoted or missing; nothing to move
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const key = `offerings/${o.id}`;
+  await env.RELICS.put(key, bytes, { httpMetadata: obj.httpMetadata });
+  await env.RELICS.delete(o.image_key);
+  await setOfferingImageKey(env.DB, o.id, key);
 }
 
 export function selectForPerception(
@@ -82,6 +95,7 @@ export async function runEyeBatch(
       const bytes = new Uint8Array(await obj.arrayBuffer());
       const m = await moderate(env, bytes, "image/png");
       if (m.verdict === "allow") {
+        await promoteFromQuarantine(env, o);
         await setOfferingStatus(env.DB, o.id, "perceivable");
       } else {
         await setOfferingStatus(env.DB, o.id, "rejected");

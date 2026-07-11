@@ -43,6 +43,10 @@ export async function setOfferingStatus(
   ).bind(id, status, opts?.bumpAttempts ? 1 : 0, opts?.perceivedAt ?? null).run();
 }
 
+export async function setOfferingImageKey(db: D1Database, id: string, imageKey: string): Promise<void> {
+  await db.prepare(`UPDATE offerings SET image_key = ?2 WHERE id = ?1`).bind(id, imageKey).run();
+}
+
 export async function addTranscript(db: D1Database, t: TranscriptRow): Promise<void> {
   await db.prepare(
     `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)

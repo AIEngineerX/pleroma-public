@@ -1,10 +1,14 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { runEyeBatch, selectForPerception } from "../src/eye";
+import { runEyeBatch, selectForPerception, promoteFromQuarantine } from "../src/eye";
 import { insertOffering, type OfferingRow } from "../src/db";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
+
+const PNG = Uint8Array.from(atob(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+), c => c.charCodeAt(0));
 
 function off(id: string, wallet: string | null): OfferingRow {
   return { id, wallet, sig: null, image_key: `offerings/${id}.png`, sha256: id,
@@ -86,5 +90,43 @@ describe("runEyeBatch", () => {
     const perceivableRow = await env.DB.prepare(`SELECT status FROM offerings WHERE id = ?1`)
       .bind(perceivableId).first<{ status: string }>();
     expect(perceivableRow?.status).toBe("perceivable");
+  });
+
+  it("promotes an allowed offering from quarantine/ to offerings/ and updates image_key", async () => {
+    const id = "promote-me";
+    await env.RELICS.put(`quarantine/${id}`, PNG);
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
+      .bind(id).first<OfferingRow>())!;
+
+    await promoteFromQuarantine(env, row);
+
+    const promoted = await env.RELICS.get(`offerings/${id}`);
+    expect(promoted).not.toBeNull();
+    await promoted?.arrayBuffer();
+    expect(await env.RELICS.get(`quarantine/${id}`)).toBeNull();
+    const updated = await env.DB.prepare(`SELECT image_key FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ image_key: string }>();
+    expect(updated?.image_key).toBe(`offerings/${id}`);
+  });
+
+  it("purges the quarantine object when a pending offering is rejected", async () => {
+    const id = "reject-purge-me";
+    await env.RELICS.put(`quarantine/${id}`, PNG);
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    // No valid ANTHROPIC_API_KEY in this suite, so moderate() fails closed to reject —
+    // deterministically exercises the reject/purge branch without a live LLM call.
+    await runEyeBatch(env);
+
+    const row = await env.DB.prepare(`SELECT status, image_key FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ status: string; image_key: string }>();
+    expect(row?.status).toBe("rejected");
+    expect(await env.RELICS.get(`quarantine/${id}`)).toBeNull();
+    expect(await env.RELICS.get(`offerings/${id}`)).toBeNull();
   });
 });

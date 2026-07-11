@@ -46,7 +46,7 @@ describe("offering intake", () => {
     expect(res.status).toBe(201);
     const { id, status } = await res.json<{ id: string; status: string }>();
     expect(status).toBe("pending");
-    const stored = await env.RELICS.get(`offerings/${id}.png`);
+    const stored = await env.RELICS.get(`quarantine/${id}`);
     expect(stored).not.toBeNull();
     await stored?.arrayBuffer(); // consume the body: unread R2ObjectBody streams break storage teardown
 
@@ -71,6 +71,19 @@ describe("offering intake", () => {
     const row = await offeringBySha(env.DB, await sha256hex(bytes));
     expect(row).not.toBeNull();
     expect(row!.wallet).toBeNull();
+  });
+
+  it("stores the intake image under the quarantine/ prefix, not offerings/", async () => {
+    const bytes = new Uint8Array([...PNG, 9, 9]); // unique bytes -> unique sha
+    const res = await submit(bytes, false);
+    expect(res.status).toBe(201);
+    const { id } = await res.json<{ id: string }>();
+    const row = await offeringBySha(env.DB, await sha256hex(bytes));
+    expect(row?.image_key).toBe(`quarantine/${id}`);
+    const quarantined = await env.RELICS.get(`quarantine/${id}`);
+    expect(quarantined).not.toBeNull();
+    await quarantined?.arrayBuffer();
+    expect(await env.RELICS.get(`offerings/${id}`)).toBeNull();
   });
 
   it("rejects a bad signature with 401", async () => {
