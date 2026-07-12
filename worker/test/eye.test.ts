@@ -403,4 +403,42 @@ describe("sweepQuarantine", () => {
     const remaining = await env.RELICS.list({ prefix: "quarantine/cap-" });
     expect(remaining.objects.length).toBe(2);
   });
+
+  it("does not delete an aged quarantine/ object still referenced by a pending offering, but does delete an aged orphan with no matching row — an offering paused by a moderator outage must never have its image destroyed", async () => {
+    const pendingId = "sweep-pending-keep";
+    const orphanId = "sweep-orphan-gone";
+    await env.RELICS.put(`quarantine/${pendingId}`, PNG);
+    await env.RELICS.put(`quarantine/${orphanId}`, PNG);
+    await insertOffering(env.DB, { id: pendingId, wallet: null, sig: null,
+      image_key: `quarantine/${pendingId}`, sha256: pendingId, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    const future = Date.now() + 25 * 60 * 60_000; // both objects read as aged
+    const deleted = await sweepQuarantine(env, future);
+    expect(deleted).toBe(1); // only the orphan
+
+    const stillPending = await env.RELICS.get(`quarantine/${pendingId}`);
+    expect(stillPending).not.toBeNull(); // preserved — a future moderation attempt still needs it
+    await stillPending?.arrayBuffer();
+    expect(await env.RELICS.get(`quarantine/${orphanId}`)).toBeNull();
+  });
+
+  it("deletes an aged quarantine/ object whose offering row is terminal (rejected/failed) — those images are never reclaimable", async () => {
+    const rejectedId = "sweep-rejected-reclaim";
+    const failedId = "sweep-failed-reclaim";
+    await env.RELICS.put(`quarantine/${rejectedId}`, PNG);
+    await env.RELICS.put(`quarantine/${failedId}`, PNG);
+    await insertOffering(env.DB, { id: rejectedId, wallet: null, sig: null,
+      image_key: `quarantine/${rejectedId}`, sha256: rejectedId, status: "rejected",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    await insertOffering(env.DB, { id: failedId, wallet: null, sig: null,
+      image_key: `quarantine/${failedId}`, sha256: failedId, status: "failed",
+      attempts: 2, created_at: Date.now(), perceived_at: null });
+
+    const future = Date.now() + 25 * 60 * 60_000;
+    const deleted = await sweepQuarantine(env, future);
+    expect(deleted).toBe(2);
+    expect(await env.RELICS.get(`quarantine/${rejectedId}`)).toBeNull();
+    expect(await env.RELICS.get(`quarantine/${failedId}`)).toBeNull();
+  });
 });
