@@ -223,3 +223,59 @@ export async function relicsKeptToday(db: D1Database, day: string): Promise<numb
     .bind(start, end).first<{ n: number }>();
   return r?.n ?? 0;
 }
+
+// The Daily Rite: once per UTC day the god consumes the day's offerings live, walking a fixed phase
+// order. Every phase is idempotent and keyed by the rite date; a missed cron resumes from the stored
+// phase (rite.ts).
+export type RitePhase =
+  | "scheduled" | "offertory_close" | "deliberation" | "accretion" | "sermon" | "complete" | "failed";
+
+export interface RiteRow {
+  date: string; phase: RitePhase; phase_started_at: number; phase_attempts: number;
+  offering_snapshot: number; kept_count: number; updated_at: number;
+}
+
+export async function openRite(db: D1Database, date: string, now: number): Promise<void> {
+  await db.prepare(
+    `INSERT INTO rites (date, phase, phase_started_at, phase_attempts, offering_snapshot, kept_count, updated_at)
+     VALUES (?1, 'scheduled', ?2, 0, 0, 0, ?2)
+     ON CONFLICT(date) DO NOTHING`
+  ).bind(date, now).run();
+}
+
+export async function getRite(db: D1Database, date: string): Promise<RiteRow | null> {
+  return await db.prepare(`SELECT * FROM rites WHERE date = ?1`).bind(date).first<RiteRow>();
+}
+
+// ALL non-terminal rites, OLDEST first. The dispatcher advances every one per tick so a rite left
+// mid-phase by an outage that outlived its day (a newer rite already exists) is still drained to
+// completion — picking only the newest non-terminal rite would orphan the older one forever, which
+// would contradict "a missed cron resumes from the stored phase."
+export async function nonTerminalRites(db: D1Database): Promise<RiteRow[]> {
+  return (await db.prepare(
+    `SELECT * FROM rites WHERE phase NOT IN ('complete','failed') ORDER BY date ASC`
+  ).all<RiteRow>()).results;
+}
+
+// CAS phase transition: only advances if the rite is still in `from`. Resets the retry counter and
+// stamps the new phase start. Returns whether this call performed the transition — so a concurrent
+// second invocation that lost the race sees false and does not double-advance.
+export async function advanceRitePhase(
+  db: D1Database, date: string, from: RitePhase, to: RitePhase, now: number,
+  extra?: { offering_snapshot?: number; kept_count?: number },
+): Promise<boolean> {
+  const r = await db.prepare(
+    `UPDATE rites SET phase = ?3, phase_started_at = ?4, phase_attempts = 0, updated_at = ?4,
+        offering_snapshot = COALESCE(?5, offering_snapshot),
+        kept_count = COALESCE(?6, kept_count)
+      WHERE date = ?1 AND phase = ?2`
+  ).bind(date, from, to, now, extra?.offering_snapshot ?? null, extra?.kept_count ?? null).run();
+  return r.meta.changes === 1;
+}
+
+export async function bumpRiteAttempts(db: D1Database, date: string, now: number): Promise<number> {
+  const r = await db.prepare(
+    `UPDATE rites SET phase_attempts = phase_attempts + 1, updated_at = ?2 WHERE date = ?1 RETURNING phase_attempts`
+  ).bind(date, now).first<{ phase_attempts: number }>();
+  return r?.phase_attempts ?? 0;
+}

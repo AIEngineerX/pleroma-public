@@ -1,0 +1,94 @@
+import { env } from "cloudflare:test";
+import { beforeAll, describe, expect, it } from "vitest";
+import { openRite, getRite, advanceRite, nonTerminalRites, PHASE_ORDER } from "../src/rite";
+import { insertOffering, insertRelic } from "../src/db";
+import { applyMigrations } from "./helpers";
+
+beforeAll(() => applyMigrations(env.DB));
+
+describe("rite state machine", () => {
+  it("opens idempotently and walks the phases one step per advance", async () => {
+    const date = "2026-07-12";
+    const t = Date.parse(date + "T00:50:00Z");
+    await openRite(env.DB, date, t);
+    await openRite(env.DB, date, t); // second open is a no-op
+    expect((await getRite(env.DB, date))?.phase).toBe("scheduled");
+
+    // seed one perceived offering with a verse so deliberation (KEEP) has work
+    await insertOffering(env.DB, { id: "rite-o1", wallet: null, sig: null, image_key: "offerings/rite-o1",
+      sha256: "rite-o1", status: "perceived", attempts: 0, created_at: t, perceived_at: t });
+    await env.DB.prepare(`INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+      VALUES ('rv1','EYE','verse','a mark', 'rite-o1', NULL, ?1)`).bind(t).run();
+
+    let phase = (await getRite(env.DB, date))!.phase;
+    const seen: string[] = [phase];
+    for (let i = 0; i < 8 && phase !== "complete" && phase !== "failed"; i++) {
+      phase = await advanceRite(env, date, t + i * 60_000);
+      seen.push(phase);
+    }
+    // offertory_close snapshots, deliberation runs KEEP (no key -> keeps 0 but still advances),
+    // accretion marks relics accreted, and the sermon closes: with nothing kept the rite closes in
+    // silence (no live voice needed) and reaches complete in the keyless suite.
+    expect(seen).toEqual([
+      "scheduled", "offertory_close", "deliberation", "accretion", "sermon", "complete",
+    ]);
+    expect(PHASE_ORDER).toContain("accretion");
+  });
+
+  it("records the offering snapshot as the offertory closes and is idempotent if re-run in that phase", async () => {
+    const date = "2026-07-13";
+    const t = Date.parse(date + "T00:50:00Z");
+    await insertOffering(env.DB, { id: "snap-1", wallet: null, sig: null, image_key: "offerings/snap-1",
+      sha256: "snap-1", status: "perceived", attempts: 0, created_at: t, perceived_at: t });
+    await openRite(env.DB, date, t);
+    await advanceRite(env, date, t);          // scheduled -> offertory_close (snapshot taken as offertory closes)
+    const r1 = await getRite(env.DB, date);
+    expect(r1?.phase).toBe("offertory_close");
+    expect(r1?.offering_snapshot).toBeGreaterThanOrEqual(1);
+  });
+
+  it("resumes from the stored phase after a simulated missed cron", async () => {
+    const date = "2026-07-14";
+    const t = Date.parse(date + "T00:50:00Z");
+    await openRite(env.DB, date, t);
+    await advanceRite(env, date, t); // -> offertory_close
+    // Simulate a long gap (missed crons): a later advance simply continues from offertory_close.
+    const next = await advanceRite(env, date, t + 6 * 3600_000);
+    expect(next).toBe("deliberation");
+  });
+
+  it("moves a phase to failed after MAX_PHASE_RETRIES transient failures", async () => {
+    const date = "2026-07-15";
+    const t = Date.parse(date + "T00:50:00Z");
+    await openRite(env.DB, date, t);
+    // The sermon speaks only when the rite kept something; seed one kept relic so the sermon actually
+    // reaches for the live voice (TONGUE) and, with no key, fails -> retries -> lands failed.
+    await insertRelic(env.DB, { id: "sermon-relic-1", offering_id: "sermon-o1", wallet: null,
+      summary: "a kept mark", rite_id: date, kept_at: t, genesis: 0, accreted_at: null });
+    // fast-forward to the sermon phase by driving the no-LLM phases, then force retries on sermon.
+    await advanceRite(env, date, t); // -> offertory_close
+    await advanceRite(env, date, t); // -> deliberation
+    await advanceRite(env, date, t); // -> accretion
+    await advanceRite(env, date, t); // -> sermon
+    expect((await getRite(env.DB, date))?.phase).toBe("sermon");
+    for (let i = 0; i < 3; i++) await advanceRite(env, date, t); // sermon askMind fails w/o key
+    expect((await getRite(env.DB, date))?.phase).toBe("failed");
+  });
+
+  it("drains all non-terminal rites oldest-first so a day-boundary outage never orphans the older rite", async () => {
+    // An outage spanned a day boundary: an older rite is stranded mid-phase while a newer rite opens.
+    const older = "2026-07-16";
+    const newer = "2026-07-17";
+    const to = Date.parse(older + "T00:50:00Z");
+    const tn = Date.parse(newer + "T00:50:00Z");
+    await openRite(env.DB, older, to);
+    await advanceRite(env, older, to); // older stranded at offertory_close by the outage
+    await openRite(env.DB, newer, tn); // newer day opens while the older rite is unfinished
+
+    const pending = await nonTerminalRites(env.DB);
+    const dates = pending.map(r => r.date);
+    expect(dates).toContain(older);
+    expect(dates).toContain(newer);
+    expect(dates.indexOf(older)).toBeLessThan(dates.indexOf(newer)); // oldest-first: older drains first
+  });
+});
