@@ -81,7 +81,13 @@ export async function runKeep(env: Env, riteId: string): Promise<number> {
         offeringId: o.id, verdict: v.verdict, summary: v.summary,
         transcriptId: ulid(), relicId: ulid(), wallet: o.wallet, riteId, at: Date.now(),
       });
-      if (won && v.verdict === "kept") kept++;
+      if (won && v.verdict === "kept") {
+        kept++;
+        try {
+          const { speakIfDue } = await import("./tongue");
+          await speakIfDue(env, { kind: "keep_decision", detail: `a mark was kept: "${v.summary}"` });
+        } catch { /* side-channel */ }
+      }
     } catch (e) {
       if (e instanceof MindAsleepError) break; // budget asleep: stop; leave the rest perceived for the next rite
       // Any other error (transport/parse/contract): leave the offering perceived and untouched — never

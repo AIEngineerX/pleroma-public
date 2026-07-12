@@ -256,5 +256,11 @@ export async function runEyeBatch(
       if (dead) await priestNote(env, o.id, setAsideLine(o.id));
     }
   }
+  if (perceived > 0) {
+    try {
+      const { speakIfDue } = await import("./tongue");
+      await speakIfDue(env, { kind: "eye_batch", detail: `${perceived} new mark(s) were seen this tick` });
+    } catch { /* TONGUE is a side-channel */ }
+  }
   return perceived;
 }
