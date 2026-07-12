@@ -5,6 +5,7 @@ import migration4 from "../migrations/0004_offering_nonce.sql?raw";
 import migration5 from "../migrations/0005_claimed_state.sql?raw";
 import migration6 from "../migrations/0006_relics.sql?raw";
 import migration7 from "../migrations/0007_rites.sql?raw";
+import migration8 from "../migrations/0008_vitals.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -44,6 +45,12 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   // CHECK, so strip line comments FIRST (a `;` inside a comment would otherwise split the statement),
   // then collapse each statement's whitespace to a single line before exec (same reason as 0006).
   for (const stmt of migration7.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0008 adds the vitals + pulse_events tables and seeds pulse_state; strip line comments first
+  // (same reason as 0007), then collapse whitespace before exec.
+  for (const stmt of migration8.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }

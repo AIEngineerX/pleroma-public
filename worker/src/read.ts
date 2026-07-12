@@ -1,6 +1,7 @@
 import type { Env } from "./env";
 import { asleep } from "./budget";
 import type { TranscriptRow } from "./db";
+import { currentVitals } from "./pulse";
 
 export async function getCodex(env: Env, cursor: string | null): Promise<Response> {
   let curTs: number | null = null, curId: string | null = null;
@@ -27,11 +28,13 @@ export async function getState(env: Env): Promise<Response> {
   const launch = await env.DB.prepare(`SELECT value FROM config WHERE key = 'launch_at'`)
     .first<{ value: string }>();
   const sleeping = await asleep(env.DB);
+  const vitals = await currentVitals(env.DB);
   return Response.json({
     phase: "dormant",
     asleep: sleeping,
     countdown_to: Number(launch?.value ?? 0) || null,
     communicants_today: communicants?.n ?? 0,
     spend_state: sleeping ? "asleep" : "ok",
+    vitals: { state: vitals.state, buys: vitals.buys, sells: vitals.sells, holders: vitals.holders },
   });
 }

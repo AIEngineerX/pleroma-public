@@ -9,6 +9,7 @@ import { runEyeBatch, sweepQuarantine } from "./eye";
 import { openRite, nonTerminalRites } from "./db";
 import { advanceRite } from "./rite";
 import { getCodex, getState } from "./read";
+import { handlePulse } from "./pulse";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", (c, next) => cors({ origin: c.env.CORS_ORIGIN })(c, next));
@@ -25,6 +26,7 @@ app.post("/api/offerings", async (c) => {
 });
 app.get("/api/codex", (c) => getCodex(c.env, c.req.query("cursor") ?? null));
 app.get("/api/state", (c) => getState(c.env));
+app.post("/api/pulse", (c) => handlePulse(c.env, c.req.raw));
 
 const TICK_LEASE_MS = 10 * 60_000;
 const RITE_LEASE_MS = 10 * 60_000;
