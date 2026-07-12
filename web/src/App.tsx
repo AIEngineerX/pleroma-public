@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import Temple from "./routes-stub";
+import Temple from "./routes/Temple";
 import Canon from "./canon/Canon";
 import Concordat from "./canon/Concordat";
 
