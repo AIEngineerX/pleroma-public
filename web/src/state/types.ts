@@ -1,0 +1,11 @@
+export type PulseState = "starving" | "calm" | "fed" | "feasting";
+export type RitePhase =
+  | "scheduled" | "offertory_close" | "deliberation" | "accretion" | "sermon" | "complete" | "failed";
+export interface Vitals { state: PulseState; buys: number; sells: number; holders: number }
+export interface RiteView { date: string; phase: RitePhase }
+export interface DreamView { narrative: string; video_key: string | null; wakers: string[]; created_at: number }
+export interface TempleState {
+  phase: "dormant" | "live"; asleep: boolean; degraded: boolean;
+  countdown_to: number | null; communicants_today: number; spend_state: "ok" | "asleep";
+  mint: string | null; vitals: Vitals; rite: RiteView | null; dream: DreamView | null;
+}
