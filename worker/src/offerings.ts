@@ -3,11 +3,12 @@ import type { Env } from "./env";
 import { nonceIsFresh } from "./nonce";
 import { verifyOffering } from "./signature";
 import { commitOffering, offeringBySha } from "./db";
+import { checkRate, WINDOW_MS, WALLET_LIMIT, IP_LIMIT } from "./ratelimit";
 
 const MAX_BYTES = 512 * 1024;
 const TYPES = new Set(["image/png", "image/webp"]);
 
-export async function handleOffering(env: Env, form: FormData): Promise<Response> {
+export async function handleOffering(env: Env, form: FormData, clientIp: string): Promise<Response> {
   const image = form.get("image");
   if (!(image instanceof File) || !TYPES.has(image.type)) {
     return Response.json({ error: "image required (png or webp)" }, { status: 400 });
@@ -43,6 +44,17 @@ export async function handleOffering(env: Env, form: FormData): Promise<Response
     if (!(await nonceIsFresh(env.DB, nonce))) {
       return Response.json({ error: "signature rejected" }, { status: 401 });
     }
+  }
+
+  // Intake priest: per-IP and (for signed offerings) per-wallet caps in a 60s fixed window, checked
+  // before the R2 write so a flood never touches storage. Anonymous floods are capped by IP; signed
+  // floods by wallet.
+  const now = Date.now();
+  if (!(await checkRate(env.DB, `ip:${clientIp}`, now, WINDOW_MS, IP_LIMIT))) {
+    return Response.json({ error: "too many offerings; rest a moment" }, { status: 429 });
+  }
+  if (wallet && !(await checkRate(env.DB, `wallet:${wallet}`, now, WINDOW_MS, WALLET_LIMIT))) {
+    return Response.json({ error: "too many offerings; rest a moment" }, { status: 429 });
   }
 
   const id = ulid();

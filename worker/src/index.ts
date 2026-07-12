@@ -22,7 +22,8 @@ app.post("/api/offerings", async (c) => {
   if (!clHeader) return c.json({ error: "length required" }, 411);
   const len = Number(clHeader);
   if (!Number.isFinite(len) || len > 1_500_000) return c.json({ error: "image too large" }, 413); // 512KB image + multipart overhead
-  return handleOffering(c.env, await c.req.formData());
+  const ip = c.req.header("cf-connecting-ip") ?? "0.0.0.0";
+  return handleOffering(c.env, await c.req.formData(), ip);
 });
 app.get("/api/codex", (c) => getCodex(c.env, c.req.query("cursor") ?? null));
 app.get("/api/state", (c) => getState(c.env));
