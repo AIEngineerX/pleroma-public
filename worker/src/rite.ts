@@ -2,7 +2,8 @@ import { ulid } from "ulid";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { tongueSystemPrompt } from "./doctrine";
-import { runKeep, KEEP_DEADLINE_MS } from "./keep";
+import { runKeep } from "./keep";
+import { RITE_WORK_BUDGET_MS } from "./leases";
 import {
   addTranscript, advanceRitePhase, bumpRiteAttempts, getRite, nonTerminalRites, openRite,
   type RitePhase, type RiteRow,
@@ -53,7 +54,7 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
       return {}; // offertory is closed and snapshotted; nothing further until deliberation
     case "deliberation": {
       // EYE and KEEP audibly deliberate: KEEP renders verdicts over the perceived offerings, bounded by
-      // deadlineMs so a slow batch cannot outlive the rite lock lease (see advanceRiteLocked, KEEP_DEADLINE_MS).
+      // deadlineMs so a slow batch cannot outlive the rite lock lease (see advanceRiteLocked, RITE_WORK_BUDGET_MS).
       const kept = await runKeep(env, date, deadlineMs);
       return { kept };
     }
@@ -117,7 +118,7 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
 // hit OR the phase has been erroring past its PHASE_DEADLINE_MS budget — whichever trips first. Budget
 // asleep is not a failure — it leaves the rite in place to resume when the budget resets. The CAS in
 // advanceRitePhase makes a concurrent second invocation a no-op, so overlapping ticks never double-advance.
-export async function advanceRite(env: Env, date: string, now: number, deadlineMs: number = Date.now() + KEEP_DEADLINE_MS): Promise<RitePhase> {
+export async function advanceRite(env: Env, date: string, now: number, deadlineMs: number = Date.now() + RITE_WORK_BUDGET_MS): Promise<RitePhase> {
   const rite = await getRite(env.DB, date);
   if (!rite || rite.phase === "complete" || rite.phase === "failed") return rite?.phase ?? "complete";
   const phase = rite.phase;

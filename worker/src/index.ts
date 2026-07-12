@@ -6,7 +6,7 @@ import { issueNonce, sweepNonces } from "./nonce";
 import { handleOffering } from "./offerings";
 import { acquireLock, releaseLock } from "./lock";
 import { runEyeBatch, sweepQuarantine } from "./eye";
-import { KEEP_DEADLINE_MS } from "./keep";
+import { RITE_LEASE_MS, RITE_WORK_BUDGET_MS } from "./leases";
 import { openRite, nonTerminalRites } from "./db";
 import { advanceRite } from "./rite";
 import { getCodex, getRelics, getState, getTallies } from "./read";
@@ -36,7 +36,6 @@ app.get("/api/audio/*", (c) => serveAudio(c.env, c.req.path.slice("/api/".length
 app.get("/api/img/:id", (c) => serveOfferingImage(c.env, c.req.param("id")));
 
 const TICK_LEASE_MS = 10 * 60_000;
-const RITE_LEASE_MS = 10 * 60_000;
 const RITE_OPEN_MINUTE_OF_DAY = 50; // 00:50 UTC (minute-of-day 50) = T-10m before the 01:00 rite hour
 
 function utcDate(now: number): string { return new Date(now).toISOString().slice(0, 10); }
@@ -74,7 +73,7 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
 // self-healing if that cron was missed), then advances EVERY non-terminal rite one phase, oldest-first, so
 // a rite stranded mid-phase by an outage that outlived its day is still carried to completion.
 export async function advanceRiteLocked(
-  env: Env, now: number = Date.now(), deadlineMs: number = Date.now() + KEEP_DEADLINE_MS,
+  env: Env, now: number = Date.now(), deadlineMs: number = Date.now() + RITE_WORK_BUDGET_MS,
 ): Promise<void> {
   const holder = ulid();
   if (!(await acquireLock(env.DB, "rite", holder, RITE_LEASE_MS))) return;

@@ -3,20 +3,13 @@ import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { keepSystemPrompt } from "./doctrine";
 import { dayKey } from "./budget";
+import { RITE_WORK_BUDGET_MS } from "./leases";
 import {
   commitVerdict, recentRelicSummaries, relicsKeptToday, walletHistory, type OfferingRow,
 } from "./db";
 
 const KEEP_DAILY = 12;
 const KEEP_SYSTEM = keepSystemPrompt();
-
-// Wall-clock budget a single runKeep pass gets before it stops taking NEW offerings, so the deliberation
-// phase cannot outlive the rite lock's lease (RITE_LEASE_MS = 10min, index.ts). Tighter than EYE's 8-min
-// batch budget because a KEEP iteration's worst case is ~2x an EYE iteration's — a verdict askMind PLUS,
-// on a keep, an inline speakIfDue askMind — so a shorter bound keeps the in-flight tail under the lease.
-// Checked before each offering; the remainder is left `perceived` and picked up by a later rite (runKeep's
-// candidate query has no rite-date filter, so nothing is lost — only deferred).
-export const KEEP_DEADLINE_MS = 7 * 60_000;
 
 export interface KeepVerdict { verdict: "kept" | "mourned"; summary: string }
 
@@ -53,7 +46,13 @@ async function verseFor(env: Env, offeringId: string): Promise<string> {
   return r?.text ?? "";
 }
 
-export async function runKeep(env: Env, riteId: string, deadlineMs: number = Date.now() + KEEP_DEADLINE_MS): Promise<number> {
+// Wall-clock budget a single runKeep pass gets before it stops taking NEW offerings, so the deliberation
+// phase cannot outlive the rite lock's lease. RITE_WORK_BUDGET_MS (leases.ts) derives this from the lease
+// minus the worst in-flight phase tail minus a safety margin — see leases.ts for the full arithmetic and
+// why it covers KEEP's worst case (a verdict askMind PLUS, on a keep, an inline speakIfDue askMind).
+// Checked before each offering; the remainder is left `perceived` and picked up by a later rite (runKeep's
+// candidate query has no rite-date filter, so nothing is lost — only deferred).
+export async function runKeep(env: Env, riteId: string, deadlineMs: number = Date.now() + RITE_WORK_BUDGET_MS): Promise<number> {
   const day = dayKey();
   const perceived = (await env.DB.prepare(
     `SELECT * FROM offerings WHERE status = 'perceived' ORDER BY perceived_at LIMIT 50`

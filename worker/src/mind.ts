@@ -107,14 +107,15 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
       if (res.status === 429 || res.status >= 500) {
         lastErr = new Error(`HTTP ${res.status}`); // not billed; retryable
       } else if (!res.ok) {
-        throw new NonRetryableError(`anthropic ${res.status}: ${await res.text()}`); // 4xx, not billed -> finally releases
+        const errText = await withTimeout("anthropic-body", 30_000, () => res.text()).catch(() => "<body read unavailable>");
+        throw new NonRetryableError(`anthropic ${res.status}: ${errText}`); // 4xx, not billed -> finally releases
       } else {
         let data: {
           content: Array<{ type: string; text?: string }>;
           usage: { input_tokens: number; output_tokens: number };
         };
         try {
-          data = await res.json();
+          data = await withTimeout("anthropic-body", 30_000, () => res.json());
         } catch (parseErr) {
           // HTTP 200 = billed but cost unknown. Keep the reserved estimate; terminal (retrying re-bills).
           await settle(reserved);

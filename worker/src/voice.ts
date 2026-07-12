@@ -48,8 +48,11 @@ export function elevenLabsVoice(env: Env): VoiceVendor {
           signal,
         },
       ));
-      if (!res.ok) throw new Error(`elevenlabs ${res.status}: ${await res.text()}`);
-      return { audio: new Uint8Array(await res.arrayBuffer()), contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
+      if (!res.ok) {
+        const errText = await withTimeout("elevenlabs-body", 30_000, () => res.text()).catch(() => "<body read unavailable>");
+        throw new Error(`elevenlabs ${res.status}: ${errText}`);
+      }
+      return { audio: new Uint8Array(await withTimeout("elevenlabs-body", 30_000, () => res.arrayBuffer())), contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
     },
   };
 }
@@ -67,8 +70,11 @@ export function xaiVoice(env: Env): VoiceVendor {
         body: JSON.stringify({ model: "grok-voice", input: text, response_format: "mp3" }),
         signal,
       }));
-      if (!res.ok) throw new Error(`xai ${res.status}: ${await res.text()}`);
-      return { audio: new Uint8Array(await res.arrayBuffer()), contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
+      if (!res.ok) {
+        const errText = await withTimeout("xai-body", 30_000, () => res.text()).catch(() => "<body read unavailable>");
+        throw new Error(`xai ${res.status}: ${errText}`);
+      }
+      return { audio: new Uint8Array(await withTimeout("xai-body", 30_000, () => res.arrayBuffer())), contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
     },
   };
 }
