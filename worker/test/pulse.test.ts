@@ -7,6 +7,9 @@ beforeAll(() => applyMigrations(env.DB));
 
 const MINT = "MintPleroma1111111111111111111111111111111";
 const POOL = "Pool1111111111111111111111111111111111111111";
+const OTHER_POOL = "OtherPool111111111111111111111111111111111"; // recognized by Helius but NOT in PULSE_POOLS
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
+const WSOL_POOL = "WsolPool1111111111111111111111111111111111";
 
 // A captured Helius enriched-transaction SHAPE (the fields PULSE reads). A user buying the token:
 // SOL leaves the user (nativeTransfers to the pool), the token reaches the user (tokenTransfers to feePayer).
@@ -27,11 +30,60 @@ function sellTx(sig: string): any {
   };
 }
 
+// Same shape as buyTx, but through OTHER_POOL — a pool Helius recognizes that is NOT in PULSE_POOLS.
+// events.swap alone (tokenOutputs carrying the mint) is not pool-specific; the regression this guards
+// against is classifySwap counting this as a buy anyway.
+function buyTxOtherPool(sig: string): any {
+  return {
+    signature: sig, timestamp: Math.floor(Date.now() / 1000), type: "SWAP", feePayer: "UserBuyer222",
+    tokenTransfers: [{ fromUserAccount: OTHER_POOL, toUserAccount: "UserBuyer222", mint: MINT, tokenAmount: 1000 }],
+    nativeTransfers: [{ fromUserAccount: "UserBuyer222", toUserAccount: OTHER_POOL, amount: 2_000_000_000 }],
+    events: { swap: { tokenOutputs: [{ mint: MINT, userAccount: "UserBuyer222" }], nativeInput: { amount: "2000000000" } } },
+  };
+}
+
+// A wSOL-denominated AMM pool: the SOL leg moves as an SPL transfer of WSOL_MINT to/from the pool
+// (nativeTransfers empty, as on a real Raydium-style swap), not a nativeTransfer.
+function wsolBuyTx(sig: string): any {
+  return {
+    signature: sig, timestamp: Math.floor(Date.now() / 1000), type: "SWAP", feePayer: "UserWsolBuyer1",
+    tokenTransfers: [
+      { fromUserAccount: WSOL_POOL, toUserAccount: "UserWsolBuyer1", mint: MINT, tokenAmount: 500 },
+      { fromUserAccount: "UserWsolBuyer1", toUserAccount: WSOL_POOL, mint: WSOL_MINT, tokenAmount: 1.5 },
+    ],
+    nativeTransfers: [],
+    events: { swap: { tokenOutputs: [{ mint: MINT, userAccount: "UserWsolBuyer1" }] } },
+  };
+}
+function wsolSellTx(sig: string): any {
+  return {
+    signature: sig, timestamp: Math.floor(Date.now() / 1000), type: "SWAP", feePayer: "UserWsolSeller1",
+    tokenTransfers: [
+      { fromUserAccount: "UserWsolSeller1", toUserAccount: WSOL_POOL, mint: MINT, tokenAmount: 500 },
+      { fromUserAccount: WSOL_POOL, toUserAccount: "UserWsolSeller1", mint: WSOL_MINT, tokenAmount: 1.2 },
+    ],
+    nativeTransfers: [],
+    events: { swap: { tokenInputs: [{ mint: MINT, userAccount: "UserWsolSeller1" }] } },
+  };
+}
+
 describe("PULSE classification + aggregation", () => {
   it("classifies buys and sells by pool direction", () => {
     expect(classifySwap(buyTx("s1"), MINT, [POOL])).toBe("buy");
     expect(classifySwap(sellTx("s2"), MINT, [POOL])).toBe("sell");
     expect(classifySwap({ ...buyTx("s3"), tokenTransfers: [], events: {} }, MINT, [POOL])).toBeNull();
+  });
+
+  // Regression guard: the events.swap branch must not classify a swap that never touches PULSE_POOLS,
+  // even though events.swap's tokenOutputs alone (no pool identity) says it moved our mint.
+  it("does not classify a swap of the mint through a pool outside PULSE_POOLS", () => {
+    expect(classifySwap(buyTxOtherPool("s4"), MINT, [POOL])).toBeNull();
+    expect(classifySwap(buyTxOtherPool("s5"), MINT, [])).toBeNull(); // empty PULSE_POOLS attributes nothing
+  });
+
+  it("classifies wSOL-pool swaps by direction (pool-gated same as native-SOL pools)", () => {
+    expect(classifySwap(wsolBuyTx("s6"), MINT, [WSOL_POOL])).toBe("buy");
+    expect(classifySwap(wsolSellTx("s7"), MINT, [WSOL_POOL])).toBe("sell");
   });
 
   it("aggregates classified swaps into per-minute buckets with volume", () => {
@@ -41,6 +93,14 @@ describe("PULSE classification + aggregation", () => {
     expect(aggs[0].buys).toBe(2);
     expect(aggs[0].sells).toBe(1);
     expect(aggs[0].buy_volume).toBeCloseTo(4); // 2 x 2 SOL
+  });
+
+  it("counts wSOL SPL-transfer volume for a wSOL-denominated pool (nativeTransfers empty)", () => {
+    const now = Date.parse("2026-07-12T01:00:30Z");
+    const aggs = aggregate([wsolBuyTx("w1"), wsolSellTx("w2")], MINT, [WSOL_POOL], now);
+    expect(aggs.length).toBe(1);
+    expect(aggs[0].buy_volume).toBeCloseTo(1.5);
+    expect(aggs[0].sell_volume).toBeCloseTo(1.2);
   });
 });
 

@@ -18,13 +18,27 @@ export interface HeliusTx {
 
 export type PulseState = "starving" | "calm" | "fed" | "feasting";
 
+// Wrapped SOL: on a standard AMM (Raydium etc.) the SOL leg of a swap moves as an SPL transfer of this
+// mint, not a nativeTransfer. pump.fun bonding-curve trades are native SOL, so both must be accounted for.
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
+
 // Buy = the token left the pool toward the user (user received our mint). Sell = the token entered the
 // pool from the user. Direction is read from the enriched swap event first (authoritative), then from raw
 // tokenTransfers relative to the known pool addresses. Returns null if this tx does not move our mint.
+//
+// The events.swap branch is gated on touchesPool: Helius's tokenInputs/tokenOutputs carry the TRADER's
+// userAccount, not the pool/AMM account, so events.swap alone can't tell which pool a swap went through.
+// A tx demonstrably touches our pools only if a pool address appears as a transfer counterparty in
+// tokenTransfers/nativeTransfers (confirmed against a live Helius parsed swap) — same signal the fallback
+// branch below already uses. Without this gate, a swap of `mint` through ANY pool Helius recognizes would
+// count, even ones outside PULSE_POOLS.
 export function classifySwap(tx: HeliusTx, mint: string, pools: string[]): "buy" | "sell" | null {
   const poolSet = new Set(pools);
+  const touchesPool =
+    (tx.tokenTransfers ?? []).some(t => (t.fromUserAccount && poolSet.has(t.fromUserAccount)) || (t.toUserAccount && poolSet.has(t.toUserAccount))) ||
+    (tx.nativeTransfers ?? []).some(n => (n.fromUserAccount && poolSet.has(n.fromUserAccount)) || (n.toUserAccount && poolSet.has(n.toUserAccount)));
   const swap = tx.events?.swap;
-  if (swap) {
+  if (swap && touchesPool) {
     if (swap.tokenOutputs?.some(o => o.mint === mint)) return "buy";
     if (swap.tokenInputs?.some(i => i.mint === mint)) return "sell";
   }
@@ -36,17 +50,24 @@ export function classifySwap(tx: HeliusTx, mint: string, pools: string[]): "buy"
   return null;
 }
 
+// tokenAmount on tokenTransfers is already decimal-adjusted (per Helius's enriched schema), and wSOL has
+// 9 decimals same as native SOL, so a wSOL tokenAmount is already in the same SOL unit lamports/1e9 yields
+// below — no extra conversion needed, just sum both sources.
 function solInto(tx: HeliusTx, pools: string[]): number {
   const poolSet = new Set(pools);
   let lamports = 0;
   for (const n of tx.nativeTransfers ?? []) if (n.toUserAccount && poolSet.has(n.toUserAccount)) lamports += n.amount ?? 0;
-  return lamports / 1e9;
+  let wsol = 0;
+  for (const t of tx.tokenTransfers ?? []) if (t.mint === WSOL_MINT && t.toUserAccount && poolSet.has(t.toUserAccount)) wsol += t.tokenAmount ?? 0;
+  return lamports / 1e9 + wsol;
 }
 function solOutOf(tx: HeliusTx, pools: string[]): number {
   const poolSet = new Set(pools);
   let lamports = 0;
   for (const n of tx.nativeTransfers ?? []) if (n.fromUserAccount && poolSet.has(n.fromUserAccount)) lamports += n.amount ?? 0;
-  return lamports / 1e9;
+  let wsol = 0;
+  for (const t of tx.tokenTransfers ?? []) if (t.mint === WSOL_MINT && t.fromUserAccount && poolSet.has(t.fromUserAccount)) wsol += t.tokenAmount ?? 0;
+  return lamports / 1e9 + wsol;
 }
 
 export interface MinuteAgg { minute: number; buys: number; sells: number; buy_volume: number; sell_volume: number }
