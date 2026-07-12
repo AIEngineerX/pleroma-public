@@ -95,14 +95,28 @@ export async function runDreamLocked(env: Env, date?: string, now: number = Date
   } finally { await releaseLock(env.DB, "dream", holder); }
 }
 
+// Nightly backup under its own `backup` lock (separate from `tick`/`rite`/`dream` so it never blocks or
+// is blocked by them). Exports every table to R2, then sweeps backups past the 30-day retention window;
+// the sweep is best-effort so a retention hiccup never fails tonight's export.
+export async function runBackupLocked(env: Env, now: number = Date.now()): Promise<void> {
+  const holder = ulid();
+  if (!(await acquireLock(env.DB, "backup", holder, 10 * 60_000))) return;
+  try {
+    const { exportBackup, sweepBackups } = await import("./backup");
+    await exportBackup(env, new Date(now).toISOString().slice(0, 10));
+    try { await sweepBackups(env, now); } catch { /* best-effort retention */ }
+  } finally { await releaseLock(env.DB, "backup", holder); }
+}
+
 export default {
   fetch: app.fetch,
-  // The cron dispatcher: the three triggers are mutually disjoint so no invocation double-fires a job.
+  // The cron dispatcher: the four triggers are mutually disjoint so no invocation double-fires a job.
   // `*/15 * * * *` runs the EYE tick AND advances the rite (each under its own lock); `50 0 * * *` opens
   // the day's rite (and advances it) under the rite lock only; `0 3 * * *` composes DREAM under the
-  // dream lock only. Cloudflare does not replay a missed cron, so recovery is state-driven: the tick's
-  // candidate queries re-select stranded rows and advanceRite resumes from the stored phase, so a rite
-  // can complete hours late without data loss.
+  // dream lock only; `30 3 * * *` backs up D1 to R2 under the backup lock only. Cloudflare does not
+  // replay a missed cron, so recovery is state-driven: the tick's candidate queries re-select stranded
+  // rows and advanceRite resumes from the stored phase, so a rite can complete hours late without data
+  // loss.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     switch (event.cron) {
       case "50 0 * * *":
@@ -110,6 +124,9 @@ export default {
         break;
       case "0 3 * * *":
         ctx.waitUntil(runDreamLocked(env));
+        break;
+      case "30 3 * * *":
+        ctx.waitUntil(runBackupLocked(env));
         break;
       case "*/15 * * * *":
       default:

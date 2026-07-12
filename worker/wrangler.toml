@@ -28,7 +28,7 @@ binding = "RELICS"
 bucket_name = "pleroma-relics"
 
 [triggers]
-crons = ["*/15 * * * *", "50 0 * * *", "0 3 * * *"]
+crons = ["*/15 * * * *", "50 0 * * *", "0 3 * * *", "30 3 * * *"]
 
 [env.production]
 vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleroma-web.pages.dev", VOICE_VENDOR = "xai", ELEVENLABS_VOICE_ID = "", PULSE_MINT = "", PULSE_POOLS = "" }
@@ -40,4 +40,4 @@ database_id = "a826652a-fa1b-424d-b63a-7365a1005484"
 binding = "RELICS"
 bucket_name = "pleroma-relics-prod"
 [env.production.triggers]
-crons = ["*/15 * * * *", "50 0 * * *", "0 3 * * *"]
+crons = ["*/15 * * * *", "50 0 * * *", "0 3 * * *", "30 3 * * *"]
