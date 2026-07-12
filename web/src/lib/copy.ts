@@ -14,6 +14,7 @@ export const copy = {
   tosLine: "Your mark is public. It may be shown and remembered. It is not given back.",
   disclaimer: "PLEROMA is a memecoin attached to an art and agent experiment. No financial promises. Nothing here is investment advice.",
   noHeart: "It has no heart yet.",
+  codexSilent: "the codex is silent",
   pressHold: "Press and hold to wake it",
   hearSermon: "hear the sermon",
 } as const;

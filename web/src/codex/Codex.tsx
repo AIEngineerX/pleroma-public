@@ -6,8 +6,8 @@ import Plate from "./Plate";
 import { SermonPlayer } from "./sermonAudio";
 import { copy } from "../lib/copy";
 
-export default function Codex({ apiBase, state, onAmplitude, audioCtx }:
-  { apiBase: string; state: TempleState | null; onAmplitude: (a: number) => void; audioCtx: () => AudioContext }) {
+export default function Codex({ apiBase, state, dormant, onAmplitude, audioCtx }:
+  { apiBase: string; state: TempleState | null; dormant: boolean; onAmplitude: (a: number) => void; audioCtx: () => AudioContext }) {
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const player = useRef(new SermonPlayer());
   // The rite cadence comes from the state prop (fetched elsewhere by useTempleState), not from this
@@ -69,7 +69,10 @@ export default function Codex({ apiBase, state, onAmplitude, audioCtx }:
           onClick={() => player.current.play(apiBase, sermonKey, audioCtx())}>{copy.hearSermon}</button>
       )}
       {lines}
-      {entries.length === 0 && <p className="font-liturgy italic text-ink-faded">{copy.noHeart}</p>}
+      {/* "It has no heart yet." is Dormant's line (Temple's "the page" section) -- printing it here too
+          duplicated it verbatim on screen (Task 14 carryover). While dormant, the codex says nothing;
+          once live, an empty codex reads as a distinct, quieter note instead. */}
+      {entries.length === 0 && !dormant && <p className="font-machine text-xs text-ink-faded">{copy.codexSilent}</p>}
     </div>
   );
 }

@@ -37,6 +37,7 @@ export default function Temple() {
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
+  const dormant = !state || !!view?.dormant;
   // The Stain's red threads read the live PULSE pigment (Task 4's oklch table), not a fixed tint;
   // falls back to starving's dried rubric before the first poll lands.
   const stainPigment = useMemo(() => {
@@ -73,13 +74,13 @@ export default function Temple() {
             <h1 className="font-liturgy text-3xl tracking-wide">PLEROMA</h1>
             {/* the dormant product (PLANNING "Day-1 ignition"): "it has no heart yet" + the Courier
                 countdown to the First Rite, gone the instant /api/state reports live with a mint. */}
-            {(!state || view?.dormant) && <Dormant state={state} now={now} />}
+            {dormant && <Dormant state={state} now={now} />}
             {!awake && <p className="font-machine text-xs text-ink-faded">{copy.pressHold}</p>}
           </section>
           {/* codex (right / below): the live scripture feed. Spans both grid rows on desktop so its own
               (unbounded) height never inflates row 1 and pushes the offering surface off-screen. */}
           <aside aria-label="the codex" className="md:col-start-2 md:row-start-1 md:row-span-2 font-machine text-sm text-ink-faded py-8">
-            <Codex apiBase={API_BASE} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
+            <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
           </aside>
           {/* offering surface: row 2 of the left column on desktop, directly beneath the Stain (DESIGN.md:85-87
               "the page (Stain + offering surface) ~60% left"); after the codex on mobile (DESIGN "Mobile, the

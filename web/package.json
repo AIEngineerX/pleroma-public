@@ -17,6 +17,6 @@
     "@vitejs/plugin-react": "^4", "tailwindcss": "^4", "@tailwindcss/vite": "^4",
     "typescript": "^5", "vite": "^6", "vitest": "^3", "@playwright/test": "^1",
     "@types/node": "^22", "@types/react": "^19", "@types/react-dom": "^19",
-    "@noble/curves": "^1"
+    "@noble/curves": "^1", "@axe-core/playwright": "^4"
   }
 }
