@@ -246,4 +246,17 @@ describe("offering intake", () => {
     const res = await submit(bytes, false);
     expect(res.status).toBe(201);
   });
+
+  it("rejects a signed submission with an oversized sig field (>128 chars) with 400, before the O(n^2) base58 decode runs, and inserts no offering row", async () => {
+    const bytes = new Uint8Array([...PNG, 2, 9]); // unique bytes -> unique sha
+    const form = new FormData();
+    form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+    form.set("wallet", wallet);
+    form.set("sig", "1".repeat(129)); // over the 128-char cap; a real ed25519 sig is <=88 base58 chars
+    form.set("nonce", "c".repeat(32));
+    form.set("expires_at", String(Date.now() + 60_000));
+    const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
+    expect(res.status).toBe(400);
+    expect(await offeringBySha(env.DB, await sha256hex(bytes))).toBeNull();
+  });
 });
