@@ -1,7 +1,7 @@
 import { ulid } from "ulid";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
-import { moderate } from "./moderation";
+import { moderate, ModerationUnavailableError } from "./moderation";
 import { toBase64 } from "./encoding";
 import {
   addTranscript, offeringStatusById, pendingOfferings, publishPerception, setOfferingImageKey, setOfferingStatus,
@@ -177,6 +177,11 @@ export async function runEyeBatch(
       }
     } catch (e) {
       if (e instanceof MindAsleepError) return 0;
+      if (e instanceof ModerationUnavailableError) {
+        // Moderator down / no verdict — do NOT bump attempts or destroy the offering. Leave it pending and
+        // stop this tick's moderation so a systemic outage can't burn the whole queue; it resumes on recovery.
+        return 0;
+      }
       const dead = o.attempts >= 2;
       await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true, expectedStatus: "pending" });
       if (dead) await priestNote(env, o.id, setAsideLine(o.id));
