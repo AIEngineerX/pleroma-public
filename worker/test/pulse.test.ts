@@ -83,4 +83,29 @@ describe("POST /api/pulse", () => {
     expect(v.buys).toBe(1); // dedup-sig counted once despite three deliveries of it
     expect(v.sells).toBe(1);
   });
+
+  it("rejects a batch larger than the cap", async () => {
+    const big = JSON.stringify(Array.from({ length: 501 }, (_, i) => buyTx(`big-${i}`)));
+    const res = await SELF.fetch("http://x/api/pulse", {
+      method: "POST", headers: { authorization: "test-secret", "content-type": "application/json" }, body: big,
+    });
+    expect(res.status).toBe(413);
+  });
+
+  // Placed after the ingest test above so a held lock can't make an earlier test's POST 503 unexpectedly.
+  it("returns 503 when another ingest holds the pulse lock (Helius will retry)", async () => {
+    const { acquireLock, releaseLock } = await import("../src/lock");
+    const ok = await acquireLock(env.DB, "pulse", "someone-else", 60_000);
+    expect(ok).toBe(true);
+    try {
+      const res = await SELF.fetch("http://x/api/pulse", {
+        method: "POST",
+        headers: { authorization: "test-secret", "content-type": "application/json" },
+        body: JSON.stringify([buyTx("locked-out")]),
+      });
+      expect(res.status).toBe(503);
+    } finally {
+      await releaseLock(env.DB, "pulse", "someone-else"); // release so later tests can acquire it
+    }
+  });
 });

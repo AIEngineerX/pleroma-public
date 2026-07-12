@@ -1,9 +1,14 @@
+import { ulid } from "ulid";
 import type { Env } from "./env";
+import { acquireLock, releaseLock } from "./lock";
+
+const MAX_BATCH = 500;          // H2: Helius batches are small (~<=100); this bounds a single POST's work
+const PULSE_LEASE_MS = 30_000;  // M1: lock lease; self-heals if a holder dies
 
 export interface HeliusTokenTransfer { fromUserAccount?: string; toUserAccount?: string; mint?: string; tokenAmount?: number }
 export interface HeliusNativeTransfer { fromUserAccount?: string; toUserAccount?: string; amount?: number }
 export interface HeliusTx {
-  signature: string; timestamp?: number; type?: string; feePayer?: string;
+  signature?: string; timestamp?: number; type?: string; feePayer?: string;
   tokenTransfers?: HeliusTokenTransfer[]; nativeTransfers?: HeliusNativeTransfer[];
   events?: { swap?: { tokenOutputs?: Array<{ mint?: string; userAccount?: string }>;
                       tokenInputs?: Array<{ mint?: string; userAccount?: string }>;
@@ -71,7 +76,7 @@ const UP = [2, 8, 20];   // starving->calm, calm->fed, fed->feasting
 const DOWN = [0, 4, 14]; // calm->starving, fed->calm, feasting->fed
 export function nextPulseState(current: PulseState, m: { buys: number; sells: number; netVolume: number }): PulseState {
   const score = m.buys - m.sells + m.netVolume; // net buy pressure
-  let i = LEVELS.indexOf(current);
+  let i = Math.max(0, LEVELS.indexOf(current)); // -1 (corrupt state row) heals to "starving"
   while (i < LEVELS.length - 1 && score >= UP[i]) i++;   // rise through every UP threshold cleared
   while (i > 0 && score <= DOWN[i - 1]) i--;             // fall through every DOWN threshold breached
   // The two loops are mutually exclusive: UP[k] > DOWN[k] at every boundary, so any score that triggered a
@@ -105,8 +110,9 @@ export async function currentVitals(db: D1Database): Promise<{ state: PulseState
 }
 
 export async function handlePulse(env: Env, req: Request): Promise<Response> {
-  // Webhook auth: Helius sends the exact string configured as the webhook's authHeader as the
-  // Authorization header on every POST. Constant-time-ish equality against the shared secret.
+  // Auth: Helius sends the webhook's configured authHeader value as the Authorization header.
+  // Plain compare; a remote timing attack through Cloudflare's edge is impractical (network jitter
+  // dwarfs the comparison), so this is intentionally NOT a constant-time compare.
   const auth = req.headers.get("authorization") ?? "";
   if (!env.PULSE_WEBHOOK_SECRET || auth !== env.PULSE_WEBHOOK_SECRET) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
@@ -114,26 +120,73 @@ export async function handlePulse(env: Env, req: Request): Promise<Response> {
   let txs: HeliusTx[];
   try { txs = await req.json(); if (!Array.isArray(txs)) throw new Error("expected array"); }
   catch { return Response.json({ error: "bad payload" }, { status: 400 }); }
+  // H2: bound the batch so one POST can't trip Worker CPU/subrequest limits (which would also be H1's
+  // trigger) or stall the shared D1's write path.
+  if (txs.length > MAX_BATCH) {
+    return Response.json({ error: "batch too large" }, { status: 413 });
+  }
 
-  const mint = env.PULSE_MINT, pools = env.PULSE_POOLS.split(",").map(s => s.trim()).filter(Boolean);
-  const now = Date.now();
-  // Dedup: insert each signature; a duplicate (already delivered) is skipped from aggregation.
-  const fresh: HeliusTx[] = [];
-  for (const tx of txs) {
-    if (!tx.signature) continue;
-    const r = await env.DB.prepare(`INSERT INTO pulse_events (signature, seen_at) VALUES (?1, ?2) ON CONFLICT(signature) DO NOTHING`)
-      .bind(tx.signature, now).run();
-    if (r.meta.changes === 1) fresh.push(tx);
+  // M1: serialize ingest + state recompute with the existing lock helper. On contention we return a
+  // retryable 503 rather than silently succeed — Helius re-delivers (at-least-once) and dedup makes the
+  // retry safe. (Never return 200 without processing: Helius won't retry a 2xx, so that would drop swaps.)
+  const holder = ulid();
+  if (!(await acquireLock(env.DB, "pulse", holder, PULSE_LEASE_MS))) {
+    return Response.json({ error: "busy" }, { status: 503 });
   }
-  for (const a of aggregate(fresh, mint, pools, now)) {
-    await env.DB.prepare(
-      `INSERT INTO vitals (minute, buys, sells, buy_volume, sell_volume) VALUES (?1, ?2, ?3, ?4, ?5)
-       ON CONFLICT(minute) DO UPDATE SET buys = buys + ?2, sells = sells + ?3,
-         buy_volume = buy_volume + ?4, sell_volume = sell_volume + ?5`
-    ).bind(a.minute, a.buys, a.sells, a.buy_volume, a.sell_volume).run();
+  try {
+    const mint = env.PULSE_MINT;
+    const pools = env.PULSE_POOLS.split(",").map((s) => s.trim()).filter(Boolean);
+    const now = Date.now();
+
+    // De-dup within this batch (first occurrence wins), drop signature-less txs.
+    const inBatch = new Set<string>();
+    const unique: HeliusTx[] = [];
+    for (const tx of txs) {
+      if (!tx.signature || inBatch.has(tx.signature)) continue;
+      inBatch.add(tx.signature);
+      unique.push(tx);
+    }
+
+    // Under the lock (no TOCTOU) find which signatures are already recorded, so we count only fresh ones.
+    let fresh = unique;
+    if (unique.length > 0) {
+      const placeholders = unique.map((_, i) => `?${i + 1}`).join(",");
+      const existing = await env.DB.prepare(
+        `SELECT signature FROM pulse_events WHERE signature IN (${placeholders})`
+      ).bind(...unique.map((t) => t.signature)).all<{ signature: string }>();
+      const already = new Set(existing.results.map((r) => r.signature));
+      fresh = unique.filter((t) => !already.has(t.signature!));
+    }
+
+    // H1: mark-seen + count in ONE atomic db.batch(). A crash/limit-trip mid-write can no longer leave a
+    // signature marked seen in pulse_events without its swap reaching vitals (which would be permanent,
+    // silent under-counting, since a Helius retry of that exact signature would dedup-skip forever).
+    if (fresh.length > 0) {
+      const aggs = aggregate(fresh, mint, pools, now);
+      const stmts: D1PreparedStatement[] = [];
+      for (const tx of fresh) {
+        stmts.push(env.DB.prepare(
+          `INSERT INTO pulse_events (signature, seen_at) VALUES (?1, ?2) ON CONFLICT(signature) DO NOTHING`
+        ).bind(tx.signature, now));
+      }
+      for (const a of aggs) {
+        stmts.push(env.DB.prepare(
+          `INSERT INTO vitals (minute, buys, sells, buy_volume, sell_volume) VALUES (?1, ?2, ?3, ?4, ?5)
+           ON CONFLICT(minute) DO UPDATE SET buys = buys + ?2, sells = sells + ?3,
+             buy_volume = buy_volume + ?4, sell_volume = sell_volume + ?5`
+        ).bind(a.minute, a.buys, a.sells, a.buy_volume, a.sell_volume));
+      }
+      await env.DB.batch(stmts);
+    }
+
+    // State recompute stays inside the lock so concurrent deliveries can't interleave read-modify-write
+    // on config.pulse_state (M1). If a crash lands after the batch but before this write, vitals is already
+    // correct and pulse_state is merely stale — it self-heals on the next webhook (state is derived).
+    const prev = await readState(env.DB);
+    const state = nextPulseState(prev.state, await windowMetrics(env.DB, now));
+    await writeState(env.DB, { state, holders: prev.holders, updated_at: now });
+    return Response.json({ ok: true, ingested: fresh.length, state });
+  } finally {
+    await releaseLock(env.DB, "pulse", holder);
   }
-  const prev = await readState(env.DB);
-  const state = nextPulseState(prev.state, await windowMetrics(env.DB, now));
-  await writeState(env.DB, { state, holders: prev.holders, updated_at: now });
-  return Response.json({ ok: true, ingested: fresh.length, state });
 }
