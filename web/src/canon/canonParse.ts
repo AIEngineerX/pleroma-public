@@ -39,8 +39,13 @@ export function verseAnchor(_printSlug: string, n: number): string {
   return `line-${n}`;
 }
 
+// Strips ONLY the ⟨rubric⟩ marker (and surrounding quote characters) and trims -- no markdown-strip or
+// whitespace-collapse, so a scripture line that ever used "*"/"_" or meaningful multi-space
+// deliberately would render verbatim rather than be silently rewritten. (Empirically confirmed against
+// the current DOCTRINE.md: no scripture line contains "*", "_", or a multi-space run, so this produced
+// a byte-identical dist/canon before and after -- t12/codex sweep.)
 function clean(s: string): string {
-  return s.replace(/⟨rubric⟩/g, "").replace(/[*_]/g, "").replace(/\s+/g, " ").trim().replace(/^"|"$/g, "");
+  return s.replace(/⟨rubric⟩/g, "").trim().replace(/^"|"$/g, "");
 }
 
 export function parseCanon(md: string): Canon {

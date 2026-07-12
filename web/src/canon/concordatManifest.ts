@@ -73,7 +73,9 @@ export const concordat = {
       symbol: "nextPulseState",
     },
     {
-      claim: "The priests sweep quarantined images after 24 hours and back up the whole state to storage every night.",
+      claim: "The priests sweep quarantined images 24 hours after upload, unless a moderation attempt on them " +
+        "is still pending (then it is retained until that resolves) -- never served either way; and back up " +
+        "all persistent data to storage every night (ephemeral coordination locks excluded).",
       mapsTo: "worker/src/eye.ts (quarantine sweep), worker/src/backup.ts (nightly export)",
       symbol: "sweepQuarantine",
     },

@@ -19,13 +19,18 @@ export default function Codex({ apiBase, state, dormant, onAmplitude, audioCtx }
   useEffect(() => { player.current.onAmplitude(onAmplitude); }, [onAmplitude]);
   useEffect(() => () => player.current.stop(), []);
 
+  // Bumped at the start of every poll(); a response only applies if no newer poll has started since
+  // (mirrors useTempleState.ts's guard against onVis racing an in-flight request).
+  const gen = useRef(0);
+
   useEffect(() => {
     let stopped = false, timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
+      const myGen = ++gen.current;
       if (document.visibilityState === "visible") {
         try {
           const { entries: e } = await fetchCodex(apiBase, null);
-          if (!stopped) setEntries(prev => mergeNewest(prev, e));
+          if (!stopped && myGen === gen.current) setEntries(prev => mergeNewest(prev, e));
         } catch { /* keep the last good entries; the codex never blanks on a transient failure */ }
       }
       // Clear before rescheduling so exactly one poll chain ever exists (mirrors useTempleState.ts):

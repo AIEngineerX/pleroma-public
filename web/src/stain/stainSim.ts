@@ -81,14 +81,15 @@ export class StainSim {
     this.resize(); this.a = this.fbo(); this.b = this.fbo();
   }
   private link(vs: string, fs: string): WebGLProgram {
-    const g = this.gl, p = g.createProgram()!;
+    const g = this.gl, p = g.createProgram()!, shaders: WebGLShader[] = [];
     for (const [t, s] of [[g.VERTEX_SHADER, vs], [g.FRAGMENT_SHADER, fs]] as const) {
       const sh = g.createShader(t)!; g.shaderSource(sh, s); g.compileShader(sh);
       if (!g.getShaderParameter(sh, g.COMPILE_STATUS)) throw new Error(g.getShaderInfoLog(sh) ?? "shader");
-      g.attachShader(p, sh);
+      g.attachShader(p, sh); shaders.push(sh);
     }
     g.linkProgram(p);
     if (!g.getProgramParameter(p, g.LINK_STATUS)) throw new Error(g.getProgramInfoLog(p) ?? "link");
+    for (const sh of shaders) g.deleteShader(sh); // attached shaders are retained by the linked program, freed with it
     return p;
   }
   private quad(): WebGLVertexArrayObject {

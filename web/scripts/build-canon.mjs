@@ -12,7 +12,10 @@ const md = readFileSync(resolve(here, "../../DOCTRINE.md"), "utf8");
 
 // Inline a copy of canonParse.ts's regexes (same structure, same slugging) to avoid a TS import in
 // this .mjs build step. Any change to the DOCTRINE.md structure must update both this and canonParse.ts.
-const clean = (s) => s.replace(/⟨rubric⟩/g, "").replace(/[*_]/g, "").replace(/\s+/g, " ").trim().replace(/^"|"$/g, "");
+// clean() strips ONLY the ⟨rubric⟩ marker (and surrounding quotes) and trims -- no markdown-strip or
+// whitespace-collapse, so a scripture line that ever used "*"/"_" or meaningful multi-space
+// deliberately renders verbatim instead of being silently rewritten (keep in sync with canonParse.ts).
+const clean = (s) => s.replace(/⟨rubric⟩/g, "").trim().replace(/^"|"$/g, "");
 const one = (/before all others:\s*\n+\s*⟨rubric⟩\s*\*\*"([^"]+)"\*\*/.exec(md) || [])[1] || "";
 const articles = [...md.matchAll(/^\d+\.\s+\*\*(THE [A-Z]+)\*\*\s+[—-]\s+⟨rubric⟩\s*\*"([^"]+)"\*/gm)]
   .map((m) => ({ slug: m[1].replace(/^THE\s+/i, "").toLowerCase().trim(), organ: m[1], line: clean(m[2]) }));

@@ -55,7 +55,11 @@ export default function Concordat() {
       </section>
 
       <section className="mt-10 space-y-6">
-        <h2 className="font-machine text-xs tracking-widest text-ink-faded">THE VOICE, VERBATIM</h2>
+        <h2 className="font-machine text-xs tracking-widest text-ink-faded">THE VOICE, STATIC SYSTEM PROMPT VERBATIM</h2>
+        <p className="font-machine text-xs text-ink-faded">
+          Quoted below exactly as it runs. The bracketed segment is the per-organ register injected from
+          DOCTRINE §VI at load, not written here.
+        </p>
         {concordat.prompts.map((p) => (
           <div key={p.organ}>
             <p className="font-machine text-xs text-ink-faded mb-1">{p.organ}</p>

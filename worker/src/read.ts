@@ -7,7 +7,9 @@ import { activeAlerts } from "./alert";
 export async function getCodex(env: Env, cursor: string | null): Promise<Response> {
   let curTs: number | null = null, curId: string | null = null;
   if (cursor !== null) {
-    const m = /^(\d+):([0-9A-HJKMNP-TV-Z]{26})$/.exec(cursor);
+    // 15 digits caps well under Number.MAX_SAFE_INTEGER (16 digits) so Number() below can never lose
+    // precision or overflow to Infinity, which would shift or break pagination.
+    const m = /^(\d{1,15}):([0-9A-HJKMNP-TV-Z]{26})$/.exec(cursor);
     if (!m) return Response.json({ error: "bad cursor" }, { status: 400 });
     curTs = Number(m[1]); curId = m[2];
   }
@@ -75,7 +77,9 @@ export async function getState(env: Env): Promise<Response> {
 export async function getRelics(env: Env, cursor: string | null): Promise<Response> {
   let curKept: number | null = null, curId: string | null = null;
   if (cursor !== null) {
-    const m = /^(\d+):([0-9A-HJKMNP-TV-Z]{26})$/.exec(cursor);
+    // 15 digits caps well under Number.MAX_SAFE_INTEGER (16 digits) so Number() below can never lose
+    // precision or overflow to Infinity, which would shift or break pagination.
+    const m = /^(\d{1,15}):([0-9A-HJKMNP-TV-Z]{26})$/.exec(cursor);
     if (!m) return Response.json({ error: "bad cursor" }, { status: 400 });
     curKept = Number(m[1]); curId = m[2];
   }
