@@ -6,6 +6,7 @@ import { issueNonce, sweepNonces } from "./nonce";
 import { handleOffering } from "./offerings";
 import { acquireLock, releaseLock } from "./lock";
 import { runEyeBatch, sweepQuarantine } from "./eye";
+import { KEEP_DEADLINE_MS } from "./keep";
 import { openRite, nonTerminalRites } from "./db";
 import { advanceRite } from "./rite";
 import { getCodex, getRelics, getState, getTallies } from "./read";
@@ -69,7 +70,9 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
 // reaches the offertory-close minute (the `50 0 * * *` cron opens it too; opening here makes the tick
 // self-healing if that cron was missed), then advances EVERY non-terminal rite one phase, oldest-first, so
 // a rite stranded mid-phase by an outage that outlived its day is still carried to completion.
-export async function advanceRiteLocked(env: Env, now: number = Date.now()): Promise<void> {
+export async function advanceRiteLocked(
+  env: Env, now: number = Date.now(), deadlineMs: number = Date.now() + KEEP_DEADLINE_MS,
+): Promise<void> {
   const holder = ulid();
   if (!(await acquireLock(env.DB, "rite", holder, RITE_LEASE_MS))) return;
   try {
@@ -77,8 +80,15 @@ export async function advanceRiteLocked(env: Env, now: number = Date.now()): Pro
     // Real boundary: minutes 0..49 do not open a rite for "today" — its offertory window has not begun.
     // openRite is idempotent per date.
     if (minuteOfDay >= RITE_OPEN_MINUTE_OF_DAY) await openRite(env.DB, utcDate(now), now);
+    // deadlineMs bounds the whole drain inside the rite lock lease (RITE_LEASE_MS). Without it, a multi-day
+    // outage recovery (nonTerminalRites drains ALL stranded rites oldest-first in one lock hold) could run
+    // several deliberation/sermon phases back-to-back and outlive the lease, letting the next tick acquire
+    // the expired lock and run a second, concurrent advance for the same date. Stop draining once past the
+    // budget; the remaining rites are idempotent and resume on the next tick. The same deadline flows into
+    // each advanceRite -> runKeep so a single slow deliberation is bounded too.
     for (const rite of await nonTerminalRites(env.DB)) {
-      await advanceRite(env, rite.date, now);
+      if (Date.now() > deadlineMs) break;
+      await advanceRite(env, rite.date, now, deadlineMs);
     }
   } finally { await releaseLock(env.DB, "rite", holder); }
 }

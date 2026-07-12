@@ -43,6 +43,18 @@ describe("cron dispatch helpers", () => {
     expect(r?.phase).toBe("offertory_close");
   });
 
+  it("stops draining once past its deadline: the rite is opened but not advanced (bounds the rite lock-hold)", async () => {
+    // A past deadline forces the drain loop to break before advancing any rite. This is the wall-clock bound
+    // that keeps a multi-day recovery (many stranded rites drained oldest-first in ONE lock hold) — and a
+    // single slow deliberation — from outliving RITE_LEASE_MS and letting the next tick run a second,
+    // concurrent advance for the same date. openRite runs before the loop, so the rite still exists.
+    const now = Date.parse("2026-07-24T00:50:00Z");
+    await advanceRiteLocked(env, now, Date.now() - 1_000); // deadline already in the past
+    const r = await getRite(env.DB, "2026-07-24");
+    expect(r).not.toBeNull();           // opened…
+    expect(r?.phase).toBe("scheduled"); // …but NOT advanced to offertory_close: the drain broke on the deadline
+  });
+
   it("does not open a rite before the offertory-close minute (00:00..00:49)", async () => {
     // 00:40 UTC is inside the day but before the 00:50 open boundary: no rite for today yet.
     const now = Date.parse("2026-07-19T00:40:00Z");

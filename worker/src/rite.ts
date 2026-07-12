@@ -2,7 +2,7 @@ import { ulid } from "ulid";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { tongueSystemPrompt } from "./doctrine";
-import { runKeep } from "./keep";
+import { runKeep, KEEP_DEADLINE_MS } from "./keep";
 import {
   addTranscript, advanceRitePhase, bumpRiteAttempts, getRite, nonTerminalRites, openRite,
   type RitePhase, type RiteRow,
@@ -41,7 +41,7 @@ function nextPhase(p: RitePhase): RitePhase {
 // The offering snapshot is taken as the `scheduled` phase's action — i.e. the transition
 // scheduled -> offertory_close IS the offertory closing, so the count is captured at that moment and
 // is already recorded once the rite is observed in the `offertory_close` state.
-async function runPhaseAction(env: Env, date: string, phase: RitePhase): Promise<{ snapshot?: number; kept?: number }> {
+async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadlineMs: number): Promise<{ snapshot?: number; kept?: number }> {
   switch (phase) {
     case "scheduled": {
       // Close the offertory: snapshot the day's perceived offerings — the material the rite deliberates.
@@ -52,8 +52,9 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase): Promise
     case "offertory_close":
       return {}; // offertory is closed and snapshotted; nothing further until deliberation
     case "deliberation": {
-      // EYE and KEEP audibly deliberate: KEEP renders verdicts over the perceived offerings.
-      const kept = await runKeep(env, date);
+      // EYE and KEEP audibly deliberate: KEEP renders verdicts over the perceived offerings, bounded by
+      // deadlineMs so a slow batch cannot outlive the rite lock lease (see advanceRiteLocked, KEEP_DEADLINE_MS).
+      const kept = await runKeep(env, date, deadlineMs);
       return { kept };
     }
     case "accretion": {
@@ -116,12 +117,12 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase): Promise
 // hit OR the phase has been erroring past its PHASE_DEADLINE_MS budget — whichever trips first. Budget
 // asleep is not a failure — it leaves the rite in place to resume when the budget resets. The CAS in
 // advanceRitePhase makes a concurrent second invocation a no-op, so overlapping ticks never double-advance.
-export async function advanceRite(env: Env, date: string, now: number): Promise<RitePhase> {
+export async function advanceRite(env: Env, date: string, now: number, deadlineMs: number = Date.now() + KEEP_DEADLINE_MS): Promise<RitePhase> {
   const rite = await getRite(env.DB, date);
   if (!rite || rite.phase === "complete" || rite.phase === "failed") return rite?.phase ?? "complete";
   const phase = rite.phase;
   try {
-    const extra = await runPhaseAction(env, date, phase);
+    const extra = await runPhaseAction(env, date, phase, deadlineMs);
     const to = nextPhase(phase);
     await advanceRitePhase(env.DB, date, phase, to, now, {
       offering_snapshot: extra.snapshot, kept_count: extra.kept,

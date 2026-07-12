@@ -10,6 +10,14 @@ import {
 const KEEP_DAILY = 12;
 const KEEP_SYSTEM = keepSystemPrompt();
 
+// Wall-clock budget a single runKeep pass gets before it stops taking NEW offerings, so the deliberation
+// phase cannot outlive the rite lock's lease (RITE_LEASE_MS = 10min, index.ts). Tighter than EYE's 8-min
+// batch budget because a KEEP iteration's worst case is ~2x an EYE iteration's — a verdict askMind PLUS,
+// on a keep, an inline speakIfDue askMind — so a shorter bound keeps the in-flight tail under the lease.
+// Checked before each offering; the remainder is left `perceived` and picked up by a later rite (runKeep's
+// candidate query has no rite-date filter, so nothing is lost — only deferred).
+export const KEEP_DEADLINE_MS = 7 * 60_000;
+
 export interface KeepVerdict { verdict: "kept" | "mourned"; summary: string }
 
 // Pure verdict-contract validation, unit-testable without a live response. A missing/blank/over-limit
@@ -45,7 +53,7 @@ async function verseFor(env: Env, offeringId: string): Promise<string> {
   return r?.text ?? "";
 }
 
-export async function runKeep(env: Env, riteId: string): Promise<number> {
+export async function runKeep(env: Env, riteId: string, deadlineMs: number = Date.now() + KEEP_DEADLINE_MS): Promise<number> {
   const day = dayKey();
   const perceived = (await env.DB.prepare(
     `SELECT * FROM offerings WHERE status = 'perceived' ORDER BY perceived_at LIMIT 50`
@@ -59,6 +67,7 @@ export async function runKeep(env: Env, riteId: string): Promise<number> {
 
   let kept = 0;
   for (const o of selectForKeeping(perceived, attended, await relicsKeptToday(env.DB, day))) {
+    if (Date.now() > deadlineMs) break; // bound the pass within the rite lock lease; the rest stays perceived for a later rite
     if (await relicsKeptToday(env.DB, day) >= KEEP_DAILY) break; // re-check the cap each iteration
     const verse = await verseFor(env, o.id);
     const hist = o.wallet ? await walletHistory(env.DB, o.wallet) : { offering_count: 0, kept_count: 0, attended: false };
