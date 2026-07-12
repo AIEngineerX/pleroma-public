@@ -19,6 +19,10 @@ export const PHASE_ORDER: RitePhase[] = [
   "scheduled", "offertory_close", "deliberation", "accretion", "sermon", "complete",
 ];
 // Wall-clock budget a phase gets before a stalled advance is treated as a transient failure.
+// NOTE (Task 14 scope): this table is not yet consumed — phase-deadline escalation (comparing
+// now - phase_started_at against these budgets to force a stalled phase toward failed and alert) is
+// wired in Task 14 (failure-path + alerting). Kept here as the locked budgets those checks will use;
+// it is intentionally not silent dead code.
 export const PHASE_DEADLINE_MS: Record<RitePhase, number> = {
   scheduled: 60_000, offertory_close: 60_000, deliberation: 8 * 60_000, accretion: 60_000,
   sermon: 5 * 60_000, complete: 0, failed: 0,
@@ -59,6 +63,16 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase): Promise
       return {};
     }
     case "sermon": {
+      // Resume-idempotency: the sermon writes its transcript THEN a separate CAS advances sermon->complete.
+      // If a crash/retry lands between those two steps, this phase re-runs while still in `sermon`. Guard on
+      // "a sermon transcript already exists for this rite date": if one does, the sermon has already been
+      // spoken, so skip the (metered) recompose entirely and let advanceRite carry the phase to complete.
+      // This closes the RESUME double-publish (the rite lock only closes the CONCURRENT double) AND avoids a
+      // second askMind whose failure could otherwise push an already-preached rite to `failed`.
+      const spoken = await env.DB.prepare(
+        `SELECT 1 FROM transcripts WHERE organ = 'TONGUE' AND register = 'sermon' AND rite_id = ?1 LIMIT 1`
+      ).bind(date).first();
+      if (spoken) return {}; // already preached on a prior partial run: advance to complete, no recompose
       // TONGUE closes with the day's sermon, composed from the rite's kept summaries. A rite that kept
       // nothing has nothing to preach and no god-voice text may be invented (DOCTRINE is the only source
       // of the god's words), so it closes in silence and advances — which also lets an empty rite reach
@@ -108,10 +122,13 @@ export async function advanceRite(env: Env, date: string, now: number): Promise<
     if (e instanceof MindAsleepError) return phase; // resume when the budget resets; not a failure
     const attempts = await bumpRiteAttempts(env.DB, date, now);
     if (attempts >= MAX_PHASE_RETRIES) {
-      await advanceRitePhase(env.DB, date, phase, "failed", now);
-      await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
-        text: `rite ${date} phase ${phase} failed after ${attempts} attempts`,
-        offering_id: null, rite_id: date, created_at: Date.now() });
+      // Only the invocation that actually wins the CAS to `failed` logs the PRIEST note, so a losing
+      // concurrent advance can never duplicate the operator record.
+      if (await advanceRitePhase(env.DB, date, phase, "failed", now)) {
+        await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
+          text: `rite ${date} phase ${phase} failed after ${attempts} attempts`,
+          offering_id: null, rite_id: date, created_at: Date.now() });
+      }
       return "failed";
     }
     return phase; // stay; retry next invocation

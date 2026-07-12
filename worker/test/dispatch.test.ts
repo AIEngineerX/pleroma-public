@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker, { advanceRiteLocked, runTick } from "../src/index";
-import { getRite } from "../src/db";
+import { getRite, insertOffering } from "../src/db";
 import { acquireLock } from "../src/lock";
 import { applyMigrations } from "./helpers";
 
@@ -48,6 +48,20 @@ describe("cron dispatch helpers", () => {
     const now = Date.parse("2026-07-19T00:40:00Z");
     await advanceRiteLocked(env, now);
     expect(await getRite(env.DB, "2026-07-19")).toBeNull();
+  });
+
+  it("takes the offering snapshot in the SAME invocation that opens the rite (T-10m, not deferred a tick)", async () => {
+    // The rite is opened AND advanced one phase in one call, so the scheduled->offertory_close snapshot is
+    // captured at 00:50 (T-10m). Deferring the first advance to the next 15-min tick would land it ~01:00.
+    const now = Date.parse("2026-07-23T00:50:00Z");
+    const date = "2026-07-23";
+    await insertOffering(env.DB, { id: "snap-dispatch-1", wallet: null, sig: null,
+      image_key: "offerings/snap-dispatch-1", sha256: "snap-dispatch-1", status: "perceived",
+      attempts: 0, created_at: now, perceived_at: now });
+    await advanceRiteLocked(env, now);
+    const r = await getRite(env.DB, date);
+    expect(r?.phase).toBe("offertory_close");                // opened + advanced one phase, same call
+    expect(r?.offering_snapshot).toBeGreaterThanOrEqual(1);  // snapshot taken at open time, not next tick
   });
 });
 

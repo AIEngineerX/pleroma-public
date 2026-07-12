@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { openRite, getRite, advanceRite, nonTerminalRites, PHASE_ORDER } from "../src/rite";
-import { insertOffering, insertRelic } from "../src/db";
+import { insertOffering, insertRelic, addTranscript } from "../src/db";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -73,6 +73,32 @@ describe("rite state machine", () => {
     expect((await getRite(env.DB, date))?.phase).toBe("sermon");
     for (let i = 0; i < 3; i++) await advanceRite(env, date, t); // sermon askMind fails w/o key
     expect((await getRite(env.DB, date))?.phase).toBe("failed");
+  });
+
+  it("does not re-publish the sermon on resume after a partial prior run (idempotent per rite date)", async () => {
+    const date = "2026-07-18";
+    const t = Date.parse(date + "T00:50:00Z");
+    await openRite(env.DB, date, t);
+    // A kept relic so the sermon phase would normally reach for the live voice.
+    await insertRelic(env.DB, { id: "resume-relic-1", offering_id: "resume-o1", wallet: null,
+      summary: "a kept mark", rite_id: date, kept_at: t, genesis: 0, accreted_at: null });
+    await advanceRite(env, date, t); // -> offertory_close
+    await advanceRite(env, date, t); // -> deliberation
+    await advanceRite(env, date, t); // -> accretion
+    await advanceRite(env, date, t); // -> sermon
+    expect((await getRite(env.DB, date))?.phase).toBe("sermon");
+    // Simulate a partial prior run: the sermon transcript landed but the phase advance did not.
+    await addTranscript(env.DB, { id: "resume-sermon-1", organ: "TONGUE", register: "sermon",
+      text: "the epoch closes", offering_id: null, rite_id: date, created_at: t });
+    // Resume: the sermon must see it already spoke, SKIP the (keyless-unavailable) recompose, and advance
+    // straight to complete — no second askMind, no duplicate sermon. Without the guard this would call the
+    // mind with no key, throw, and stay in `sermon`.
+    const next = await advanceRite(env, date, t);
+    expect(next).toBe("complete");
+    const n = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM transcripts WHERE organ = 'TONGUE' AND register = 'sermon' AND rite_id = ?1`
+    ).bind(date).first<{ n: number }>();
+    expect(n?.n).toBe(1); // exactly one sermon transcript: the resume did not double-publish
   });
 
   it("drains all non-terminal rites oldest-first so a day-boundary outage never orphans the older rite", async () => {
