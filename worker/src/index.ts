@@ -6,6 +6,8 @@ import { issueNonce, sweepNonces } from "./nonce";
 import { handleOffering } from "./offerings";
 import { acquireLock, releaseLock } from "./lock";
 import { runEyeBatch, sweepQuarantine } from "./eye";
+import { openRite, nonTerminalRites } from "./db";
+import { advanceRite } from "./rite";
 import { getCodex, getState } from "./read";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -24,23 +26,70 @@ app.post("/api/offerings", async (c) => {
 app.get("/api/codex", (c) => getCodex(c.env, c.req.query("cursor") ?? null));
 app.get("/api/state", (c) => getState(c.env));
 
+const TICK_LEASE_MS = 10 * 60_000;
+const RITE_LEASE_MS = 10 * 60_000;
+const RITE_OPEN_MINUTE_OF_DAY = 50; // 00:50 UTC (minute-of-day 50) = T-10m before the 01:00 rite hour
+
+function utcDate(now: number): string { return new Date(now).toISOString().slice(0, 10); }
+
+// EYE tick: moderation + perception + housekeeping sweeps, under the `tick` lock. A second concurrent
+// invocation finds the lease held and returns immediately (single-flight). Each stage passes a deadline
+// so the work stops before the 10-min lease / next 15-min tick boundary; unfinished, idempotent work is
+// picked up next tick.
+export async function runTick(env: Env, now: number = Date.now()): Promise<void> {
+  const holder = ulid();
+  if (!(await acquireLock(env.DB, "tick", holder, TICK_LEASE_MS))) return;
+  const started = now;
+  try {
+    await runEyeBatch(env, started + 8 * 60_000);
+    // Sweep uses the remaining lease (until ~9.5 min in, before the 10-min lease ends / next 15-min tick),
+    // bounded so a large quarantine backlog can't overrun the lock and overlap the next tick.
+    try { await sweepQuarantine(env, Date.now(), started + 9.5 * 60_000); }
+    catch { /* best-effort; never fail the tick */ }
+    try { await sweepNonces(env.DB); } catch { /* best-effort */ }
+  } finally { await releaseLock(env.DB, "tick", holder); }
+}
+
+// Rite advance under the `rite` lock (SEPARATE from `tick` so a slow EYE batch never blocks the rite, and
+// vice versa). This lock is single-flight AND it wraps the WHOLE advance — including the rite's KEEP /
+// accretion phase — so KEEP's daily-cap check-then-act (read keptToday -> select room -> commit) and its
+// LLM side-effects are serialized: a second concurrent invocation finds the lease held and returns without
+// running, which is what makes the cap race-free under overlapping cron. Opens today's rite once the clock
+// reaches the offertory-close minute (the `50 0 * * *` cron opens it too; opening here makes the tick
+// self-healing if that cron was missed), then advances EVERY non-terminal rite one phase, oldest-first, so
+// a rite stranded mid-phase by an outage that outlived its day is still carried to completion.
+export async function advanceRiteLocked(env: Env, now: number = Date.now()): Promise<void> {
+  const holder = ulid();
+  if (!(await acquireLock(env.DB, "rite", holder, RITE_LEASE_MS))) return;
+  try {
+    const minuteOfDay = new Date(now).getUTCHours() * 60 + new Date(now).getUTCMinutes();
+    // Real boundary: minutes 0..49 do not open a rite for "today" — its offertory window has not begun.
+    // openRite is idempotent per date.
+    if (minuteOfDay >= RITE_OPEN_MINUTE_OF_DAY) await openRite(env.DB, utcDate(now), now);
+    for (const rite of await nonTerminalRites(env.DB)) {
+      await advanceRite(env, rite.date, now);
+    }
+  } finally { await releaseLock(env.DB, "rite", holder); }
+}
+
 export default {
   fetch: app.fetch,
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    const holder = ulid();
-    if (!(await acquireLock(env.DB, "tick", holder, 10 * 60_000))) return;
-    const started = Date.now();
-    ctx.waitUntil((async () => {
-      const batchDeadline = started + 8 * 60_000;
-      try {
-        await runEyeBatch(env, batchDeadline);
-        // Sweep uses the remaining lease (until ~9.5 min in, before the 10-min lease ends / next 15-min tick),
-        // bounded so a large quarantine backlog can't overrun the lock and overlap the next tick.
-        try { await sweepQuarantine(env, Date.now(), started + 9.5 * 60_000); }
-        catch { /* best-effort; never fail the tick */ }
-        try { await sweepNonces(env.DB); } catch { /* best-effort */ }
-      } finally { await releaseLock(env.DB, "tick", holder); }
-    })());
+  // The cron dispatcher: the two triggers are mutually disjoint so no invocation double-fires a job.
+  // `*/15 * * * *` runs the EYE tick AND advances the rite (each under its own lock); `50 0 * * *` opens
+  // the day's rite (and advances it) under the rite lock only. Cloudflare does not replay a missed cron,
+  // so recovery is state-driven: the tick's candidate queries re-select stranded rows and advanceRite
+  // resumes from the stored phase, so a rite can complete hours late without data loss.
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    switch (event.cron) {
+      case "50 0 * * *":
+        ctx.waitUntil(advanceRiteLocked(env));
+        break;
+      case "*/15 * * * *":
+      default:
+        ctx.waitUntil(runTick(env));
+        ctx.waitUntil(advanceRiteLocked(env));
+        break;
+    }
   },
 };
 export { app };
