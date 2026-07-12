@@ -95,6 +95,14 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase): Promise
       if (!utterance) throw new Error("TONGUE returned no sermon");
       await addTranscript(env.DB, { id: ulid(), organ: "TONGUE", register: "sermon",
         text: utterance, offering_id: null, rite_id: date, created_at: Date.now() });
+      try {
+        const { speak } = await import("./voice");
+        const said = await speak(env, utterance);
+        if (said.spoken || said.cached) {
+          await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
+            text: `sermon audio: ${said.audioKey}`, offering_id: null, rite_id: date, created_at: Date.now() });
+        }
+      } catch { /* text-only sermon; audio is a bonus, never a rite blocker */ }
       return {};
     }
     default:

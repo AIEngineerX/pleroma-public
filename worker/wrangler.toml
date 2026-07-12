@@ -5,6 +5,10 @@ compatibility_date = "2025-09-06"
 [vars]
 ENVIRONMENT = "dev"
 CORS_ORIGIN = "http://localhost:5173"
+VOICE_VENDOR = ""
+ELEVENLABS_VOICE_ID = ""
+PULSE_MINT = ""
+PULSE_POOLS = ""
 
 [[d1_databases]]
 binding = "DB"
@@ -27,7 +31,7 @@ bucket_name = "pleroma-relics"
 crons = ["*/15 * * * *", "50 0 * * *"]
 
 [env.production]
-vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleroma-web.pages.dev" }
+vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleroma-web.pages.dev", VOICE_VENDOR = "xai", ELEVENLABS_VOICE_ID = "", PULSE_MINT = "", PULSE_POOLS = "" }
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "pleroma-prod"
