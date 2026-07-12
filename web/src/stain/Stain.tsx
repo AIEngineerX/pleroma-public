@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { pickTier, StainSim, type Tier } from "./stainSim";
 import sigil from "../assets/sigil.svg";
 
-interface Props { state: "dormant" | "live" | "rite"; pigment: [number, number, number]; amplitude: number }
+interface Props { state: "dormant" | "live" | "rite"; pigment: [number, number, number]; amplitude: number; onSim?: (sim: StainSim | null) => void }
 
-export default function Stain({ state, pigment, amplitude }: Props) {
+export default function Stain({ state, pigment, amplitude, onSim }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const sim = useRef<StainSim | null>(null);
   const [tier] = useState<Tier>(pickTier); // lazy: pickTier runs ONCE, not on every (per-amplitude-frame) re-render
@@ -14,9 +14,10 @@ export default function Stain({ state, pigment, amplitude }: Props) {
     try {
       sim.current = new StainSim(ref.current, { tier, ground: [0.94, 0.90, 0.80], ink: [0.62, 0.60, 0.55] });
       sim.current.start();
+      onSim?.(sim.current);          // hand the instance up so an offering can wick into it (Task 8)
     } catch { sim.current = null; }                            // WebGL2 unavailable -> CSS fallback below
-    return () => { sim.current?.dispose(); sim.current = null; };
-  }, []);
+    return () => { sim.current?.dispose(); sim.current = null; onSim?.(null); };
+  }, []); // mount-once by design, same as the lazy tier pick above; onSim is a stable setState from the caller
 
   useEffect(() => { sim.current?.setPigment(pigment); }, [pigment]);
   useEffect(() => { sim.current?.setAmplitude(amplitude); }, [amplitude]);
