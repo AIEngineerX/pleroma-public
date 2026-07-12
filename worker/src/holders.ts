@@ -15,7 +15,10 @@ export function countHolders(pages: TokenAccount[][]): { count: number; owners: 
 // Helius DAS getTokenAccounts by mint, paginated. Bounded by maxPages so one tick can't run unbounded;
 // at launch-week holder counts (hundreds) a few pages suffice. A dedicated holder service is post-launch.
 export async function fetchHolders(env: Env, maxPages = 20): Promise<{ count: number; owners: Set<string> }> {
-  if (!env.PULSE_MINT) return { count: 0, owners: new Set() };
+  // No mint or no API key => nothing to query (DAS needs the key). This also keeps the deterministic
+  // test suite hermetic: tests seed a fake PULSE_MINT but no HELIUS_API_KEY, so this early-returns
+  // instead of making a real network call to Helius on every keyless tick.
+  if (!env.PULSE_MINT || !env.HELIUS_API_KEY) return { count: 0, owners: new Set() };
   const url = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
   const pages: TokenAccount[][] = [];
   for (let page = 1; page <= maxPages; page++) {
