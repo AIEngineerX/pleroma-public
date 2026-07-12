@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { openRite, getRite, advanceRite, nonTerminalRites, PHASE_ORDER } from "../src/rite";
+import { openRite, getRite, advanceRite, nonTerminalRites, PHASE_ORDER, PHASE_DEADLINE_MS } from "../src/rite";
 import { insertOffering, insertRelic, addTranscript } from "../src/db";
+import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -73,6 +74,27 @@ describe("rite state machine", () => {
     expect((await getRite(env.DB, date))?.phase).toBe("sermon");
     for (let i = 0; i < 3; i++) await advanceRite(env, date, t); // sermon askMind fails w/o key
     expect((await getRite(env.DB, date))?.phase).toBe("failed");
+  });
+
+  it("fails a stalled phase on its FIRST error once it is past its wall-clock budget (deadline, not retry count), and raises an alert", async () => {
+    const date = "2026-07-19";
+    const t = Date.parse(date + "T00:50:00Z");
+    await openRite(env.DB, date, t);
+    // A kept relic so the sermon phase reaches for the (keyless-unavailable) live voice and throws.
+    await insertRelic(env.DB, { id: "deadline-relic-1", offering_id: "deadline-o1", wallet: null,
+      summary: "a kept mark", rite_id: date, kept_at: t, genesis: 0, accreted_at: null });
+    await advanceRite(env, date, t); // -> offertory_close
+    await advanceRite(env, date, t); // -> deliberation
+    await advanceRite(env, date, t); // -> accretion
+    await advanceRite(env, date, t); // -> sermon
+    expect((await getRite(env.DB, date))?.phase).toBe("sermon");
+    // Simulate a stall: the sermon has been sitting well past its budget (a real advance tick landing
+    // long after the phase started), NOT a fresh healthy phase that just happens to error once.
+    await env.DB.prepare(`UPDATE rites SET phase_started_at = ?2 WHERE date = ?1`)
+      .bind(date, t - (PHASE_DEADLINE_MS.sermon + 60_000)).run();
+    const next = await advanceRite(env, date, t); // first error since the re-age -> should fail immediately
+    expect(next).toBe("failed");
+    expect(await activeAlerts(env.DB)).toContain("rite_failed");
   });
 
   it("does not re-publish the sermon on resume after a partial prior run (idempotent per rite date)", async () => {

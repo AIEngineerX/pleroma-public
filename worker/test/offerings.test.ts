@@ -4,6 +4,7 @@ import { ed25519 } from "@noble/curves/ed25519";
 import { base58 } from "@scure/base";
 import { offeringMessage } from "../src/signature";
 import { offeringBySha } from "../src/db";
+import { IP_LIMIT } from "../src/ratelimit";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -258,5 +259,21 @@ describe("offering intake", () => {
     const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
     expect(res.status).toBe(400);
     expect(await offeringBySha(env.DB, await sha256hex(bytes))).toBeNull();
+  });
+
+  it("rate-limits the route: the IP_LIMIT+1-th offering from one IP is 429", async () => {
+    const ip = "203.0.113.7";
+    let last: Response | undefined;
+    for (let i = 0; i < IP_LIMIT + 1; i++) {
+      // Unique bytes per submission: the sha-dup 409 check runs BEFORE the rate limiter, so reusing
+      // one image would short-circuit every repeat submission at 409 and never reach checkRate.
+      const bytes = new Uint8Array([...PNG, 100, i]);
+      const form = new FormData();
+      form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+      last = await SELF.fetch("http://x/api/offerings", {
+        method: "POST", headers: { "cf-connecting-ip": ip }, body: form,
+      });
+    }
+    expect(last!.status).toBe(429); // the over-cap submit is rejected at the route, before any R2 write
   });
 });

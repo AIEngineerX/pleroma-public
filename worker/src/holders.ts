@@ -58,8 +58,21 @@ export async function applyAttended(db: D1Database, owners: Set<string>): Promis
 // interleave and clobber each other — the webhook's freshly-computed hysteresis `state` overwritten by the
 // tick's stale-state-plus-new-holders write. On contention (a webhook is mid-ingest), skip the holders
 // write this tick; it is best-effort and refreshes next tick.
+//
+// A Helius/DAS outage must never fail the tick (runTick's caller already wraps this in a best-effort
+// try/catch, but this function stays honest on its own): the fetch is wrapped so an outage raises the
+// operator alert and leaves holders/attended stale (never zeroed) rather than throwing. A later successful
+// refresh clears the alert, so /api/state.degraded reflects current health, not a one-way ratchet.
 export async function reconcileHolders(env: Env): Promise<{ holders: number; attendedMarked: number }> {
-  const { count, owners } = await fetchHolders(env);
+  let count: number, owners: Set<string>;
+  try {
+    ({ count, owners } = await fetchHolders(env));
+  } catch (e) {
+    const { raiseAlert } = await import("./alert");
+    await raiseAlert(env, "pulse_holders_stale", `helius holder refresh failed: ${String(e)}`);
+    return { holders: 0, attendedMarked: 0 };
+  }
+  try { await (await import("./alert")).clearAlert(env, "pulse_holders_stale"); } catch { /* best-effort */ }
   const attendedMarked = await applyAttended(env.DB, owners);
 
   const holder = ulid();

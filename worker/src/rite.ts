@@ -18,11 +18,11 @@ export type { RiteRow, RitePhase };
 export const PHASE_ORDER: RitePhase[] = [
   "scheduled", "offertory_close", "deliberation", "accretion", "sermon", "complete",
 ];
-// Wall-clock budget a phase gets before a stalled advance is treated as a transient failure.
-// NOTE (Task 14 scope): this table is not yet consumed — phase-deadline escalation (comparing
-// now - phase_started_at against these budgets to force a stalled phase toward failed and alert) is
-// wired in Task 14 (failure-path + alerting). Kept here as the locked budgets those checks will use;
-// it is intentionally not silent dead code.
+// Wall-clock budget a phase gets before a stalled advance is treated as a transient failure. Consumed
+// only in advanceRite's error path (see below) as a time-based complement to MAX_PHASE_RETRIES: an
+// ERRORING phase found past its budget fails immediately instead of waiting out 3 attempts. A healthy
+// phase never reaches that check (runPhaseAction succeeds -> advance -> phase_started_at resets), so
+// this can never force-fail a phase that is simply taking its normal 15-min-tick cadence to advance.
 export const PHASE_DEADLINE_MS: Record<RitePhase, number> = {
   scheduled: 60_000, offertory_close: 60_000, deliberation: 8 * 60_000, accretion: 60_000,
   sermon: 5 * 60_000, complete: 0, failed: 0,
@@ -112,7 +112,8 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase): Promise
 
 // Runs the current phase's action then CAS-advances to the next phase. One phase per call. On a transient
 // failure it bumps the phase retry counter and leaves the rite in place (a later invocation resumes);
-// after MAX_PHASE_RETRIES the rite moves to a terminal `failed` phase (surfaced honestly on-site). Budget
+// the rite moves to a terminal `failed` phase (surfaced honestly on-site) once EITHER MAX_PHASE_RETRIES is
+// hit OR the phase has been erroring past its PHASE_DEADLINE_MS budget — whichever trips first. Budget
 // asleep is not a failure — it leaves the rite in place to resume when the budget resets. The CAS in
 // advanceRitePhase makes a concurrent second invocation a no-op, so overlapping ticks never double-advance.
 export async function advanceRite(env: Env, date: string, now: number): Promise<RitePhase> {
@@ -127,15 +128,17 @@ export async function advanceRite(env: Env, date: string, now: number): Promise<
     });
     return to;
   } catch (e) {
-    if (e instanceof MindAsleepError) return phase; // resume when the budget resets; not a failure
+    if (e instanceof MindAsleepError) return phase; // legitimate wait for the daily budget reset — NOT a stall
     const attempts = await bumpRiteAttempts(env.DB, date, now);
-    if (attempts >= MAX_PHASE_RETRIES) {
-      // Only the invocation that actually wins the CAS to `failed` logs the PRIEST note, so a losing
-      // concurrent advance can never duplicate the operator record.
+    const overDeadline = now - rite.phase_started_at > PHASE_DEADLINE_MS[phase];
+    if (attempts >= MAX_PHASE_RETRIES || overDeadline) {
+      // Only the invocation that actually wins the CAS to `failed` logs the PRIEST note (and raises the
+      // alert), so a losing concurrent advance can never duplicate the operator record.
       if (await advanceRitePhase(env.DB, date, phase, "failed", now)) {
+        const cause = overDeadline ? `exceeded ${PHASE_DEADLINE_MS[phase]}ms deadline` : `failed after ${attempts} attempts`;
         await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
-          text: `rite ${date} phase ${phase} failed after ${attempts} attempts`,
-          offering_id: null, rite_id: date, created_at: Date.now() });
+          text: `rite ${date} phase ${phase} ${cause}`, offering_id: null, rite_id: date, created_at: Date.now() });
+        await (await import("./alert")).raiseAlert(env, "rite_failed", `rite ${date} phase ${phase} ${cause}`);
       }
       return "failed";
     }
