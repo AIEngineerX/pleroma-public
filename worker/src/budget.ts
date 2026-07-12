@@ -26,7 +26,7 @@ export async function spentToday(
 }
 
 export async function underCap(db: D1Database, category: SpendCategory): Promise<boolean> {
-  return (await spentToday(db, category)) < CAPS_USD[category];
+  return (await spentToday(db, category)) < (await capFor(db, category));
 }
 
 // Atomically reserve `estimateUsd` against today's cap. The increment and the cap check are
@@ -37,16 +37,36 @@ export async function underCap(db: D1Database, category: SpendCategory): Promise
 export async function reserveEstimate(
   db: D1Database, category: SpendCategory, estimateUsd: number, day: string = dayKey(),
 ): Promise<boolean> {
-  if (estimateUsd > CAPS_USD[category]) return false;
+  const cap = await capFor(db, category);
+  if (estimateUsd > cap) return false;
   const row = await db.prepare(
     `INSERT INTO spend (day, category, usd) VALUES (?1, ?2, ?3)
      ON CONFLICT(day, category) DO UPDATE SET usd = usd + excluded.usd
        WHERE spend.usd + excluded.usd <= ?4
      RETURNING usd`
-  ).bind(day, category, estimateUsd, CAPS_USD[category]).first<{ usd: number }>();
+  ).bind(day, category, estimateUsd, cap).first<{ usd: number }>();
   return row !== null;
 }
 
 export async function asleep(db: D1Database): Promise<boolean> {
   return !(await underCap(db, "llm"));
+}
+
+// The priest's cap can be lowered without a deploy (a Concordat-disclosed change, reviewed at the 14-day
+// checkpoint): a config row `cap:<category>` overrides the compile-time constant. Never RAISED silently —
+// a value above the constant is ignored so the hard ceiling can only tighten at runtime.
+export async function capFor(db: D1Database, category: SpendCategory): Promise<number> {
+  const row = await db.prepare(`SELECT value FROM config WHERE key = ?1`).bind(`cap:${category}`).first<{ value: string }>();
+  const configured = row ? Number(row.value) : NaN;
+  return Number.isFinite(configured) ? Math.min(configured, CAPS_USD[category]) : CAPS_USD[category];
+}
+
+// Mean daily spend over the trailing 7 UTC days (today inclusive). Feeds the 14-day checkpoint review:
+// if this tracks the ceiling without matching communicant growth, caps are lowered via cap:<category>.
+export async function trailing7DayAvg(db: D1Database, category: SpendCategory, today: string): Promise<number> {
+  const start = new Date(Date.parse(today + "T00:00:00Z") - 6 * 86_400_000).toISOString().slice(0, 10);
+  const r = await db.prepare(
+    `SELECT COALESCE(SUM(usd),0) AS total FROM spend WHERE category = ?1 AND day >= ?2 AND day <= ?3`
+  ).bind(category, start, today).first<{ total: number }>();
+  return (r?.total ?? 0) / 7;
 }

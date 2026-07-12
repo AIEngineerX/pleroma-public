@@ -1,5 +1,6 @@
 import type { Env } from "./env";
 import { dayKey, recordSpend, reserveEstimate } from "./budget";
+import { withTimeout } from "./timeouts";
 
 export class MindAsleepError extends Error {}
 export class NonRetryableError extends Error {}
@@ -28,6 +29,8 @@ export interface MindResponse { text: string; usd: number }
 const IMAGE_TOKENS_MAX = 8000; // safe upper bound over Sonnet's auto high-res image billing (~<=4784 tok/image);
                                // over-reserving is harmless — settle() reconciles down to actual.
 const FRAMING_TOKENS = 20; // role/message framing not present in the payload strings.
+export const PER_CALL_USD_MAX = 2; // no single model call may reserve more than $2 (a DoS backstop far
+                                   // above any legitimate EYE/KEEP/TONGUE/DREAM call at our maxTokens).
 
 // Provable pre-call upper bound: maxTokens at the model's OUTPUT price, plus an input estimate that is
 // guaranteed >= the real input token count (UTF-8 byte length for text, a constant ceiling for images).
@@ -51,6 +54,7 @@ export function estimateCostUsd(req: MindRequest): number {
 // scheduled + lock.ts); do not call from fetch handlers.
 export async function askMind(env: Env, req: MindRequest): Promise<MindResponse> {
   const reserved = estimateCostUsd(req);
+  if (reserved > PER_CALL_USD_MAX) throw new NonRetryableError(`per-call ceiling exceeded ($${reserved.toFixed(4)} > $${PER_CALL_USD_MAX})`);
   // Pinned once so the reservation and its settlement always land on the same accounting day,
   // even if the call straddles UTC midnight (dayKey() recomputed later would settle a delta
   // against the wrong day's row).
@@ -83,7 +87,7 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
     for (let attempt = 0; attempt < 2; attempt++) {
       let res: Response;
       try {
-        res = await fetch("https://api.anthropic.com/v1/messages", {
+        res = await withTimeout("anthropic", 30_000, (signal) => fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
             "x-api-key": env.ANTHROPIC_API_KEY,
@@ -91,8 +95,8 @@ export async function askMind(env: Env, req: MindRequest): Promise<MindResponse>
             "content-type": "application/json",
           },
           body,
-          signal: AbortSignal.timeout(30_000),
-        });
+          signal,
+        }));
       } catch (netErr) {
         // No response received: the call may already be billed. Keep the reservation (do not
         // release via the finally) and stop — a retry could bill a second time while we would

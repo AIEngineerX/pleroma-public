@@ -1,6 +1,7 @@
 import { ulid } from "ulid";
 import type { Env } from "./env";
 import { acquireLock, releaseLock } from "./lock";
+import { withTimeout } from "./timeouts";
 
 const PULSE_LOCK_TTL_MS = 30_000; // matches pulse.ts PULSE_LEASE_MS — same "pulse" lock guards config.pulse_state
 
@@ -22,12 +23,12 @@ export async function fetchHolders(env: Env, maxPages = 20): Promise<{ count: nu
   const url = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
   const pages: TokenAccount[][] = [];
   for (let page = 1; page <= maxPages; page++) {
-    const res = await fetch(url, {
+    const res = await withTimeout("helius", 30_000, (signal) => fetch(url, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: "pleroma-holders", method: "getTokenAccounts",
         params: { mint: env.PULSE_MINT, page, limit: 1000, options: { showZeroBalance: false } } }),
-      signal: AbortSignal.timeout(30_000),
-    });
+      signal,
+    }));
     if (!res.ok) throw new Error(`helius getTokenAccounts ${res.status}`);
     const data = await res.json<{ result?: { token_accounts?: Array<{ owner: string; amount: number }> } }>();
     const accounts = data.result?.token_accounts ?? [];

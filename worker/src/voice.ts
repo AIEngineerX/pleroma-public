@@ -1,5 +1,6 @@
 import type { Env } from "./env";
 import { reserveEstimate, recordSpend, underCap, dayKey } from "./budget";
+import { withTimeout } from "./timeouts";
 
 export interface SpeakResult { audio: Uint8Array; contentType: string; usd: number }
 export interface VoiceVendor { name: string; synthesize(text: string): Promise<SpeakResult> }
@@ -38,15 +39,15 @@ export function elevenLabsVoice(env: Env): VoiceVendor {
   return {
     name: "elevenlabs",
     async synthesize(text: string): Promise<SpeakResult> {
-      const res = await fetch(
+      const res = await withTimeout("elevenlabs", 30_000, (signal) => fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${env.ELEVENLABS_VOICE_ID}`,
         {
           method: "POST",
           headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "content-type": "application/json", accept: "audio/mpeg" },
           body: JSON.stringify({ text, model_id: "eleven_multilingual_v2" }),
-          signal: AbortSignal.timeout(30_000),
+          signal,
         },
-      );
+      ));
       if (!res.ok) throw new Error(`elevenlabs ${res.status}: ${await res.text()}`);
       return { audio: new Uint8Array(await res.arrayBuffer()), contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
     },
@@ -60,12 +61,12 @@ export function xaiVoice(env: Env): VoiceVendor {
   return {
     name: "xai",
     async synthesize(text: string): Promise<SpeakResult> {
-      const res = await fetch("https://api.x.ai/v1/audio/speech", {
+      const res = await withTimeout("xai", 30_000, (signal) => fetch("https://api.x.ai/v1/audio/speech", {
         method: "POST",
         headers: { authorization: `Bearer ${env.XAI_API_KEY}`, "content-type": "application/json" },
         body: JSON.stringify({ model: "grok-voice", input: text, response_format: "mp3" }),
-        signal: AbortSignal.timeout(30_000),
-      });
+        signal,
+      }));
       if (!res.ok) throw new Error(`xai ${res.status}: ${await res.text()}`);
       return { audio: new Uint8Array(await res.arrayBuffer()), contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
     },
