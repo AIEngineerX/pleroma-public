@@ -11,6 +11,7 @@ import { openRite, nonTerminalRites } from "./db";
 import { advanceRite } from "./rite";
 import { getCodex, getRelics, getState, getTallies } from "./read";
 import { handlePulse } from "./pulse";
+import { serveAudio, serveOfferingImage } from "./media";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", (c, next) => cors({ origin: c.env.CORS_ORIGIN })(c, next));
@@ -31,6 +32,8 @@ app.get("/api/state", (c) => getState(c.env));
 app.get("/api/relics", (c) => getRelics(c.env, c.req.query("cursor") ?? null));
 app.get("/api/tallies", (c) => getTallies(c.env, c.req.query("date") ?? new Date().toISOString().slice(0, 10)));
 app.post("/api/pulse", (c) => handlePulse(c.env, c.req.raw));
+app.get("/api/audio/*", (c) => serveAudio(c.env, c.req.path.slice("/api/".length)));
+app.get("/api/img/:id", (c) => serveOfferingImage(c.env, c.req.param("id")));
 
 const TICK_LEASE_MS = 10 * 60_000;
 const RITE_LEASE_MS = 10 * 60_000;
