@@ -182,3 +182,44 @@ export async function perceptionCandidates(
       ORDER BY created_at LIMIT ?2`
   ).bind(nowMs - staleMs, limit).all<OfferingRow>()).results;
 }
+
+// The Reliquary: a kept mark becomes a relic carried forward as part of the body. `genesis` marks a
+// day-1 First Corpus relic; `accreted_at` records when the daily rite folded it into the body's form
+// (null until accretion). One relic per offering (UNIQUE(offering_id)) so a rite re-run never doubles.
+export interface RelicRow {
+  id: string; offering_id: string; wallet: string | null; summary: string;
+  rite_id: string | null; kept_at: number; genesis: number; accreted_at: number | null;
+}
+
+export async function insertRelic(db: D1Database, r: RelicRow): Promise<void> {
+  await db.prepare(
+    `INSERT INTO relics (id, offering_id, wallet, summary, rite_id, kept_at, genesis, accreted_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT(offering_id) DO NOTHING`  // one relic per offering; a re-run is a no-op
+  ).bind(r.id, r.offering_id, r.wallet, r.summary, r.rite_id, r.kept_at, r.genesis, r.accreted_at).run();
+}
+
+export async function recentRelicSummaries(db: D1Database, limit: number): Promise<string[]> {
+  const rows = (await db.prepare(`SELECT summary FROM relics ORDER BY kept_at DESC LIMIT ?1`)
+    .bind(limit).all<{ summary: string }>()).results;
+  return rows.map(r => r.summary);
+}
+
+export async function walletHistory(
+  db: D1Database, wallet: string,
+): Promise<{ offering_count: number; kept_count: number; attended: boolean }> {
+  const w = await db.prepare(`SELECT offering_count, attended FROM wallets WHERE address = ?1`)
+    .bind(wallet).first<{ offering_count: number; attended: number }>();
+  const k = await db.prepare(`SELECT COUNT(*) AS n FROM relics WHERE wallet = ?1`)
+    .bind(wallet).first<{ n: number }>();
+  return { offering_count: w?.offering_count ?? 0, kept_count: k?.n ?? 0, attended: (w?.attended ?? 0) === 1 };
+}
+
+export async function relicsKeptToday(db: D1Database, day: string): Promise<number> {
+  // day is a UTC YYYY-MM-DD; compare against the day's UTC millisecond window.
+  const start = Date.parse(day + "T00:00:00.000Z");
+  const end = start + 86_400_000;
+  const r = await db.prepare(`SELECT COUNT(*) AS n FROM relics WHERE kept_at >= ?1 AND kept_at < ?2`)
+    .bind(start, end).first<{ n: number }>();
+  return r?.n ?? 0;
+}
