@@ -132,15 +132,19 @@ export async function commitOffering(db: D1Database, o: OfferingRow, touchWallet
 // A tick claims a row before running its cross-store (D1+R2) sequence, so two overlapping ticks
 // can never process the same offering. The claim is a CAS that also reclaims a STALE claim: a row
 // left transitional ('moderating'/'perceiving') by a tick whose 10-min lock lease expired without
-// finishing. `claimed_at` records when the claim was taken; a reclaim bumps `attempts` so a row that
-// repeatedly strands a tick eventually dead-letters through the normal attempts path.
+// finishing. `claimed_at` records when the claim was taken. A reclaim ONLY transfers ownership — it
+// does not touch `attempts`: a tick dying mid-sequence is an infra event, not the row's fault (the
+// same reason ModerationUnavailableError releases without a strike). `attempts` is advanced by at most
+// one per processing cycle, exclusively by the caller's error path (setOfferingStatus bumpAttempts),
+// so only genuine per-cycle processing errors count toward the dead-letter threshold. Because the
+// claim never mutates `attempts`, the `o.attempts` snapshot the caller read from the candidate query
+// is still accurate at cycle start, keeping its `dead = o.attempts >= 2` decision a clean 3-strike.
 export async function claimForModeration(
   db: D1Database, id: string, nowMs: number, staleMs: number,
 ): Promise<boolean> {
   const r = await db.prepare(
     `UPDATE offerings
-        SET status = 'moderating', claimed_at = ?2,
-            attempts = attempts + (CASE WHEN status = 'moderating' THEN 1 ELSE 0 END)
+        SET status = 'moderating', claimed_at = ?2
       WHERE id = ?1 AND (status = 'pending' OR (status = 'moderating' AND claimed_at <= ?3))`
   ).bind(id, nowMs, nowMs - staleMs).run();
   return r.meta.changes === 1;
@@ -151,8 +155,7 @@ export async function claimForPerception(
 ): Promise<boolean> {
   const r = await db.prepare(
     `UPDATE offerings
-        SET status = 'perceiving', claimed_at = ?2,
-            attempts = attempts + (CASE WHEN status = 'perceiving' THEN 1 ELSE 0 END)
+        SET status = 'perceiving', claimed_at = ?2
       WHERE id = ?1 AND (status = 'perceivable' OR (status = 'perceiving' AND claimed_at <= ?3))`
   ).bind(id, nowMs, nowMs - staleMs).run();
   return r.meta.changes === 1;
