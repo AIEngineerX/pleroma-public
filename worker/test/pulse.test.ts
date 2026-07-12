@@ -92,6 +92,18 @@ describe("POST /api/pulse", () => {
     expect(res.status).toBe(413);
   });
 
+  it("ingests a batch that spans multiple D1 param-limit chunks (>100 unique sigs)", async () => {
+    const txs = Array.from({ length: 150 }, (_, i) => buyTx(`multi-chunk-${i}`));
+    const res = await SELF.fetch("http://x/api/pulse", {
+      method: "POST",
+      headers: { authorization: "test-secret", "content-type": "application/json" },
+      body: JSON.stringify(txs),
+    });
+    expect(res.status).toBe(200);
+    const v = await currentVitals(env.DB);
+    expect(v.buys).toBe(150); // all 150 counted across the 100 + 50 chunk split; none dropped by the param limit
+  });
+
   // Placed after the ingest test above so a held lock can't make an earlier test's POST 503 unexpectedly.
   it("returns 503 when another ingest holds the pulse lock (Helius will retry)", async () => {
     const { acquireLock, releaseLock } = await import("../src/lock");

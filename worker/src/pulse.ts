@@ -4,6 +4,7 @@ import { acquireLock, releaseLock } from "./lock";
 
 const MAX_BATCH = 500;          // H2: Helius batches are small (~<=100); this bounds a single POST's work
 const PULSE_LEASE_MS = 30_000;  // M1: lock lease; self-heals if a holder dies
+const D1_MAX_PARAMS = 100; // D1 hard limit: <=100 bound parameters per query
 
 export interface HeliusTokenTransfer { fromUserAccount?: string; toUserAccount?: string; mint?: string; tokenAmount?: number }
 export interface HeliusNativeTransfer { fromUserAccount?: string; toUserAccount?: string; amount?: number }
@@ -147,21 +148,20 @@ export async function handlePulse(env: Env, req: Request): Promise<Response> {
       unique.push(tx);
     }
 
-    // Under the lock (no TOCTOU) find which signatures are already recorded, so we count only fresh ones.
-    let fresh = unique;
-    if (unique.length > 0) {
-      const placeholders = unique.map((_, i) => `?${i + 1}`).join(",");
+    // Ingest in <=100-signature chunks so each dedup SELECT stays within D1's 100-bound-param limit.
+    // Each chunk's mark-seen + count is one atomic batch; a crash between chunks leaves committed chunks
+    // fully consistent and the rest unprocessed (Helius re-delivers; already-seen sigs dedup-skip).
+    let ingested = 0;
+    for (let off = 0; off < unique.length; off += D1_MAX_PARAMS) {
+      const chunk = unique.slice(off, off + D1_MAX_PARAMS);
+      const placeholders = chunk.map((_, i) => `?${i + 1}`).join(",");
       const existing = await env.DB.prepare(
         `SELECT signature FROM pulse_events WHERE signature IN (${placeholders})`
-      ).bind(...unique.map((t) => t.signature)).all<{ signature: string }>();
+      ).bind(...chunk.map((t) => t.signature)).all<{ signature: string }>();
       const already = new Set(existing.results.map((r) => r.signature));
-      fresh = unique.filter((t) => !already.has(t.signature!));
-    }
+      const fresh = chunk.filter((t) => !already.has(t.signature!));
+      if (fresh.length === 0) continue;
 
-    // H1: mark-seen + count in ONE atomic db.batch(). A crash/limit-trip mid-write can no longer leave a
-    // signature marked seen in pulse_events without its swap reaching vitals (which would be permanent,
-    // silent under-counting, since a Helius retry of that exact signature would dedup-skip forever).
-    if (fresh.length > 0) {
       const aggs = aggregate(fresh, mint, pools, now);
       const stmts: D1PreparedStatement[] = [];
       for (const tx of fresh) {
@@ -177,15 +177,13 @@ export async function handlePulse(env: Env, req: Request): Promise<Response> {
         ).bind(a.minute, a.buys, a.sells, a.buy_volume, a.sell_volume));
       }
       await env.DB.batch(stmts);
+      ingested += fresh.length;
     }
 
-    // State recompute stays inside the lock so concurrent deliveries can't interleave read-modify-write
-    // on config.pulse_state (M1). If a crash lands after the batch but before this write, vitals is already
-    // correct and pulse_state is merely stale — it self-heals on the next webhook (state is derived).
     const prev = await readState(env.DB);
     const state = nextPulseState(prev.state, await windowMetrics(env.DB, now));
     await writeState(env.DB, { state, holders: prev.holders, updated_at: now });
-    return Response.json({ ok: true, ingested: fresh.length, state });
+    return Response.json({ ok: true, ingested, state });
   } finally {
     await releaseLock(env.DB, "pulse", holder);
   }
