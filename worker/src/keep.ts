@@ -4,8 +4,7 @@ import { askMind, MindAsleepError } from "./mind";
 import { keepSystemPrompt } from "./doctrine";
 import { dayKey } from "./budget";
 import {
-  addTranscript, insertRelic, recentRelicSummaries, relicsKeptToday, setOfferingStatus,
-  walletHistory, type OfferingRow,
+  commitVerdict, recentRelicSummaries, relicsKeptToday, walletHistory, type OfferingRow,
 } from "./db";
 
 const KEEP_DAILY = 12;
@@ -74,18 +73,15 @@ export async function runKeep(env: Env, riteId: string): Promise<number> {
           `Render your verdict on this mark.` }],
       });
       const v = parseVerdict(res.text);
-      // Transition perceived -> kept|mourned (CAS: idempotent under a rite re-run; the rite lock already
-      // serializes KEEP, so no per-row claim is needed — KEEP runs single-invocation inside the rite).
-      const status = v.verdict === "kept" ? "kept" : "mourned";
-      if (await setOfferingStatus(env.DB, o.id, status, { expectedStatus: "perceived" })) {
-        await addTranscript(env.DB, { id: ulid(), organ: "KEEP", register: "verdict",
-          text: v.summary, offering_id: o.id, rite_id: riteId, created_at: Date.now() });
-        if (v.verdict === "kept") {
-          await insertRelic(env.DB, { id: ulid(), offering_id: o.id, wallet: o.wallet, summary: v.summary,
-            rite_id: riteId, kept_at: Date.now(), genesis: 0, accreted_at: null });
-          kept++;
-        }
-      }
+      // Publish the verdict as ONE atomic transaction: the perceived->kept|mourned CAS, the KEEP/verdict
+      // transcript, and (for a keep) the relic commit together or not at all. A transient D1 failure
+      // mid-write can never leave a claimed keep/mourn with no relic/transcript behind it; the offering
+      // stays perceived for a clean retry. Idempotent under a rite re-run (guarded on status='perceived').
+      const won = await commitVerdict(env.DB, {
+        offeringId: o.id, verdict: v.verdict, summary: v.summary,
+        transcriptId: ulid(), relicId: ulid(), wallet: o.wallet, riteId, at: Date.now(),
+      });
+      if (won && v.verdict === "kept") kept++;
     } catch (e) {
       if (e instanceof MindAsleepError) break; // budget asleep: stop; leave the rest perceived for the next rite
       // Any other error (transport/parse/contract): leave the offering perceived and untouched — never

@@ -224,6 +224,50 @@ export async function relicsKeptToday(db: D1Database, day: string): Promise<numb
   return r?.n ?? 0;
 }
 
+// Publish a KEEP verdict atomically. In ONE transactional db.batch() (same all-or-nothing guarantee
+// publishPerception relies on) it writes the KEEP/verdict transcript, the relic (for a keep only), and
+// flips the offering perceived->kept|mourned. Every write is guarded on status='perceived' (the guarded
+// INSERT ... WHERE EXISTS / CAS UPDATE pattern), so a rite re-run against an already-decided row is a
+// clean no-op — no second transcript, no duplicate relic. Because the batch commits or rolls back as a
+// unit, a transient D1 failure mid-sequence can NEVER leave a claimed keep/mourn with nothing behind it
+// (a kept row without its relic, or a decided row without its verdict transcript) — the exact
+// integrity-invariant violation the three-separate-writes version allowed. Returns true iff this call
+// performed the transition (the guarded UPDATE, always the last statement, changed a row).
+export async function commitVerdict(
+  db: D1Database,
+  v: {
+    offeringId: string; verdict: "kept" | "mourned"; summary: string;
+    transcriptId: string; relicId: string; wallet: string | null;
+    riteId: string | null; at: number;
+  },
+): Promise<boolean> {
+  const status: OfferingStatus = v.verdict === "kept" ? "kept" : "mourned";
+  const stmts: D1PreparedStatement[] = [
+    db.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       SELECT ?1, 'KEEP', 'verdict', ?2, ?3, ?4, ?5
+       WHERE EXISTS (SELECT 1 FROM offerings WHERE id = ?3 AND status = 'perceived')`
+    ).bind(v.transcriptId, v.summary, v.offeringId, v.riteId, v.at),
+  ];
+  if (v.verdict === "kept") {
+    // Guarded on status='perceived' too, so a re-run inserts nothing; the UNIQUE(offering_id) index is
+    // the hard backstop (a duplicate would abort the batch and roll the whole verdict back cleanly).
+    stmts.push(
+      db.prepare(
+        `INSERT INTO relics (id, offering_id, wallet, summary, rite_id, kept_at, genesis, accreted_at)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, 0, NULL
+         WHERE EXISTS (SELECT 1 FROM offerings WHERE id = ?2 AND status = 'perceived')`
+      ).bind(v.relicId, v.offeringId, v.wallet, v.summary, v.riteId, v.at),
+    );
+  }
+  stmts.push(
+    db.prepare(`UPDATE offerings SET status = ?2 WHERE id = ?1 AND status = 'perceived'`)
+      .bind(v.offeringId, status),
+  );
+  const results = await db.batch(stmts);
+  return results[results.length - 1].meta.changes === 1;
+}
+
 // The Daily Rite: once per UTC day the god consumes the day's offerings live, walking a fixed phase
 // order. Every phase is idempotent and keyed by the rite date; a missed cron resumes from the stored
 // phase (rite.ts).
