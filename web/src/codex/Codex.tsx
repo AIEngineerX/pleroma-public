@@ -44,9 +44,20 @@ export default function Codex({ apiBase, state, onAmplitude, audioCtx }:
   // in the schema; DOCTRINE defines an epoch as "one of its days" and DREAM posts at most once per day).
   let dreamEpoch = 0;
   const lines = entries.map(e => {
-    if (e.organ === "DREAM" && state?.dream) {
+    if (e.organ === "DREAM") {
       dreamEpoch += 1;
-      return <Plate key={e.id} dream={state.dream} epoch={dreamEpoch} />;
+      // Each DREAM transcript row carries its OWN day's narrative in `text` (dream.ts binds `narrative`
+      // to both the dreams row and this plate transcript). Render from the ENTRY, never the shared
+      // state.dream (which is always the LATEST dream), so an older plate shows its genuine narrative
+      // instead of today's — published scripture must stay genuine and unedited. video_key/wakers are not
+      // carried per transcript row, so only the latest dream (matched by its identical narrative, an exact
+      // string match since dream.ts binds the same narrative to both rows) can surface them; older plates
+      // honestly read "plate pending".
+      const isLatest = state?.dream?.narrative === e.text;
+      return <Plate key={e.id} epoch={dreamEpoch}
+        dream={{ narrative: e.text, created_at: e.created_at,
+                 video_key: isLatest ? state!.dream!.video_key : null,
+                 wakers: isLatest ? state!.dream!.wakers : [] }} />;
     }
     return <Verse key={e.id} entry={e} />;
   });
