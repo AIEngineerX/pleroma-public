@@ -38,6 +38,9 @@ describe("media routes", () => {
       sha256: "01pend", status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null });
 
     expect(await status(SELF.fetch(`http://x/api/img/${KEPT}`))).toBe(200);
+    const kept = await SELF.fetch(`http://x/api/img/${KEPT}`);
+    expect(kept.headers.get("x-content-type-options")).toBe("nosniff"); // boundary: the browser must not MIME-sniff served bytes
+    await kept.arrayBuffer(); // drain the body (isolated-storage teardown)
     expect(await status(SELF.fetch(`http://x/api/img/${PERC}`))).toBe(404); // pre-verdict: kept-only never serves it
     expect(await status(SELF.fetch(`http://x/api/img/${PEND}`))).toBe(404); // un-moderated never served
     expect(await status(SELF.fetch("http://x/api/img/not-a-ulid"))).toBe(400);

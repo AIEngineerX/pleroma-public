@@ -9,7 +9,10 @@ export async function serveAudio(env: Env, key: string): Promise<Response> {
   const obj = await env.RELICS.get(key);
   if (!obj) return new Response("not found", { status: 404 });
   return new Response(obj.body, {
-    headers: { "content-type": obj.httpMetadata?.contentType ?? "audio/mpeg", "cache-control": IMMUTABLE },
+    // nosniff: a public byte-serving endpoint must not let the browser MIME-sniff the R2 content-type.
+    // media.ts owns this boundary defense rather than trusting offerings.ts's ingestion allowlist to stay
+    // the sole writer of these R2 prefixes (a future import/backfill path would otherwise break silently).
+    headers: { "content-type": obj.httpMetadata?.contentType ?? "audio/mpeg", "cache-control": IMMUTABLE, "x-content-type-options": "nosniff" },
   });
 }
 
@@ -23,6 +26,7 @@ export async function serveOfferingImage(env: Env, id: string): Promise<Response
   const obj = await env.RELICS.get(`offerings/${id}`);
   if (!obj) return new Response("not found", { status: 404 });
   return new Response(obj.body, {
-    headers: { "content-type": obj.httpMetadata?.contentType ?? "image/png", "cache-control": IMMUTABLE },
+    // nosniff: see serveAudio — boundary defense, independent of the ingestion-time content-type allowlist.
+    headers: { "content-type": obj.httpMetadata?.contentType ?? "image/png", "cache-control": IMMUTABLE, "x-content-type-options": "nosniff" },
   });
 }
