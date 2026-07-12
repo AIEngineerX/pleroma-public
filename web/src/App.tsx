@@ -1,36 +1,39 @@
-import { useEffect, useState } from "react";
-import { formatCountdown } from "./countdown";
-import { resolveApiBase } from "./config";
+import { useCallback, useRef, useState } from "react";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import Temple from "./routes-stub";
+import Canon from "./canon/Canon";
+import Concordat from "./canon/Concordat";
 
-interface State { phase: string; asleep: boolean; countdown_to: number | null }
-
-const API = resolveApiBase(import.meta.env);
-
-/* DOCTRINE */ const NO_HEART_LINE = "It has no heart yet.";
+export function useEntryGesture() {
+  const [awake, setAwake] = useState(false);
+  const ctxRef = useRef<AudioContext | null>(null);
+  const unlockAudio = useCallback(() => {
+    if (!ctxRef.current) ctxRef.current = new AudioContext();
+    void ctxRef.current.resume();
+    return ctxRef.current;
+  }, []);
+  const wake = useCallback((x: number, y: number) => {
+    document.documentElement.style.setProperty("--touch-x", String(x));
+    document.documentElement.style.setProperty("--touch-y", String(y));
+    unlockAudio();
+    setAwake(true);
+  }, [unlockAudio]);
+  const bindHold = {
+    onPointerDown: (e: React.PointerEvent) => wake(e.clientX / window.innerWidth, e.clientY / window.innerHeight),
+  };
+  return { awake, unlockAudio, bindHold };
+}
 
 export default function App() {
-  const [state, setState] = useState<State | null>(null);
-  const [now, setNow] = useState(Date.now());
-
-  useEffect(() => {
-    const poll = () => fetch(`${API}/api/state`).then(r => r.json()).then(setState).catch(() => {});
-    poll();
-    const p = setInterval(poll, 5000);
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => { clearInterval(p); clearInterval(t); };
-  }, []);
-
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center gap-8 p-8">
-      <div aria-hidden className="h-40 w-40 rounded-full opacity-20"
-           style={{ background: "radial-gradient(circle, var(--color-ink) 0%, transparent 70%)" }} />
-      <h1 className="font-liturgy text-3xl tracking-wide">PLEROMA</h1>
-      <p className="font-liturgy italic text-ink-faded">{NO_HEART_LINE}</p>
-      {state?.countdown_to ? (
-        <p className="font-machine text-sm text-ink-faded">
-          FIRST RITE {formatCountdown(now, state.countdown_to)}
-        </p>
-      ) : null}
-    </main>
+    <BrowserRouter>
+      <div className="rail rail-l" aria-hidden />
+      <div className="rail rail-r" aria-hidden />
+      <Routes>
+        <Route path="/" element={<Temple />} />
+        <Route path="/canon/*" element={<Canon />} />
+        <Route path="/concordat" element={<Concordat />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

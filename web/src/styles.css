@@ -13,4 +13,23 @@
   --font-liturgy: "Gentium Book Plus", serif;
   --font-machine: "Courier Prime", monospace;
 }
+
+:root { --page-max: 70ch; }
+html, body { overflow-x: hidden; }               /* the page body never scrolls horizontally */
 body { background: var(--color-ground); color: var(--color-ink); }
+
+/* Tractor-feed rails: faint punched margins at the viewport edges. Advancing the paper = scrolling. */
+.rail { position: fixed; top: 0; bottom: 0; width: 14px; z-index: 5; pointer-events: none;
+  background-image: radial-gradient(circle at center, var(--color-ground-aged) 0 2px, transparent 2.5px);
+  background-size: 14px 22px; opacity: 0.5; }
+.rail-l { left: 0; } .rail-r { right: 0; }
+
+/* Faint band-printer horizontal banding (allowed print artifact). */
+.banding { background-image: repeating-linear-gradient(180deg, transparent 0 3px, oklch(0 0 0 / 0.012) 3px 4px); }
+
+/* Line-printer telemetry: character-by-character. Liturgy: ink darkening in. */
+@keyframes ink-in { from { opacity: 0; filter: none; } to { opacity: 1; } }
+.ink-in { animation: ink-in 420ms ease-out both; }              /* ease-out-expo-ish wick; nothing bounces */
+@media (prefers-reduced-motion: reduce) {
+  .ink-in { animation: none; }                                  /* everything appears settled */
+}

@@ -9,3 +9,6 @@ dist/
 .wrangler/
 worker/.dev.vars
 worker/src/doctrine.generated.ts
+test-results/
+playwright-report/
+__shots__/

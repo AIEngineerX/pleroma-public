@@ -4,13 +4,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "verify": "vitest run && npm run build"
+    "build": "node scripts/build-canon.mjs && tsc --noEmit && vite build",
+    "verify": "vitest run && tsc --noEmit && vite build",
+    "e2e": "playwright test"
   },
-  "dependencies": { "react": "^19", "react-dom": "^19" },
+  "dependencies": {
+    "react": "^19", "react-dom": "^19", "react-router-dom": "^7",
+    "@noble/hashes": "^1", "@scure/base": "^1",
+    "@wallet-standard/app": "^1", "@solana/wallet-standard-features": "^1"
+  },
   "devDependencies": {
     "@vitejs/plugin-react": "^4", "tailwindcss": "^4", "@tailwindcss/vite": "^4",
-    "typescript": "^5", "vite": "^6", "vitest": "^3",
+    "typescript": "^5", "vite": "^6", "vitest": "^3", "@playwright/test": "^1",
     "@types/node": "^22", "@types/react": "^19", "@types/react-dom": "^19"
   }
 }
