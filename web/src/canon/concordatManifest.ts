@@ -38,7 +38,7 @@ export const concordat = {
   ] as Decl[],
   decidesCode: [
     {
-      claim: "The priests moderate every image before the god ever sees it, and reject fail-closed on any uncertainty or outage.",
+      claim: "The priests moderate every image before the god ever sees it; nothing unmoderated is ever published. Content the model flags is rejected fail-closed; a moderator outage holds the offering for retry rather than showing it.",
       mapsTo: "worker/src/moderation.ts",
       symbol: "moderate",
     },

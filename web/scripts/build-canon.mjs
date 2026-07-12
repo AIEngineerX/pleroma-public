@@ -37,7 +37,7 @@ for (const m of md.matchAll(printRe)) {
 }
 
 const distCanon = resolve(here, "../dist/canon");
-const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 // Plain inline CSS approximating the Tailwind theme tokens (styles.css @theme): parchment ground,
 // rubric red for the god's own lines, machine mono for interface chrome. No build step touches
