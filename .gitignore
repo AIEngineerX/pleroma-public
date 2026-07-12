@@ -8,3 +8,4 @@ dist/
 .DS_Store
 .wrangler/
 worker/.dev.vars
+worker/src/doctrine.generated.ts

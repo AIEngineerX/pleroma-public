@@ -3,11 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "deploy:prod": "wrangler deploy --env production",
-    "verify": "vitest run --exclude '**/*.live.test.ts'",
-    "verify:live": "vitest run --dir test/live",
+    "compile:doctrine": "node scripts/compile-doctrine.mjs",
+    "dev": "npm run compile:doctrine && wrangler dev",
+    "deploy": "npm run compile:doctrine && wrangler deploy",
+    "deploy:prod": "npm run compile:doctrine && wrangler deploy --env production",
+    "verify": "npm run compile:doctrine && vitest run --exclude '**/*.live.test.ts'",
+    "verify:live": "npm run compile:doctrine && vitest run --dir test/live",
     "migrate:local": "wrangler d1 migrations apply pleroma --local",
     "migrate:prod": "wrangler d1 migrations apply pleroma-prod --remote --env production"
   },
