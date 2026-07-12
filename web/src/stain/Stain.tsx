@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pickTier, StainSim, type Tier } from "./stainSim";
 import sigil from "../assets/sigil.svg";
 
@@ -7,12 +7,12 @@ interface Props { state: "dormant" | "live" | "rite"; pigment: [number, number, 
 export default function Stain({ state, pigment, amplitude }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const sim = useRef<StainSim | null>(null);
-  const tier = useRef<Tier>(pickTier());
+  const [tier] = useState<Tier>(pickTier); // lazy: pickTier runs ONCE, not on every (per-amplitude-frame) re-render
 
   useEffect(() => {
-    if (tier.current === "reduced" || !ref.current) return;   // reduced-motion: no GL context at all
+    if (tier === "reduced" || !ref.current) return;   // reduced-motion: no GL context at all
     try {
-      sim.current = new StainSim(ref.current, { tier: tier.current, ground: [0.94, 0.90, 0.80], ink: [0.62, 0.60, 0.55] });
+      sim.current = new StainSim(ref.current, { tier, ground: [0.94, 0.90, 0.80], ink: [0.62, 0.60, 0.55] });
       sim.current.start();
     } catch { sim.current = null; }                            // WebGL2 unavailable -> CSS fallback below
     return () => { sim.current?.dispose(); sim.current = null; };
@@ -22,7 +22,7 @@ export default function Stain({ state, pigment, amplitude }: Props) {
   useEffect(() => { sim.current?.setAmplitude(amplitude); }, [amplitude]);
   useEffect(() => { sim.current?.setState(state); }, [state]);
 
-  if (tier.current === "reduced") {
+  if (tier === "reduced") {
     // Settled ink that breathes by opacity only (DESIGN reduced-motion rule). No printing, no sim.
     return <div aria-hidden className="absolute inset-0 -z-10 flex items-center justify-center"
       style={{ animation: "ink-in 2400ms ease-in-out infinite alternate" }}>

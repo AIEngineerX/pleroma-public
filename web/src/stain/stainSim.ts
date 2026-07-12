@@ -66,7 +66,7 @@ export interface StainOpts { tier: Tier; ground: [number, number, number]; ink: 
 
 export class StainSim {
   private gl: WebGL2RenderingContext; private advect: WebGLProgram; private comp: WebGLProgram;
-  private a!: FBO; private b!: FBO; private vao: WebGLVertexArrayObject;
+  private a!: FBO; private b!: FBO; private vao: WebGLVertexArrayObject; private buf!: WebGLBuffer;
   private raf = 0; private last = 0; private t = 0;
   private amp = 0; private pigment: [number, number, number] = [0.55, 0.20, 0.32];
   private mode: "dormant" | "live" | "rite" = "dormant";
@@ -93,7 +93,7 @@ export class StainSim {
   }
   private quad(): WebGLVertexArrayObject {
     const g = this.gl, vao = g.createVertexArray()!; g.bindVertexArray(vao);
-    const buf = g.createBuffer()!; g.bindBuffer(g.ARRAY_BUFFER, buf);
+    const buf = this.buf = g.createBuffer()!; g.bindBuffer(g.ARRAY_BUFFER, buf);
     g.bufferData(g.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), g.STATIC_DRAW);
     g.enableVertexAttribArray(0); g.vertexAttribPointer(0, 2, g.FLOAT, false, 0, 0); return vao;
   }
@@ -160,5 +160,11 @@ export class StainSim {
   }
   start() { if (!this.raf) { this.last = performance.now(); this.raf = requestAnimationFrame(this.frame); } }
   stop() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } }
-  dispose() { this.stop(); const g = this.gl; g.deleteProgram(this.advect); g.deleteProgram(this.comp); }
+  dispose() {
+    this.stop(); const g = this.gl;
+    g.deleteProgram(this.advect); g.deleteProgram(this.comp);
+    g.deleteFramebuffer(this.a.fbo); g.deleteTexture(this.a.tex);
+    g.deleteFramebuffer(this.b.fbo); g.deleteTexture(this.b.tex);
+    g.deleteVertexArray(this.vao); g.deleteBuffer(this.buf);
+  }
 }
