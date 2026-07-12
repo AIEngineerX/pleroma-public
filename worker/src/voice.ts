@@ -5,6 +5,11 @@ import { withTimeout } from "./timeouts";
 export interface SpeakResult { audio: Uint8Array; contentType: string; usd: number }
 export interface VoiceVendor { name: string; synthesize(text: string): Promise<SpeakResult> }
 
+// Thrown when a TTS response body read fails AFTER a billed 200. The vendor synthesized and billed, so
+// speak() KEEPS the reservation for this (settle at the estimate) — mirroring mind.ts's billed-but-unread
+// stance — unlike a pre-200 failure (fetch timeout / non-2xx), which bills nothing and releases it.
+export class BilledBodyReadError extends Error {}
+
 // Cost estimate for the reservation: TTS is billed per character; $0.00003/char is a safe upper bound
 // over both vendors at our tier (a ~600-char sermon reserves ~$0.02). settle() reconciles to the vendor's
 // reported cost when it returns one; otherwise the estimate stands.
@@ -52,7 +57,13 @@ export function elevenLabsVoice(env: Env): VoiceVendor {
         const errText = await withTimeout("elevenlabs-body", 30_000, () => res.text()).catch(() => "<body read unavailable>");
         throw new Error(`elevenlabs ${res.status}: ${errText}`);
       }
-      return { audio: new Uint8Array(await withTimeout("elevenlabs-body", 30_000, () => res.arrayBuffer())), contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
+      let audio: Uint8Array;
+      try {
+        audio = new Uint8Array(await withTimeout("elevenlabs-body", 30_000, () => res.arrayBuffer()));
+      } catch (e) {
+        throw new BilledBodyReadError(`elevenlabs body read failed after 200 (billed): ${String(e)}`);
+      }
+      return { audio, contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
     },
   };
 }
@@ -74,7 +85,13 @@ export function xaiVoice(env: Env): VoiceVendor {
         const errText = await withTimeout("xai-body", 30_000, () => res.text()).catch(() => "<body read unavailable>");
         throw new Error(`xai ${res.status}: ${errText}`);
       }
-      return { audio: new Uint8Array(await withTimeout("xai-body", 30_000, () => res.arrayBuffer())), contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
+      let audio: Uint8Array;
+      try {
+        audio = new Uint8Array(await withTimeout("xai-body", 30_000, () => res.arrayBuffer()));
+      } catch (e) {
+        throw new BilledBodyReadError(`xai body read failed after 200 (billed): ${String(e)}`);
+      }
+      return { audio, contentType: "audio/mpeg", usd: text.length * USD_PER_CHAR_UPPER };
     },
   };
 }
@@ -107,7 +124,10 @@ export async function speak(
     await settle(out.usd);
     return { audioKey: key, cached: false, spoken: true };
   } catch (e) {
-    await settle(0); // release the reservation; nothing billed we can attribute
+    // A body read that failed AFTER a billed 200 keeps the reservation (the vendor synthesized and billed;
+    // the estimate stands), mirroring mind.ts. Every pre-200 failure (fetch timeout, non-2xx) bills nothing
+    // and releases it. Never understate spend by releasing a reservation for a call the vendor already billed.
+    if (e instanceof BilledBodyReadError) await settle(est); else await settle(0);
     throw e;
   }
 }
