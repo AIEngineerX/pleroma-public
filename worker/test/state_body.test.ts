@@ -12,23 +12,23 @@ interface Body {
 }
 
 describe("/api/state body contract", () => {
-  it("stays dormant and HIDES a pre-configured mint until launched (anti-decoy)", async () => {
-    // A mint can be configured early (to wire the Helius webhook) but must NOT appear until launched=1.
-    await env.DB.prepare(`INSERT INTO config (key,value) VALUES ('pulse_mint','MintPubkey111') ON CONFLICT(key) DO UPDATE SET value='MintPubkey111'`).run();
+  it("stays dormant and HIDES the configured mint until launched (anti-decoy)", async () => {
+    // env.PULSE_MINT is bound (vitest.config) — the mint is wired early (to register the Helius webhook)
+    // but must NOT appear in raw /api/state until launched=1.
+    expect(env.PULSE_MINT.length).toBeGreaterThan(0); // precondition: a mint IS configured, yet must stay hidden
     const s = await (await SELF.fetch("http://x/api/state")).json<Body>();
     expect(s.phase).toBe("dormant");
     expect(s.mint).toBeNull();   // leak-proof: the real mint never appears in raw /api/state before the reveal
     expect(s.rite).toBeNull();
   });
 
-  it("goes live once launched=1, exposing the pinned mint", async () => {
-    // Storage is isolated per it() (@cloudflare/vitest-pool-workers), so re-seed pulse_mint here rather
-    // than relying on the previous test's write.
-    await env.DB.prepare(`INSERT INTO config (key,value) VALUES ('pulse_mint','MintPubkey111') ON CONFLICT(key) DO UPDATE SET value='MintPubkey111'`).run();
+  it("goes live once launched=1, exposing the env-pinned mint (the same mint PULSE watches)", async () => {
+    // Storage is isolated per it() (@cloudflare/vitest-pool-workers): launched starts at '0' from migration 0011.
     await env.DB.prepare(`UPDATE config SET value='1' WHERE key='launched'`).run();
     const s = await (await SELF.fetch("http://x/api/state")).json<Body>();
     expect(s.phase).toBe("live");
-    expect(s.mint).toBe("MintPubkey111");
+    expect(env.PULSE_MINT.length).toBeGreaterThan(0);   // guard: non-empty binding, so the next line is a real assertion
+    expect(s.mint).toBe(env.PULSE_MINT); // authoritative source: the pinned mint equals PULSE's mint, never a config phantom
   });
 
   it("surfaces today's non-terminal rite and hides a completed one", async () => {

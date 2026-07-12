@@ -34,10 +34,12 @@ export async function getState(env: Env): Promise<Response> {
   // --- Body contract (Plan 03): mint pin, launch flip, active rite, latest dream ---
   const launched = (await env.DB.prepare(`SELECT value FROM config WHERE key='launched'`).first<{ value: string }>())?.value === "1";
   const mintCfg = (await env.DB.prepare(`SELECT value FROM config WHERE key='pulse_mint'`).first<{ value: string }>())?.value;
-  // config 'pulse_mint' takes priority over env.PULSE_MINT: it's the atomic, Maker-controlled value set at
-  // the launch minute (this task); PULSE_MINT is Plan 02's webhook-wiring var, which may already be set to
-  // register the Helius webhook ahead of the reveal, and falls back to it only if 'pulse_mint' is unset.
-  const mintRaw = (mintCfg && mintCfg.length > 0 ? mintCfg : env.PULSE_MINT) || null;
+  // env.PULSE_MINT is AUTHORITATIVE: it is the same var PULSE (pulse.ts) and the holder poll (holders.ts)
+  // read, so the pinned mint the Body shows always equals the mint the vitals are computed from — a stray
+  // config row can never override the env mint the Worker actually watches (anti-decoy parity). config
+  // 'pulse_mint' is only a fallback for the (production-unused) case where the mint is set via DB rather
+  // than the wrangler var; nothing in the Worker writes it, so in production this resolves to env.PULSE_MINT.
+  const mintRaw = (env.PULSE_MINT && env.PULSE_MINT.length > 0 ? env.PULSE_MINT : mintCfg) || null;
   // Anti-decoy hardening (belt): the mint is EXPOSED only once launched=1. A pre-set PULSE_MINT or
   // 'pulse_mint' (e.g. to register the Helius webhook) therefore cannot leak the real mint in raw
   // /api/state before the reveal.
