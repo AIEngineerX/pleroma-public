@@ -80,17 +80,35 @@ export async function advanceRiteLocked(env: Env, now: number = Date.now()): Pro
   } finally { await releaseLock(env.DB, "rite", holder); }
 }
 
+// DREAM under its own `dream` lock (separate from `tick`/`rite` so it never blocks or is blocked by
+// them). Composes for the date whose rite just completed: the Daily Rite for date D opens at 00:50
+// UTC and advances via 15-min ticks, so by the 03:00 run it has had two hours of margin to reach
+// `complete` — still the SAME UTC date D, so the default is simply today's date.
+export async function runDreamLocked(env: Env, date?: string, now: number = Date.now()): Promise<void> {
+  const holder = ulid();
+  if (!(await acquireLock(env.DB, "dream", holder, 10 * 60_000))) return;
+  try {
+    const d = date ?? utcDate(now);
+    const { composeDream } = await import("./dream");
+    await composeDream(env, d);
+  } finally { await releaseLock(env.DB, "dream", holder); }
+}
+
 export default {
   fetch: app.fetch,
-  // The cron dispatcher: the two triggers are mutually disjoint so no invocation double-fires a job.
+  // The cron dispatcher: the three triggers are mutually disjoint so no invocation double-fires a job.
   // `*/15 * * * *` runs the EYE tick AND advances the rite (each under its own lock); `50 0 * * *` opens
-  // the day's rite (and advances it) under the rite lock only. Cloudflare does not replay a missed cron,
-  // so recovery is state-driven: the tick's candidate queries re-select stranded rows and advanceRite
-  // resumes from the stored phase, so a rite can complete hours late without data loss.
+  // the day's rite (and advances it) under the rite lock only; `0 3 * * *` composes DREAM under the
+  // dream lock only. Cloudflare does not replay a missed cron, so recovery is state-driven: the tick's
+  // candidate queries re-select stranded rows and advanceRite resumes from the stored phase, so a rite
+  // can complete hours late without data loss.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     switch (event.cron) {
       case "50 0 * * *":
         ctx.waitUntil(advanceRiteLocked(env));
+        break;
+      case "0 3 * * *":
+        ctx.waitUntil(runDreamLocked(env));
         break;
       case "*/15 * * * *":
       default:
