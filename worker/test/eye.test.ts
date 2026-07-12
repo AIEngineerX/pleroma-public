@@ -229,10 +229,10 @@ describe("runEyeBatch", () => {
 });
 
 describe("EYE publish idempotency", () => {
-  it("publishPerception flips perceivable->perceived and publishes the transcript exactly once in one atomic batch; a re-run is a clean no-op", async () => {
+  it("publishPerception flips perceiving->perceived and publishes the transcript exactly once in one atomic batch; a re-run is a clean no-op", async () => {
     const id = "idempotent-perceive-me";
     await insertOffering(env.DB, { id, wallet: null, sig: null,
-      image_key: `offerings/${id}`, sha256: id, status: "perceivable",
+      image_key: `offerings/${id}`, sha256: id, status: "perceiving",
       attempts: 0, created_at: Date.now(), perceived_at: null });
 
     // First call: claim + transcript insert commit together in one D1 batch.
@@ -270,7 +270,7 @@ describe("allow-path promote-before-perceivable ordering (Fix Wave 6)", () => {
     const id = "promote-before-perceivable";
     await env.RELICS.put(`quarantine/${id}`, PNG);
     await insertOffering(env.DB, { id, wallet: null, sig: null,
-      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      image_key: `quarantine/${id}`, sha256: id, status: "moderating",
       attempts: 0, created_at: Date.now(), perceived_at: null });
     const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
       .bind(id).first<OfferingRow>())!;
@@ -287,7 +287,7 @@ describe("allow-path promote-before-perceivable ordering (Fix Wave 6)", () => {
     expect(promoted).not.toBeNull();
     await promoted?.arrayBuffer();
 
-    const won = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    const won = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "moderating" });
     expect(won).toBe(true);
     const final = await env.DB.prepare(`SELECT status, image_key FROM offerings WHERE id = ?1`)
       .bind(id).first<{ status: string; image_key: string }>();
@@ -299,7 +299,7 @@ describe("allow-path promote-before-perceivable ordering (Fix Wave 6)", () => {
     const id = "lost-cas-reclaim";
     await env.RELICS.put(`quarantine/${id}`, PNG);
     await insertOffering(env.DB, { id, wallet: null, sig: null,
-      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      image_key: `quarantine/${id}`, sha256: id, status: "moderating",
       attempts: 0, created_at: Date.now(), perceived_at: null });
     const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
       .bind(id).first<OfferingRow>())!;
@@ -311,11 +311,11 @@ describe("allow-path promote-before-perceivable ordering (Fix Wave 6)", () => {
     await promoted?.arrayBuffer();
 
     // ...but loses the race: a concurrent tick reaches a "reject" verdict on the same row first.
-    const rejectWon = await setOfferingStatus(env.DB, id, "rejected", { expectedStatus: "pending" });
+    const rejectWon = await setOfferingStatus(env.DB, id, "rejected", { expectedStatus: "moderating" });
     expect(rejectWon).toBe(true);
 
-    // This tick's own CAS to perceivable now fails (status is no longer 'pending').
-    const allowWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    // This tick's own CAS to perceivable now fails (status is no longer 'moderating').
+    const allowWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "moderating" });
     expect(allowWon).toBe(false);
 
     // Per the eye.ts allow-branch reclaim logic: the row is now 'rejected', so the object this
@@ -330,7 +330,7 @@ describe("allow-path promote-before-perceivable ordering (Fix Wave 6)", () => {
     const id = "lost-cas-no-reclaim";
     await env.RELICS.put(`quarantine/${id}`, PNG);
     await insertOffering(env.DB, { id, wallet: null, sig: null,
-      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      image_key: `quarantine/${id}`, sha256: id, status: "moderating",
       attempts: 0, created_at: Date.now(), perceived_at: null });
     const row = (await env.DB.prepare(`SELECT * FROM offerings WHERE id = ?1`)
       .bind(id).first<OfferingRow>())!;
@@ -340,12 +340,12 @@ describe("allow-path promote-before-perceivable ordering (Fix Wave 6)", () => {
 
     // ...but another overlapping tick, also with an "allow" verdict for the same row, wins the
     // transition to perceivable first.
-    const winnerWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    const winnerWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "moderating" });
     expect(winnerWon).toBe(true);
 
     // This tick's own CAS now fails, but the row is 'perceivable', not 'rejected' — the reclaim
     // guard must NOT fire, because the winning tick's row still points at this exact key.
-    const allowWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "pending" });
+    const allowWon = await setOfferingStatus(env.DB, id, "perceivable", { expectedStatus: "moderating" });
     expect(allowWon).toBe(false);
     expect(await offeringStatusById(env.DB, id)).toBe("perceivable");
 

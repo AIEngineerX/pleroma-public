@@ -72,11 +72,11 @@ describe("offerings repository", () => {
     expect(await offeringStatusById(env.DB, "no-such-offering")).toBeNull();
   });
 
-  it("publishPerception atomically flips perceivable->perceived and inserts the transcript exactly once", async () => {
+  it("publishPerception atomically flips perceiving->perceived and inserts the transcript exactly once", async () => {
     const id = "01PUBLISH";
     await insertOffering(env.DB, {
       id, wallet: null, sig: null, image_key: `offerings/${id}`,
-      sha256: "publish-sha", status: "perceivable", attempts: 0,
+      sha256: "publish-sha", status: "perceiving", attempts: 0,
       created_at: Date.now(), perceived_at: null,
     });
 

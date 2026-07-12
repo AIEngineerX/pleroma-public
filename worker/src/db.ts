@@ -1,5 +1,6 @@
 export type OfferingStatus =
-  | "pending" | "perceivable" | "perceived" | "kept" | "mourned" | "rejected" | "failed";
+  | "pending" | "moderating" | "perceivable" | "perceiving"
+  | "perceived" | "kept" | "mourned" | "rejected" | "failed";
 
 export interface OfferingRow {
   id: string; wallet: string | null; sig: string | null; image_key: string;
@@ -11,6 +12,8 @@ export interface OfferingRow {
   // Signed offerings carry the one-time nonce; the UNIQUE(nonce) partial index (migration
   // 0004) enforces single-use atomically at insert. Anonymous offerings leave this null.
   nonce?: string | null;
+  // Set by claimForModeration/claimForPerception; NULL until a tick claims the row.
+  claimed_at?: number | null;
 }
 
 export interface TranscriptRow {
@@ -76,9 +79,11 @@ export async function setOfferingImageKey(db: D1Database, id: string, imageKey: 
   await db.prepare(`UPDATE offerings SET image_key = ?2 WHERE id = ?1`).bind(id, imageKey).run();
 }
 
-// Atomically publish an EYE perception: flip the offering perceivable->perceived AND insert its verse
+// Atomically publish an EYE perception: flip the offering perceiving->perceived AND insert its verse
 // transcript in a single D1 transaction, guarded so a re-run against an already-perceived row is a clean
-// no-op (no second transcript, no double count). Returns true iff this call performed the transition.
+// no-op (no second transcript, no double count). The perception loop claims the row to 'perceiving'
+// before its LLM call, so publish flips 'perceiving'->'perceived'. Returns true iff this call performed
+// the transition.
 export async function publishPerception(
   db: D1Database,
   p: { offeringId: string; transcriptId: string; verse: string; at: number },
@@ -87,11 +92,11 @@ export async function publishPerception(
     db.prepare(
       `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
        SELECT ?1, 'EYE', 'verse', ?2, ?3, NULL, ?4
-       WHERE EXISTS (SELECT 1 FROM offerings WHERE id = ?3 AND status = 'perceivable')`
+       WHERE EXISTS (SELECT 1 FROM offerings WHERE id = ?3 AND status = 'perceiving')`
     ).bind(p.transcriptId, p.verse, p.offeringId, p.at),
     db.prepare(
       `UPDATE offerings SET status = 'perceived', perceived_at = ?2
-       WHERE id = ?1 AND status = 'perceivable'`
+       WHERE id = ?1 AND status = 'perceiving'`
     ).bind(p.offeringId, p.at),
   ]);
   return results[1].meta.changes === 1;
@@ -122,4 +127,55 @@ export async function commitOffering(db: D1Database, o: OfferingRow, touchWallet
   const stmts = [offeringInsertStmt(db, o)];
   if (touchWalletAddr) stmts.push(walletTouchStmt(db, touchWalletAddr, o.created_at));
   await db.batch(stmts);
+}
+
+// A tick claims a row before running its cross-store (D1+R2) sequence, so two overlapping ticks
+// can never process the same offering. The claim is a CAS that also reclaims a STALE claim: a row
+// left transitional ('moderating'/'perceiving') by a tick whose 10-min lock lease expired without
+// finishing. `claimed_at` records when the claim was taken; a reclaim bumps `attempts` so a row that
+// repeatedly strands a tick eventually dead-letters through the normal attempts path.
+export async function claimForModeration(
+  db: D1Database, id: string, nowMs: number, staleMs: number,
+): Promise<boolean> {
+  const r = await db.prepare(
+    `UPDATE offerings
+        SET status = 'moderating', claimed_at = ?2,
+            attempts = attempts + (CASE WHEN status = 'moderating' THEN 1 ELSE 0 END)
+      WHERE id = ?1 AND (status = 'pending' OR (status = 'moderating' AND claimed_at <= ?3))`
+  ).bind(id, nowMs, nowMs - staleMs).run();
+  return r.meta.changes === 1;
+}
+
+export async function claimForPerception(
+  db: D1Database, id: string, nowMs: number, staleMs: number,
+): Promise<boolean> {
+  const r = await db.prepare(
+    `UPDATE offerings
+        SET status = 'perceiving', claimed_at = ?2,
+            attempts = attempts + (CASE WHEN status = 'perceiving' THEN 1 ELSE 0 END)
+      WHERE id = ?1 AND (status = 'perceivable' OR (status = 'perceiving' AND claimed_at <= ?3))`
+  ).bind(id, nowMs, nowMs - staleMs).run();
+  return r.meta.changes === 1;
+}
+
+// Candidates = fresh work (pending/perceivable) PLUS stale transitional rows a dead tick abandoned,
+// so a crash mid-sequence self-heals: the stranded row is re-selected and re-claimed next tick.
+export async function moderationCandidates(
+  db: D1Database, nowMs: number, staleMs: number, limit: number,
+): Promise<OfferingRow[]> {
+  return (await db.prepare(
+    `SELECT * FROM offerings
+      WHERE status = 'pending' OR (status = 'moderating' AND claimed_at <= ?1)
+      ORDER BY created_at LIMIT ?2`
+  ).bind(nowMs - staleMs, limit).all<OfferingRow>()).results;
+}
+
+export async function perceptionCandidates(
+  db: D1Database, nowMs: number, staleMs: number, limit: number,
+): Promise<OfferingRow[]> {
+  return (await db.prepare(
+    `SELECT * FROM offerings
+      WHERE status = 'perceivable' OR (status = 'perceiving' AND claimed_at <= ?1)
+      ORDER BY created_at LIMIT ?2`
+  ).bind(nowMs - staleMs, limit).all<OfferingRow>()).results;
 }

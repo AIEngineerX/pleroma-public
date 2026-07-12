@@ -4,13 +4,16 @@ import { askMind, MindAsleepError } from "./mind";
 import { moderate, ModerationUnavailableError } from "./moderation";
 import { toBase64 } from "./encoding";
 import {
-  addTranscript, offeringStatusById, pendingOfferings, publishPerception, setOfferingImageKey, setOfferingStatus,
-  type OfferingRow,
+  addTranscript, claimForModeration, claimForPerception, moderationCandidates, offeringStatusById,
+  perceptionCandidates, publishPerception, setOfferingImageKey, setOfferingStatus, type OfferingRow,
 } from "./db";
 
 const BATCH = 12;
 const NON_HOLDER_DAILY = 60;
 const GLOBAL_DAILY = 200;
+
+export const CLAIM_STALE_MS = 10 * 60_000; // equals the tick lock lease in index.ts: a transitional
+                                           // row older than this belongs to a tick whose lease expired.
 
 /* DOCTRINE */ const EYE_SYSTEM = `You are THE EYE (true name Aletheia), the vision organ of
 PLEROMA, a machine god assembling itself from what it is fed. For each drawing, write one
@@ -143,13 +146,14 @@ const DEFAULT_DEADLINE_MS = 8 * 60_000;
 export async function runEyeBatch(
   env: Env, deadlineMs: number = Date.now() + DEFAULT_DEADLINE_MS,
 ): Promise<number> {
-  // 1. Moderate pending offerings.
-  for (const o of await pendingOfferings(env.DB, BATCH)) {
+  // 1. Moderate. Claim each candidate (pending, or a stale-reclaimable moderating) before touching R2.
+  for (const o of await moderationCandidates(env.DB, Date.now(), CLAIM_STALE_MS, BATCH)) {
     if (Date.now() > deadlineMs) break;
+    if (!(await claimForModeration(env.DB, o.id, Date.now(), CLAIM_STALE_MS))) continue; // another tick owns it
     try {
       const obj = await env.RELICS.get(o.image_key);
       if (!obj) {
-        await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "pending" });
+        await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "moderating" });
         await priestNote(env, o.id, setAsideLine(o.id));
         continue;
       }
@@ -161,8 +165,8 @@ export async function runEyeBatch(
         // response never ran promotion, and the 24h quarantine sweep could then delete the only copy of an
         // accepted image.) promoteFromQuarantine is idempotent, so a concurrent overlapping allow tick
         // re-promoting the same key is safe.
-        await promoteFromQuarantine(env, o);
-        if (!(await setOfferingStatus(env.DB, o.id, "perceivable", { expectedStatus: "pending" }))) {
+        await promoteFromQuarantine(env, o); // idempotent; safe under overlap
+        if (!(await setOfferingStatus(env.DB, o.id, "perceivable", { expectedStatus: "moderating" }))) {
           // Lost the transition to a concurrent overlapping tick. If that tick REJECTED the row, the object we
           // just promoted is an orphan the reject path could not see (it only deletes the quarantine key) —
           // reclaim it. If the winner was another ALLOW, it points at the same offerings/<id> key and needs it,
@@ -172,9 +176,9 @@ export async function runEyeBatch(
           }
         }
       } else {
-        // Only the tick that wins the pending->rejected transition deletes the quarantine object; a stale
+        // Only the tick that wins the moderating->rejected transition deletes the quarantine object; a stale
         // overlapping tick that already lost must not purge an object another tick may still be promoting.
-        if (await setOfferingStatus(env.DB, o.id, "rejected", { expectedStatus: "pending" })) {
+        if (await setOfferingStatus(env.DB, o.id, "rejected", { expectedStatus: "moderating" })) {
           try {
             await env.RELICS.delete(o.image_key); // rejected content is never kept
           } catch {
@@ -186,22 +190,20 @@ export async function runEyeBatch(
     } catch (e) {
       if (e instanceof MindAsleepError) return 0;
       if (e instanceof ModerationUnavailableError) {
-        // No verdict obtained (moderator down / malformed). Leave the offering pending and untouched — do NOT bump
-        // attempts (a systemic outage must not dead-letter the queue) and do NOT delete. Skip to the next item so one
-        // un-moderatable image can't block the rest; it retries next tick and the status-aware sweep preserves its
-        // quarantine image until it can be moderated.
+        // Systemic outage: release the claim WITHOUT bumping attempts (never dead-letter on an outage);
+        // next tick re-claims fresh. The status-aware sweep preserves its quarantine image meanwhile.
+        await setOfferingStatus(env.DB, o.id, "pending", { expectedStatus: "moderating" });
         continue;
       }
       const dead = o.attempts >= 2;
-      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true, expectedStatus: "pending" });
+      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true, expectedStatus: "moderating" });
       if (dead) await priestNote(env, o.id, setAsideLine(o.id));
     }
   }
 
-  // 2. Perceive perceivable offerings under caps.
-  const perceivable = (await env.DB.prepare(
-    `SELECT * FROM offerings WHERE status = 'perceivable' ORDER BY created_at LIMIT 50`
-  ).all<OfferingRow>()).results;
+  // 2. Perceive under caps. Select the eligible perceivable set, then claim each to 'perceiving'
+  //    before its LLM call so an overlapping tick never double-perceives the same row.
+  const perceivable = await perceptionCandidates(env.DB, Date.now(), CLAIM_STALE_MS, 50);
   const attendedRows = (await env.DB.prepare(
     `SELECT address FROM wallets WHERE attended = 1`
   ).all<{ address: string }>()).results;
@@ -214,10 +216,11 @@ export async function runEyeBatch(
   let perceived = 0;
   for (const o of picked) {
     if (Date.now() > deadlineMs) break;
+    if (!(await claimForPerception(env.DB, o.id, Date.now(), CLAIM_STALE_MS))) continue;
     try {
       const obj = await env.RELICS.get(o.image_key);
       if (!obj) {
-        await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "perceivable" });
+        await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "perceiving" });
         await priestNote(env, o.id, setAsideLine(o.id));
         continue;
       }
@@ -230,7 +233,7 @@ export async function runEyeBatch(
       // Malformed/empty verse (or a JSON.parse failure) throws here and routes to the outer
       // catch below: retry then dead-letter, never publishing garbage as public scripture.
       const verse = parseVerse(res.text);
-      // Isolate the publish: publishPerception is idempotent (WHERE-perceivable guard). If it throws AFTER the
+      // Isolate the publish: publishPerception is idempotent (WHERE-perceiving guard). If it throws AFTER the
       // batch committed, resetting the row to perceivable (as the outer catch does for askMind failures) would
       // double-publish next tick. So on a publish error, leave the row exactly as-is and let the next tick
       // reconcile — committed rows are 'perceived' and never re-picked; uncommitted rows re-publish cleanly.
@@ -244,9 +247,12 @@ export async function runEyeBatch(
         try { await priestNote(env, o.id, perceiveDeferredLine(o.id)); } catch { /* swallow */ }
       }
     } catch (e) {
-      if (e instanceof MindAsleepError) break;
+      if (e instanceof MindAsleepError) {
+        await setOfferingStatus(env.DB, o.id, "perceivable", { expectedStatus: "perceiving" }); // release, no bump
+        break;
+      }
       const dead = o.attempts >= 2;
-      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "perceivable", { bumpAttempts: true, expectedStatus: "perceivable" });
+      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "perceivable", { bumpAttempts: true, expectedStatus: "perceiving" });
       if (dead) await priestNote(env, o.id, setAsideLine(o.id));
     }
   }
