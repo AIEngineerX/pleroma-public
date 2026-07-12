@@ -49,6 +49,12 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
     try { await sweepQuarantine(env, Date.now(), started + 9.5 * 60_000); }
     catch { /* best-effort; never fail the tick */ }
     try { await sweepNonces(env.DB); } catch { /* best-effort */ }
+    // Holder count refresh + attended-flag reconciliation (Task 9): bounded, best-effort, no-op pre-launch
+    // (no mint configured). A Helius outage or DAS error here must never fail the tick.
+    if (env.PULSE_MINT) {
+      try { const { reconcileHolders } = await import("./holders"); await reconcileHolders(env); }
+      catch { /* best-effort; holder count is refreshed next tick */ }
+    }
   } finally { await releaseLock(env.DB, "tick", holder); }
 }
 
