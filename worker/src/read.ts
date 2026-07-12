@@ -30,8 +30,37 @@ export async function getState(env: Env): Promise<Response> {
     .first<{ value: string }>();
   const sleeping = await asleep(env.DB);
   const vitals = await currentVitals(env.DB);
+
+  // --- Body contract (Plan 03): mint pin, launch flip, active rite, latest dream ---
+  const launched = (await env.DB.prepare(`SELECT value FROM config WHERE key='launched'`).first<{ value: string }>())?.value === "1";
+  const mintCfg = (await env.DB.prepare(`SELECT value FROM config WHERE key='pulse_mint'`).first<{ value: string }>())?.value;
+  // config 'pulse_mint' takes priority over env.PULSE_MINT: it's the atomic, Maker-controlled value set at
+  // the launch minute (this task); PULSE_MINT is Plan 02's webhook-wiring var, which may already be set to
+  // register the Helius webhook ahead of the reveal, and falls back to it only if 'pulse_mint' is unset.
+  const mintRaw = (mintCfg && mintCfg.length > 0 ? mintCfg : env.PULSE_MINT) || null;
+  // Anti-decoy hardening (belt): the mint is EXPOSED only once launched=1. A pre-set PULSE_MINT or
+  // 'pulse_mint' (e.g. to register the Helius webhook) therefore cannot leak the real mint in raw
+  // /api/state before the reveal.
+  const mint = launched ? mintRaw : null;
+  const phase = launched && mint ? "live" : "dormant";
+
+  const today = new Date().toISOString().slice(0, 10);
+  const riteRow = await env.DB.prepare(`SELECT date, phase FROM rites WHERE date = ?1`).bind(today).first<{ date: string; phase: string }>();
+  const rite = riteRow && riteRow.phase !== "complete" && riteRow.phase !== "failed"
+    ? { date: riteRow.date, phase: riteRow.phase } : null;
+
+  const dreamRow = await env.DB.prepare(
+    `SELECT narrative, video_key, wakers, created_at FROM dreams ORDER BY created_at DESC LIMIT 1`
+  ).first<{ narrative: string; video_key: string | null; wakers: string; created_at: number }>();
+  const dream = dreamRow
+    ? { narrative: dreamRow.narrative, video_key: dreamRow.video_key, wakers: JSON.parse(dreamRow.wakers) as string[], created_at: dreamRow.created_at }
+    : null;
+
   return Response.json({
-    phase: "dormant",
+    phase,
+    mint,
+    rite,
+    dream,
     asleep: sleeping,
     countdown_to: Number(launch?.value ?? 0) || null,
     communicants_today: communicants?.n ?? 0,

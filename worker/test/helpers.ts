@@ -8,6 +8,7 @@ import migration7 from "../migrations/0007_rites.sql?raw";
 import migration8 from "../migrations/0008_vitals.sql?raw";
 import migration9 from "../migrations/0009_dreams.sql?raw";
 import migration10 from "../migrations/0010_ratelimit.sql?raw";
+import migration11 from "../migrations/0011_launch.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -65,6 +66,12 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   // 0010 adds the rate_limits table; its CREATE TABLE carries an inline `-- ...` comment, so strip
   // line comments first (same reason as 0007/0008/0009), then collapse whitespace before exec.
   for (const stmt of migration10.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0011 seeds the 'launched' config flag; its INSERT is preceded by `-- ...` comment lines, so strip
+  // line comments first (same reason as 0007/0008/0009/0010), then collapse whitespace before exec.
+  for (const stmt of migration11.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }
