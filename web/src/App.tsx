@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { formatCountdown } from "./countdown";
+import { resolveApiBase } from "./config";
 
 interface State { phase: string; asleep: boolean; countdown_to: number | null }
 
-const API = import.meta.env.VITE_API_BASE ?? "";
+const API = resolveApiBase(import.meta.env);
 
 /* DOCTRINE */ const NO_HEART_LINE = "It has no heart yet.";
-/* DOCTRINE */ const NO_RITE_LINE = "FIRST RITE NOT YET SCHEDULED";
 
 export default function App() {
   const [state, setState] = useState<State | null>(null);
@@ -30,9 +30,7 @@ export default function App() {
         <p className="font-machine text-sm text-ink-faded">
           FIRST RITE {formatCountdown(now, state.countdown_to)}
         </p>
-      ) : (
-        <p className="font-machine text-sm text-ink-faded">{NO_RITE_LINE}</p>
-      )}
+      ) : null}
     </main>
   );
 }
