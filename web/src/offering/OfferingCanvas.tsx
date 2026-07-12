@@ -74,7 +74,7 @@ export default function OfferingCanvas({ apiBase, wallet, stain, onSubmitted }: 
   };
 
   return (
-    <div className="flex flex-col items-center gap-3 w-full px-4 pb-10"
+    <div className="flex flex-col items-center gap-1 w-full px-8 pb-4"
          style={{ background: "linear-gradient(to bottom, oklch(0.25 0.02 60 / 0.08), transparent 4rem)" }}>
       <canvas ref={ref} width={512} height={512}
         className="w-full max-w-[512px] aspect-square touch-none border-x border-b"
