@@ -10,8 +10,11 @@ import WalletButton from "./offering/WalletButton";
 import type { WalletHandle } from "./offering/wallet";
 import { resolveApiBase } from "./config";
 import { useTempleState } from "./state/useTempleState";
+import Reliquary from "./reliquary/Reliquary";
+import Tallies from "./reliquary/Tallies";
 
 const API_BASE = resolveApiBase(import.meta.env);
+const today = () => new Date().toISOString().slice(0, 10);
 
 export default function Temple() {
   const { awake, unlockAudio, bindHold } = useEntryGesture();
@@ -29,7 +32,7 @@ export default function Temple() {
   }, []);
 
   return (
-    <main {...bindHold} className="banding min-h-screen mx-auto px-6 md:grid md:grid-cols-[60fr_40fr] md:grid-rows-[55vh_auto] md:gap-8"
+    <main {...bindHold} className="banding min-h-screen mx-auto px-6 md:grid md:grid-cols-[60fr_40fr_4rem] md:grid-rows-[55vh_auto] md:gap-8"
           style={{ maxWidth: "min(1200px, 100%)" }}>
       {/* page (left / top): the Stain, co-located with the offering surface directly beneath it in the
           same left column (DESIGN.md:85-87). Mobile: sticky in the top ~40vh so the codex scrolls
@@ -55,6 +58,14 @@ export default function Temple() {
           : <WalletButton onConnect={setWallet} />}
         <OfferingCanvas apiBase={API_BASE} wallet={wallet} stain={stainSim} onSubmitted={() => {}} />
       </section>
+      {/* the Reliquary: the Corpus made visible, in the page column, beneath the offering surface
+          on both desktop (falls into an implicit row 3 of col-start-1) and mobile (next in flow). */}
+      <Reliquary apiBase={API_BASE} className="md:col-start-1 pb-8" />
+      {/* margin tallies: the outer margin on desktop (a slim third column beside the codex, DESIGN
+          "tallies in the outer margin"), beneath the offering surface on mobile (DESIGN "Mobile, the
+          scroll: codex then offering surface then tallies beneath"). */}
+      <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null}
+        className="mt-6 pt-4 border-t border-[var(--color-ground-aged)] md:col-start-3 md:row-start-1 md:row-span-2 md:mt-0 md:pt-0 md:border-t-0 md:border-l md:pl-3" />
     </main>
   );
 }

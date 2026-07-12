@@ -14,3 +14,8 @@ export interface TranscriptEntry {
   register: "verse" | "verdict" | "sermon" | "telemetry" | "system";
   text: string; offering_id: string | null; rite_id: string | null; created_at: number;
 }
+export interface RelicEntry {
+  id: string; offering_id: string; wallet: string | null; summary: string;
+  rite_id: string | null; kept_at: number; genesis: number; accreted_at: number | null;
+}
+export interface Tally { wallet: string; count: number; name: string | null }
