@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/build-canon.mjs && tsc --noEmit && vite build",
-    "verify": "vitest run && tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/build-canon.mjs",
+    "verify": "vitest run && tsc --noEmit && vite build && node scripts/build-canon.mjs",
     "e2e": "playwright test"
   },
   "dependencies": {
