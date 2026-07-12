@@ -1,6 +1,6 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { nonceIsFresh } from "../src/nonce";
+import { nonceIsFresh, issueNonce, sweepNonces } from "../src/nonce";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -24,5 +24,19 @@ describe("nonce", () => {
     await env.DB.prepare(`INSERT INTO nonces (nonce, expires_at) VALUES (?1, ?2)`)
       .bind(expired, Date.now() - 1_000).run();
     expect(await nonceIsFresh(env.DB, expired)).toBe(false);
+  });
+
+  it("sweepNonces deletes only expired rows, leaving fresh ones untouched", async () => {
+    const expired = "f".repeat(32);
+    await env.DB.prepare(`INSERT INTO nonces (nonce, expires_at) VALUES (?1, ?2)`)
+      .bind(expired, Date.now() - 1_000).run();
+    const { nonce: fresh } = await issueNonce(env.DB);
+
+    const deleted = await sweepNonces(env.DB, Date.now());
+    expect(deleted).toBe(1);
+
+    const expiredRow = await env.DB.prepare(`SELECT 1 FROM nonces WHERE nonce = ?1`).bind(expired).first();
+    expect(expiredRow).toBeNull();
+    expect(await nonceIsFresh(env.DB, fresh)).toBe(true);
   });
 });

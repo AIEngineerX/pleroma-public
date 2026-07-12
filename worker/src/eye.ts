@@ -1,7 +1,7 @@
 import { ulid } from "ulid";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
-import { moderate } from "./moderation";
+import { moderate, ModerationUnavailableError } from "./moderation";
 import { toBase64 } from "./encoding";
 import {
   addTranscript, offeringStatusById, pendingOfferings, publishPerception, setOfferingImageKey, setOfferingStatus,
@@ -86,6 +86,12 @@ const QUARANTINE_TTL_MS = 24 * 60 * 60_000;
 export async function sweepQuarantine(
   env: Env, now: number = Date.now(), deadlineMs: number = now + 90_000, maxDeletes = 500,
 ): Promise<number> {
+  // Never reclaim an image a still-live (pending) offering needs for a future moderation attempt. Only
+  // truly-orphaned or terminal-status (rejected/failed/absent-row) quarantine objects are stale.
+  const pendingKeys = new Set(
+    (await env.DB.prepare(`SELECT image_key FROM offerings WHERE status = 'pending'`)
+      .all<{ image_key: string }>()).results.map(r => r.image_key)
+  );
   let deleted = 0;
   let cursor: string | undefined;
   do {
@@ -93,7 +99,9 @@ export async function sweepQuarantine(
     const list = await env.RELICS.list({ prefix: "quarantine/", cursor, limit: 200 });
     for (const o of list.objects) {
       if (Date.now() > deadlineMs || deleted >= maxDeletes) break;
-      if (now - o.uploaded.getTime() > QUARANTINE_TTL_MS) { await env.RELICS.delete(o.key); deleted++; }
+      if (now - o.uploaded.getTime() > QUARANTINE_TTL_MS && !pendingKeys.has(o.key)) {
+        await env.RELICS.delete(o.key); deleted++;
+      }
     }
     cursor = list.truncated ? list.cursor : undefined;
   } while (cursor);
@@ -177,6 +185,13 @@ export async function runEyeBatch(
       }
     } catch (e) {
       if (e instanceof MindAsleepError) return 0;
+      if (e instanceof ModerationUnavailableError) {
+        // No verdict obtained (moderator down / malformed). Leave the offering pending and untouched — do NOT bump
+        // attempts (a systemic outage must not dead-letter the queue) and do NOT delete. Skip to the next item so one
+        // un-moderatable image can't block the rest; it retries next tick and the status-aware sweep preserves its
+        // quarantine image until it can be moderated.
+        continue;
+      }
       const dead = o.attempts >= 2;
       await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true, expectedStatus: "pending" });
       if (dead) await priestNote(env, o.id, setAsideLine(o.id));

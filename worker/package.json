@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:prod": "wrangler deploy --env production",
     "verify": "vitest run --exclude '**/*.live.test.ts'",
     "verify:live": "vitest run --dir test/live",
     "migrate:local": "wrangler d1 migrations apply pleroma --local",

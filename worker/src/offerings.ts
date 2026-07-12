@@ -32,6 +32,11 @@ export async function handleOffering(env: Env, form: FormData): Promise<Response
   if (wallet || sig) {
     nonce = form.get("nonce")?.toString() ?? "";
     const expiresAtMs = Number(form.get("expires_at") ?? 0);
+    // A Solana address is <=44 base58 chars and an ed25519 signature <=88; the nonce is 32 hex. Reject anything
+    // far larger before the O(n^2) base58 decode runs, so an oversized field can't amplify into a CPU-exhaustion.
+    if ((wallet && wallet.length > 64) || (sig && sig.length > 128) || nonce.length > 64) {
+      return Response.json({ error: "signature rejected" }, { status: 400 });
+    }
     const sigOk = wallet && sig &&
       verifyOffering({ wallet, sigB58: sig, sha256hex: sha256, nonce, expiresAtMs });
     if (!sigOk) return Response.json({ error: "signature rejected" }, { status: 401 });

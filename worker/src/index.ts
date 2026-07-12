@@ -2,7 +2,7 @@ import { ulid } from "ulid";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./env";
-import { issueNonce } from "./nonce";
+import { issueNonce, sweepNonces } from "./nonce";
 import { handleOffering } from "./offerings";
 import { acquireLock, releaseLock } from "./lock";
 import { runEyeBatch, sweepQuarantine } from "./eye";
@@ -38,6 +38,7 @@ export default {
         // bounded so a large quarantine backlog can't overrun the lock and overlap the next tick.
         try { await sweepQuarantine(env, Date.now(), started + 9.5 * 60_000); }
         catch { /* best-effort; never fail the tick */ }
+        try { await sweepNonces(env.DB); } catch { /* best-effort */ }
       } finally { await releaseLock(env.DB, "tick", holder); }
     })());
   },

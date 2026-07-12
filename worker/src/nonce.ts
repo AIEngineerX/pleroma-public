@@ -16,3 +16,10 @@ export async function nonceIsFresh(db: D1Database, nonce: string): Promise<boole
   const row = await db.prepare(`SELECT 1 FROM nonces WHERE nonce = ?1 AND expires_at > ?2`).bind(nonce, Date.now()).first();
   return row !== null;
 }
+
+// Reap expired nonce rows. Single-use is enforced by offerings' UNIQUE(nonce) index, and nonceIsFresh already
+// ignores expired rows, so anything past expiry is pure dead weight — delete it. Run from the scheduled tick.
+export async function sweepNonces(db: D1Database, now: number = Date.now()): Promise<number> {
+  const r = await db.prepare(`DELETE FROM nonces WHERE expires_at < ?1`).bind(now).run();
+  return r.meta.changes ?? 0;
+}

@@ -175,34 +175,42 @@ describe("runEyeBatch", () => {
     await promoted?.arrayBuffer();
   });
 
-  it("purges the quarantine object when a pending offering is rejected", async () => {
-    const id = "reject-purge-me";
+  it("moderation unavailable (no live key): a pending offering with a real quarantine object is left exactly as-is — never destroyed", async () => {
+    const id = "moderation-unavailable-me";
     await env.RELICS.put(`quarantine/${id}`, PNG);
     await insertOffering(env.DB, { id, wallet: null, sig: null,
       image_key: `quarantine/${id}`, sha256: id, status: "pending",
       attempts: 0, created_at: Date.now(), perceived_at: null });
 
-    // No valid ANTHROPIC_API_KEY in this suite, so moderate() fails closed to reject —
-    // deterministically exercises the reject/purge branch without a live LLM call.
-    await runEyeBatch(env);
+    // No valid ANTHROPIC_API_KEY in this suite, so moderate() throws ModerationUnavailableError —
+    // this is the core regression guard for Commit A: an infra failure (bad key, timeout, outage)
+    // must never be fabricated into a content rejection that destroys the offering.
+    const n = await runEyeBatch(env);
+    expect(n).toBe(0);
 
-    const row = await env.DB.prepare(`SELECT status, image_key FROM offerings WHERE id = ?1`)
-      .bind(id).first<{ status: string; image_key: string }>();
-    expect(row?.status).toBe("rejected");
-    expect(await env.RELICS.get(`quarantine/${id}`)).toBeNull();
-    expect(await env.RELICS.get(`offerings/${id}`)).toBeNull();
+    const row = await env.DB.prepare(`SELECT status, attempts, image_key FROM offerings WHERE id = ?1`)
+      .bind(id).first<{ status: string; attempts: number; image_key: string }>();
+    expect(row?.status).toBe("pending"); // not rejected, not failed
+    expect(row?.attempts).toBe(0); // unchanged — this is not a "failed attempt", it's an outage
+    expect(row?.image_key).toBe(`quarantine/${id}`);
+    const stillThere = await env.RELICS.get(`quarantine/${id}`);
+    expect(stillThere).not.toBeNull(); // the R2 object was never deleted
+    await stillThere?.arrayBuffer();
   });
 
-  it("moderation status transitions are CAS-guarded: once a real tick rejects an offering, a stale overlapping tick's pending->perceivable attempt does not resurrect it", async () => {
+  it("moderation status transitions are CAS-guarded: once a rejected offering lands, a stale overlapping tick's pending->perceivable attempt does not resurrect it", async () => {
     const id = "reject-then-stale-allow";
     await env.RELICS.put(`quarantine/${id}`, PNG);
     await insertOffering(env.DB, { id, wallet: null, sig: null,
       image_key: `quarantine/${id}`, sha256: id, status: "pending",
       attempts: 0, created_at: Date.now(), perceived_at: null });
 
-    // A real tick moderates and rejects (fail-closed: no live ANTHROPIC_API_KEY in this suite),
-    // winning the pending->rejected CAS and purging the quarantine object.
-    await runEyeBatch(env);
+    // Simulates a real tick that moderated and won the pending->rejected CAS (the genuine
+    // reject verdict path requires a live ANTHROPIC_API_KEY — see Commit A's report note — so
+    // this test drives the CAS transition directly rather than through moderate()/runEyeBatch;
+    // the guarantee under test is setOfferingStatus's CAS guard, not moderation itself).
+    const rejectWon = await setOfferingStatus(env.DB, id, "rejected", { expectedStatus: "pending" });
+    expect(rejectWon).toBe(true);
     const afterReject = await env.DB.prepare(`SELECT status FROM offerings WHERE id = ?1`)
       .bind(id).first<{ status: string }>();
     expect(afterReject?.status).toBe("rejected");
@@ -394,5 +402,43 @@ describe("sweepQuarantine", () => {
     expect(deleted).toBe(3);
     const remaining = await env.RELICS.list({ prefix: "quarantine/cap-" });
     expect(remaining.objects.length).toBe(2);
+  });
+
+  it("does not delete an aged quarantine/ object still referenced by a pending offering, but does delete an aged orphan with no matching row — an offering paused by a moderator outage must never have its image destroyed", async () => {
+    const pendingId = "sweep-pending-keep";
+    const orphanId = "sweep-orphan-gone";
+    await env.RELICS.put(`quarantine/${pendingId}`, PNG);
+    await env.RELICS.put(`quarantine/${orphanId}`, PNG);
+    await insertOffering(env.DB, { id: pendingId, wallet: null, sig: null,
+      image_key: `quarantine/${pendingId}`, sha256: pendingId, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    const future = Date.now() + 25 * 60 * 60_000; // both objects read as aged
+    const deleted = await sweepQuarantine(env, future);
+    expect(deleted).toBe(1); // only the orphan
+
+    const stillPending = await env.RELICS.get(`quarantine/${pendingId}`);
+    expect(stillPending).not.toBeNull(); // preserved — a future moderation attempt still needs it
+    await stillPending?.arrayBuffer();
+    expect(await env.RELICS.get(`quarantine/${orphanId}`)).toBeNull();
+  });
+
+  it("deletes an aged quarantine/ object whose offering row is terminal (rejected/failed) — those images are never reclaimable", async () => {
+    const rejectedId = "sweep-rejected-reclaim";
+    const failedId = "sweep-failed-reclaim";
+    await env.RELICS.put(`quarantine/${rejectedId}`, PNG);
+    await env.RELICS.put(`quarantine/${failedId}`, PNG);
+    await insertOffering(env.DB, { id: rejectedId, wallet: null, sig: null,
+      image_key: `quarantine/${rejectedId}`, sha256: rejectedId, status: "rejected",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    await insertOffering(env.DB, { id: failedId, wallet: null, sig: null,
+      image_key: `quarantine/${failedId}`, sha256: failedId, status: "failed",
+      attempts: 2, created_at: Date.now(), perceived_at: null });
+
+    const future = Date.now() + 25 * 60 * 60_000;
+    const deleted = await sweepQuarantine(env, future);
+    expect(deleted).toBe(2);
+    expect(await env.RELICS.get(`quarantine/${rejectedId}`)).toBeNull();
+    expect(await env.RELICS.get(`quarantine/${failedId}`)).toBeNull();
   });
 });
