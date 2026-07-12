@@ -11,6 +11,7 @@ import type { WalletHandle } from "../offering/wallet";
 import { resolveApiBase } from "../config";
 import { useTempleState } from "../state/useTempleState";
 import { pigment } from "../state/pigment";
+import { oklchToRgb } from "../lib/a11y";
 import Reliquary from "../reliquary/Reliquary";
 import Tallies from "../reliquary/Tallies";
 import RiteInversion from "../rite/RiteInversion";
@@ -39,12 +40,12 @@ export default function Temple() {
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
   // The Stain's red threads read the live PULSE pigment (Task 4's oklch table), not a fixed tint;
-  // falls back to starving's dried rubric before the first poll lands.
-  const stainPigment = useMemo(() => {
-    const m = /oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/.exec(pigment(state?.vitals.state ?? "starving").rgb);
-    return m ? [Number(m[1]), Number(m[2]) * 5, Number(m[3]) / 60] as [number, number, number]
-             : [0.55, 1, 0.53] as [number, number, number];
-  }, [state?.vitals.state]);
+  // falls back to starving's dried rubric before the first poll lands. Convert OKLCH -> gamma sRGB
+  // properly (Ottosson) for the WebGL u_thread uniform; a naive L/C/H parse renders green, not rubric red.
+  const stainPigment = useMemo<[number, number, number]>(
+    () => oklchToRgb(pigment(state?.vitals.state ?? "starving").rgb),
+    [state?.vitals.state],
+  );
   // The sermon player calls back up to 60x/s; only push a re-render on a change the eye would
   // actually catch, instead of setState on every animation frame (Task 5 carry).
   const onAmplitude = useCallback((a: number) => {

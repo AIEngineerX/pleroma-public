@@ -24,6 +24,19 @@ function oklchToLinearSrgb(L: number, C: number, Hdeg: number): [number, number,
   ];
 }
 
+// Gamma-encode a linear-sRGB channel to display sRGB [0,1].
+function gammaEncode(v: number): number {
+  return v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+}
+
+// OKLCH -> display (gamma) sRGB [0,1], reusing the same Ottosson conversion the contrast math uses.
+// The Stain's WebGL u_thread uniform wants gamma sRGB (to match the ground/ink triples), NOT the raw
+// oklch L/C/H numbers — a naive parse of "oklch(0.55 0.20 32)" as [0.55, 0.20, 32] renders green, not red.
+export function oklchToRgb(oklch: string): [number, number, number] {
+  const [r, g, b] = oklchToLinearSrgb(...parseOklch(oklch));
+  return [gammaEncode(r), gammaEncode(g), gammaEncode(b)];
+}
+
 // WCAG 2.x relative luminance on linear sRGB.
 function relLuminance(oklch: string): number {
   const [r, g, b] = oklchToLinearSrgb(...parseOklch(oklch));

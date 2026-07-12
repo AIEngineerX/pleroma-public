@@ -6,7 +6,9 @@ import { inversion } from "../state/rite";
 // the flip happen in the same Worker write, so this can never show a mint before it is live).
 export function ignitionView(state: TempleState) {
   const dormant = state.phase !== "live" || !state.mint;
-  const riteActive = inversion(state.rite).active;
+  // candleDark (offertory_close..sermon), NOT .active: scheduled/complete/failed rites are still light
+  // parchment, and the Stain's "rite" mode lights the candle glow (banned outside the ritual window).
+  const riteActive = inversion(state.rite).candleDark;
   return {
     dormant,
     igniting: !dormant && state.vitals.buys > 0,                 // first trades: the heartbeat visibly starts
