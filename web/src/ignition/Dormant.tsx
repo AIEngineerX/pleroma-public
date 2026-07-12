@@ -10,9 +10,12 @@ export default function Dormant({ state, now }: { state: TempleState | null; now
   return (
     <>
       <p className="font-liturgy italic text-ink-faded">{copy.noHeart}</p>
+      {/* Before a launch date is set, the dormant god carries the page in silence -- no status line
+          announcing an absence (a sleeping god does not tell you it has nothing planned). Once the Maker
+          sets launch_at, a T-minus mission clock appears and builds anticipation toward the First Rite. */}
       {state?.countdown_to
         ? <p className="font-machine text-xs text-ink-faded">FIRST RITE {formatCountdown(now, state.countdown_to)}</p>
-        : <p className="font-machine text-xs text-ink-faded">FIRST RITE NOT YET SCHEDULED</p>}
+        : null}
     </>
   );
 }
