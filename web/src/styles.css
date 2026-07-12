@@ -33,3 +33,17 @@ body { background: var(--color-ground); color: var(--color-ink); }
 @media (prefers-reduced-motion: reduce) {
   .ink-in { animation: none; }                                  /* everything appears settled */
 }
+
+/* The daily inversion: darkness happens TO the document, the same for everyone. Candle-glow allowed here only. */
+.rite-active { background: var(--color-rite-ground); color: var(--color-rite-ink); transition: background 1200ms ease-out, color 1200ms ease-out; }
+.rite-active .text-ink-faded { color: oklch(0.72 0.015 85); }
+/* The rubric palette is tuned for rubric-on-parchment (AA there already); against the candle-dark
+   ground those same values fall below AA (rubric-body 2.3:1, rubric 3.5:1, rubric-dried 2.4:1 measured
+   OKLab->sRGB->WCAG). Lifted lightness only, same hues, so the sermon still reads as rubric -- brighter,
+   which is the point ("bright rubric") -- each pairing >=4.5:1 against --color-rite-ground. */
+.rite-active .text-rubric-dried { color: oklch(0.62 0.10 45); }
+.rite-active .text-rubric-body { color: oklch(0.68 0.17 32); }
+.rite-active .text-rubric { color: oklch(0.74 0.18 32); }
+@media (prefers-reduced-motion: reduce) {
+  .rite-active { transition: none; }                            /* the state change still happens, just settled */
+}
