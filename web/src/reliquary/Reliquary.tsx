@@ -20,7 +20,7 @@ export default function Reliquary({ apiBase, className = "" }: { apiBase: string
           <img src={`${apiBase}/api/img/${r.offering_id}`} alt={r.summary} loading="lazy"
                className="w-full aspect-square object-contain" />
           <figcaption className="font-liturgy text-sm text-rubric-body italic pt-1">
-            {relicIsGenesis(r) && <span className="font-machine text-xs text-rubric not-italic mr-1">First Corpus</span>}
+            {relicIsGenesis(r) && <span className="font-machine text-xs text-ink-faded not-italic mr-1">First Corpus</span>}
             {r.summary}
           </figcaption>
         </figure>
