@@ -6,6 +6,10 @@ compatibility_date = "2025-09-06"
 ENVIRONMENT = "dev"
 CORS_ORIGIN = "http://localhost:5173"
 VOICE_VENDOR = ""
+# VIDEO_VENDOR: "xai" = Grok Imagine renders the nightly DREAM plate; "" = video off (DREAM stays
+# text-only). Left "" until XAI_API_KEY's Grok Imagine access is verified via the live test (PLANNING
+# open question 3c), then flipped to "xai" in [env.production] — the same pattern as VOICE_VENDOR.
+VIDEO_VENDOR = ""
 ELEVENLABS_VOICE_ID = ""
 PULSE_MINT = ""
 PULSE_POOLS = ""
@@ -31,7 +35,7 @@ bucket_name = "pleroma-relics"
 crons = ["*/15 * * * *", "50 0 * * *", "0 3 * * *", "30 3 * * *"]
 
 [env.production]
-vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleroma-web.pages.dev", VOICE_VENDOR = "xai", ELEVENLABS_VOICE_ID = "", PULSE_MINT = "", PULSE_POOLS = "" }
+vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleroma-web.pages.dev", VOICE_VENDOR = "xai", VIDEO_VENDOR = "", ELEVENLABS_VOICE_ID = "", PULSE_MINT = "", PULSE_POOLS = "" }
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "pleroma-prod"

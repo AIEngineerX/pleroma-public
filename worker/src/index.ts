@@ -11,7 +11,7 @@ import { openRite, nonTerminalRites } from "./db";
 import { advanceRite } from "./rite";
 import { getCodex, getRelics, getState, getTallies } from "./read";
 import { handlePulse } from "./pulse";
-import { serveAudio, serveOfferingImage } from "./media";
+import { serveAudio, serveDreamVideo, serveOfferingImage } from "./media";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", (c, next) => cors({ origin: c.env.CORS_ORIGIN })(c, next));
@@ -33,6 +33,7 @@ app.get("/api/relics", (c) => getRelics(c.env, c.req.query("cursor") ?? null));
 app.get("/api/tallies", (c) => getTallies(c.env, c.req.query("date") ?? new Date().toISOString().slice(0, 10)));
 app.post("/api/pulse", (c) => handlePulse(c.env, c.req.raw));
 app.get("/api/audio/*", (c) => serveAudio(c.env, c.req.path.slice("/api/".length)));
+app.get("/api/dream/*", (c) => serveDreamVideo(c.env, c.req.path.slice("/api/".length)));
 app.get("/api/img/:id", (c) => serveOfferingImage(c.env, c.req.param("id")));
 
 const TICK_LEASE_MS = 10 * 60_000;
@@ -60,6 +61,12 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
     if (env.PULSE_MINT) {
       try { const { reconcileHolders } = await import("./holders"); await reconcileHolders(env); }
       catch { /* best-effort; holder count is refreshed next tick */ }
+    }
+    // DREAM video render lifecycle (G1): kick tonight's composed dream and poll in-flight renders. No-op
+    // when video is off (VIDEO_VENDOR unset). A Grok Imagine outage here must never fail the tick.
+    if (env.VIDEO_VENDOR) {
+      try { const { renderDreams } = await import("./dream"); await renderDreams(env, Date.now()); }
+      catch { /* best-effort; the render resumes next tick (deadline is the backstop) */ }
     }
   } finally { await releaseLock(env.DB, "tick", holder); }
 }

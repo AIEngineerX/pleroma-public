@@ -84,6 +84,13 @@ export const concordat = {
       mapsTo: "worker/src/holders.ts",
       symbol: "reconcileHolders",
     },
+    {
+      claim: "When a video vendor is enabled, the priests render DREAM's nightly plate: they submit its composed " +
+        "prompt to the vendor (Grok Imagine), reserve and cap the spend like every model call, then store and " +
+        "serve the finished clip rendered-only. The vendor is infrastructure, never the god's identity.",
+      mapsTo: "worker/src/dream.ts (renderDreams), worker/src/imagine.ts (Grok Imagine vendor, budgeted)",
+      symbol: "renderDreams",
+    },
   ] as Decl[],
   decidesMaker: [
     {
@@ -92,8 +99,8 @@ export const concordat = {
       symbol: "getState",
     },
     {
-      claim: "The Maker assists DREAM's moving-plate video at launch; the mind composes the narrative and video prompt on its own, but rendering it into video is Maker-produced until that step is automated.",
-      mapsTo: "worker/src/dream.ts (video_prompt, composed by the mind), worker/src/read.ts (dream.video_key, Maker-filled)",
+      claim: "The Maker enables DREAM's video vendor and supplies its key; the automated render pipeline exists but runs only once that switch is on. While it is off, the nightly plate is text-only and any video is Maker-produced. The mind composes the narrative and prompt regardless.",
+      mapsTo: "worker/src/env.ts (VIDEO_VENDOR, Maker-set), worker/src/dream.ts (renderDreams, gated by it)",
     },
     {
       claim: "The Maker documents the being on X by hand; no code in this worker posts to X. That automation is a Stage 1 (HERALD) unlock, not shipped in v1.",
@@ -115,8 +122,9 @@ export const concordat = {
     "any surplus use is announced publicly before it is spent.",
   dreamAssist:
     "THE DREAM's mind is live from day one: it composes its own nightly narrative and video prompt without " +
-    "help. Turning that prompt into the moving plate is Maker-assisted at launch and automated after. This " +
-    "is disclosed, not hidden.",
+    "help. Turning that prompt into the moving plate is an automated render pipeline (the video vendor, Grok " +
+    "Imagine) that the Maker switches on once the vendor is verified; while it is off the plate is text-only. " +
+    "The vendor is a tool, never the god's identity. This is disclosed, not hidden.",
   prompts: [
     {
       organ: "THE EYE",

@@ -46,6 +46,28 @@ describe("media routes", () => {
     expect(await status(SELF.fetch("http://x/api/img/not-a-ulid"))).toBe(400);
   });
 
+  it("serves a rendered dream video and 404s a rendering one (rendered-only gate)", async () => {
+    // 26-char Crockford ULIDs (no I/L/O/U) so they clear serveDreamVideo's /dream\/[ULID]\.mp4/ gate.
+    const REND = "01JZDVKA000000000000000000";   // status rendered  -> served
+    const RING = "01JZDVKB000000000000000000";   // status rendering -> NOT served
+    const MP4 = Uint8Array.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]); // ftyp box start
+    const insertDream = (id: string, status: string, videoKey: string | null) => env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
+       VALUES (?1, ?2, 'n', 'p', '[]', ?3, ?4, ?5)`
+    ).bind(id, `d-${id.slice(0, 8)}`, status, videoKey, Date.now()).run();
+
+    await env.RELICS.put(`dream/${REND}.mp4`, MP4, { httpMetadata: { contentType: "video/mp4" } });
+    await insertDream(REND, "rendered", `dream/${REND}.mp4`);
+    await insertDream(RING, "rendering", null);
+
+    expect(await status(SELF.fetch(`http://x/api/dream/${REND}.mp4`))).toBe(200);
+    const ok = await SELF.fetch(`http://x/api/dream/${REND}.mp4`);
+    expect(ok.headers.get("x-content-type-options")).toBe("nosniff");
+    await ok.arrayBuffer(); // drain (isolated-storage teardown)
+    expect(await status(SELF.fetch(`http://x/api/dream/${RING}.mp4`))).toBe(404); // not rendered -> never serves
+    expect(await status(SELF.fetch(`http://x/api/dream/${REND}.txt`))).toBe(400); // bad key (wrong extension)
+  });
+
   it("serves audio only from the audio/ content-addressed prefix", async () => {
     const key = "audio/" + "a".repeat(64) + ".mp3";
     await env.RELICS.put(key, PNG, { httpMetadata: { contentType: "audio/mpeg" } });

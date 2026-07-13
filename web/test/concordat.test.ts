@@ -36,9 +36,11 @@ describe("Concordat honesty + code parity", () => {
     }
   });
 
-  it("discloses the self-funding loop, DREAM assistance, and Maker position", () => {
+  it("discloses the self-funding loop, DREAM's render pipeline, and Maker position", () => {
     expect(concordat.selfFunding.toLowerCase()).toContain("creator fee");
-    expect(concordat.dreamAssist.toLowerCase()).toContain("maker-assisted");
+    // DREAM's video is an automated vendor render (Grok Imagine) the Maker switches on, not hidden work.
+    expect(concordat.dreamAssist.toLowerCase()).toContain("grok imagine");
+    expect(concordat.dreamAssist.toLowerCase()).toContain("automated");
     expect(concordat.maker.holdings.length).toBeGreaterThan(0);
   });
   it("keeps the god's honesty: DREAM assistance is disclosed, not hidden", () => {

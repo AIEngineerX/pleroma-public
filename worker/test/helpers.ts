@@ -11,6 +11,8 @@ import migration10 from "../migrations/0010_ratelimit.sql?raw";
 import migration11 from "../migrations/0011_launch.sql?raw";
 import migration12 from "../migrations/0012_pulse_idempotent_vitals.sql?raw";
 import migration13 from "../migrations/0013_one_sermon_per_rite.sql?raw";
+import migration14 from "../migrations/0014_dream_render.sql?raw";
+import migration15 from "../migrations/0015_video_budget.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -86,6 +88,17 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   // 0013 adds the partial-unique sermon index; strip its leading `-- ...` comment block first (same reason
   // as 0007-0012), then collapse whitespace before exec.
   for (const stmt of migration13.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0014 rebuilds dreams for the render state machine (multi-line CREATE/INSERT/DROP/ALTER); strip line
+  // comments first (same reason as 0005-0013), then collapse whitespace before exec.
+  for (const stmt of migration14.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0015 rebuilds spend to add the 'video' category; same handling as 0014.
+  for (const stmt of migration15.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }

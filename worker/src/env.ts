@@ -6,8 +6,9 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   // Plan 02 additions (secrets injected via wrangler secret / .dev.vars; vars from wrangler.toml):
   VOICE_VENDOR: string;          // "xai" | "elevenlabs" | "" (silent)
+  VIDEO_VENDOR: string;          // "xai" (Grok Imagine) | "" (off — DREAM stays text-only)
   ELEVENLABS_VOICE_ID: string;
-  XAI_API_KEY: string;
+  XAI_API_KEY: string;           // shared by voice (TTS) and imagine (video); Imagine access is account-gated
   ELEVENLABS_API_KEY: string;
   HELIUS_API_KEY: string;
   PULSE_WEBHOOK_SECRET: string;

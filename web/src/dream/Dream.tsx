@@ -2,13 +2,16 @@ import type { DreamView } from "../state/types";
 import { copy } from "../lib/copy";
 
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
+const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // The Dream's home on the Temple: the latest Plate — the day's marks returned as "gods you have not met"
 // (DOCTRINE II.5). The narrative is DREAM's own lyric line (from the live `dreams` row via /api/state).
-// The video (video_key) is Maker-assisted and lands post-launch behind its own route (Plate.tsx rationale),
-// so until then the plate prints the narrative miniature and reads "plate pending". Wakers whose marks
-// seeded the dream are credited by wallet — the repost/distribution trigger (PLANNING, DREAM credit loop).
-export default function Dream({ dream }: { dream: DreamView | null }) {
+// When the render pipeline (worker/src/dream.ts renderDreams -> Grok Imagine) has filled `video_key`, the
+// plate plays the generated clip (served rendered-only from /api/dream/<id>.mp4); until then it prints the
+// narrative miniature and reads "plate pending". Wakers whose marks seeded the dream are credited by wallet
+// — the repost / distribution trigger (PLANNING, DREAM credit loop).
+export default function Dream({ dream, apiBase = "" }: { dream: DreamView | null; apiBase?: string }) {
+  const reduced = reducedMotion();
   return (
     <section aria-label="the dream" className="flex flex-col items-center gap-3 text-center">
       <h2 className="font-machine text-xs tracking-[0.3em] text-ink-faded">{copy.dreamHeading}</h2>
@@ -16,13 +19,33 @@ export default function Dream({ dream }: { dream: DreamView | null }) {
         <>
           <figure className="w-full max-w-[52ch] border-4 p-3"
             style={{ borderColor: "var(--color-ground-aged)", background: "var(--color-ground-aged)" }}>
-            <div className="aspect-video overflow-hidden bg-[var(--color-ground)] flex items-center justify-center">
-              <p className="font-liturgy italic text-rubric-body p-5 text-lg leading-relaxed">{dream.narrative}</p>
-            </div>
+            {dream.video_key ? (
+              <div className="mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden bg-[var(--color-ground)]">
+                {/* muted + loop: a living plate, not a media player. autoplay yields to reduced-motion,
+                    which instead exposes controls so the Waker can play it deliberately. */}
+                <video
+                  className="w-full h-full object-cover"
+                  src={`${apiBase}/api/${dream.video_key}`}
+                  autoPlay={!reduced}
+                  loop
+                  muted
+                  playsInline
+                  controls={reduced}
+                  aria-label={dream.narrative}
+                />
+              </div>
+            ) : (
+              <div className="aspect-video overflow-hidden bg-[var(--color-ground)] flex items-center justify-center">
+                <p className="font-liturgy italic text-rubric-body p-5 text-lg leading-relaxed">{dream.narrative}</p>
+              </div>
+            )}
             <figcaption className="font-machine text-xs text-ink-faded pt-2">
               DREAM · {new Date(dream.created_at).toISOString().slice(0, 10)} · {dream.video_key ? "generative replay" : "plate pending"}
             </figcaption>
           </figure>
+          {dream.video_key && (
+            <p className="font-liturgy italic text-rubric-body text-sm leading-relaxed max-w-[46ch]">{dream.narrative}</p>
+          )}
           {dream.wakers.length > 0 && (
             <p className="font-machine text-[0.7rem] text-ink-faded max-w-[46ch]">
               {copy.dreamCredit} {dream.wakers.map(shortWallet).join(", ")}

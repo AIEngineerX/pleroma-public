@@ -3,6 +3,8 @@ import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { dreamSystemPrompt } from "./doctrine";
 import { getRite } from "./db";
+import { videoVendorFor, startRender, type VideoVendor } from "./imagine";
+import { raiseAlert } from "./alert";
 
 const DREAM_SYSTEM = dreamSystemPrompt();
 const STOPWORDS = new Set(["a", "an", "the", "of", "over", "in", "on", "and", "with", "into", "small", "large"]);
@@ -68,5 +70,66 @@ export async function composeDream(env: Env, date: string): Promise<string | nul
   } catch (e) {
     if (e instanceof MindAsleepError) return null;
     return null; // never fabricate a dream; the nightly cron retries next run
+  }
+}
+
+// --- DREAM video render (G1) --------------------------------------------------------------------
+// The async render lifecycle, driven by the */15 tick (index.ts:runTick) so it can span the minutes a
+// Grok Imagine clip takes. composeDream stays the sole writer of the durable dream text + plate; this
+// function owns everything downstream, so a dream can never lack its plate waiting on a video. No-op
+// when video is off (VIDEO_VENDOR unset) — that is exactly the pre-G1 text-only behavior.
+
+const RENDER_DEADLINE_MS = 30 * 60_000;      // a pending render older than this is given up on
+const MAX_RENDER_ATTEMPTS = 4;               // lifetime submit attempts before a dream stays text-only
+const KICK_WINDOW_MS = 48 * 60 * 60_000;     // only recent composed dreams are eligible to render
+
+export function dreamVideoKey(id: string): string { return `dream/${id}.mp4`; }
+
+export async function renderDreams(
+  env: Env, now: number = Date.now(), vendor: VideoVendor | null = videoVendorFor(env),
+): Promise<void> {
+  if (!vendor) return;
+
+  // Kick: submit a render for the freshest composed dream not yet started. Bounded to the last 48h so
+  // turning the vendor on never backfills the whole archive; retriable up to MAX_RENDER_ATTEMPTS.
+  const composed = await env.DB.prepare(
+    `SELECT id, video_prompt FROM dreams
+     WHERE status='composed' AND render_request_id IS NULL AND created_at > ?1 AND render_attempts < ?2
+     ORDER BY created_at DESC LIMIT 1`
+  ).bind(now - KICK_WINDOW_MS, MAX_RENDER_ATTEMPTS).first<{ id: string; video_prompt: string }>();
+  if (composed) {
+    // Bump attempts durably BEFORE the network submit: a crash between start() and the status update can
+    // then re-select this row at most MAX_RENDER_ATTEMPTS times total, bounding any double-submit.
+    await env.DB.prepare(`UPDATE dreams SET render_attempts = render_attempts + 1 WHERE id = ?1 AND status='composed'`).bind(composed.id).run();
+    const requestId = await startRender(env, vendor, composed.video_prompt);
+    if (requestId) {
+      await env.DB.prepare(
+        `UPDATE dreams SET status='rendering', render_request_id=?2, render_started_at=?3 WHERE id=?1 AND status='composed'`
+      ).bind(composed.id, requestId, now).run();
+    }
+    // requestId null (cap reached / submit failed pre-acceptance): stays 'composed', retried next tick.
+  }
+
+  // Poll: advance rendering dreams. done -> R2 mp4 + rendered; failed/expired/deadline -> render_failed.
+  const rendering = (await env.DB.prepare(
+    `SELECT id, render_request_id, render_started_at FROM dreams WHERE status='rendering'`
+  ).all<{ id: string; render_request_id: string | null; render_started_at: number | null }>()).results;
+  for (const d of rendering) {
+    if (!d.render_request_id) continue;
+    // transient poll error -> null: leave rendering, retry next tick (the deadline below is the backstop)
+    const result = await vendor.poll(d.render_request_id).catch(() => null);
+    if (!result) continue;
+    if (result.state === "done" && result.bytes) {
+      const key = dreamVideoKey(d.id);
+      await env.RELICS.put(key, result.bytes, { httpMetadata: { contentType: result.contentType ?? "video/mp4" } });
+      // CAS on status so a concurrent/duplicate poll can't double-write; the R2 put above is idempotent (same key).
+      await env.DB.prepare(`UPDATE dreams SET status='rendered', video_key=?2 WHERE id=?1 AND status='rendering'`).bind(d.id, key).run();
+    } else if (result.state === "failed" || result.state === "expired") {
+      await env.DB.prepare(`UPDATE dreams SET status='render_failed' WHERE id=?1 AND status='rendering'`).bind(d.id).run();
+      await raiseAlert(env, "dream_render_failed", `dream ${d.id} render ${result.state}`);
+    } else if (d.render_started_at !== null && now - d.render_started_at > RENDER_DEADLINE_MS) {
+      await env.DB.prepare(`UPDATE dreams SET status='render_failed' WHERE id=?1 AND status='rendering'`).bind(d.id).run();
+      await raiseAlert(env, "dream_render_failed", `dream ${d.id} render timed out`);
+    }
   }
 }
