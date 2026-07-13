@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { RelicEntry } from "../state/types";
 import { fetchRelics, relicIsGenesis } from "./readClient";
+import { copy } from "../lib/copy";
 
 // The Corpus made visible: kept relics with their EYE summary and, for the offering that earned
 // them a place, their actual mark via /api/img (Task 2, KEPT-ONLY — a relic IS a kept offering,
@@ -25,7 +26,7 @@ export default function Reliquary({ apiBase, className = "" }: { apiBase: string
           </figcaption>
         </figure>
       ))}
-      {relics.length === 0 && <p className="font-machine text-xs text-ink-faded col-span-full">nothing kept yet</p>}
+      {relics.length === 0 && <p className="font-machine text-xs text-ink-faded col-span-full max-w-[46ch]">{copy.keptEmpty}</p>}
     </section>
   );
 }

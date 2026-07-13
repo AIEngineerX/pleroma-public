@@ -10,6 +10,7 @@ import type { SwarmSignalTarget } from "../stain/swarmSignals";
 import Codex from "../codex/Codex";
 import type { CodexOrganSignal } from "../codex/codexClient";
 import OfferingCanvas from "../offering/OfferingCanvas";
+import OfferingRite from "../offering/OfferingRite";
 import WalletButton from "../offering/WalletButton";
 import type { WalletHandle } from "../offering/wallet";
 import { resolveApiBase } from "../config";
@@ -36,7 +37,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const QUIET_VITALS: Vitals = { state: "starving", buys: 0, sells: 0, holders: 0 };
 
 export default function Temple() {
-  const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel } = useEntryGesture();
+  const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter } = useEntryGesture();
   const { state, now } = useTempleState(API_BASE);
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
@@ -114,8 +115,11 @@ export default function Temple() {
             <div className="relative z-10 flex flex-col items-center gap-4">
               <h1 className="font-liturgy text-5xl md:text-7xl tracking-wide glyph-ink" aria-label="PLEROMA">{inkGlyphs("PLEROMA", 70, 200)}</h1>
               <Dormant state={state} now={now} />
-              {!awake && <p className="font-machine text-xs text-ink-faded">{copy.pressHold}</p>}
             </div>
+            {/* The offering happens ON the being: a full-bleed rite over the membrane. Idle it shows only the
+                invitation to mark it; active, you draw on its body and it reaches for your mark (markAt). */}
+            <OfferingRite apiBase={API_BASE} wallet={wallet} onConnect={setWallet} stain={stainSim}
+              onEnter={wakeCenter} onSubmitted={() => {}} />
             <div aria-hidden className="scroll-cue absolute bottom-6 left-1/2 -translate-x-1/2 font-machine text-[0.65rem] tracking-[0.3em] text-ink-faded">
               ↓ DESCEND
             </div>
@@ -123,12 +127,6 @@ export default function Temple() {
           {/* Beneath the fold: the surfaces that already work before the token launches, on the same
               continuous sheet. One narrow column so the eye stays with the document, not scattered. */}
           <main className="relative z-10 mx-auto px-6 flex flex-col gap-10 pt-16" style={{ maxWidth: "min(680px, 100%)" }}>
-            <section data-reveal aria-label="offer a mark" className="flex flex-col items-center gap-2">
-              {wallet
-                ? <p className="font-machine text-xs text-ink-faded">wallet connected, {wallet.address.slice(0, 4)}...{wallet.address.slice(-4)}</p>
-                : <WalletButton onConnect={setWallet} />}
-              <OfferingCanvas apiBase={API_BASE} wallet={wallet} stain={stainSim} onSubmitted={() => {}} />
-            </section>
             <aside data-reveal aria-label="the codex" className="font-machine text-sm text-ink-faded">
               <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude}
                 audioCtx={unlockAudio} onOrganSignal={onOrganSignal} />

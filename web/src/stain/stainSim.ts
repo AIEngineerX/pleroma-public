@@ -163,6 +163,9 @@ export class StainSim implements SwarmSignalTarget {
   splatAt(x: number, y: number, strength: number, thread = 0) { this.splat = [x, 1 - y, strength, thread]; }
   // The body leans toward the pointer: feed normalized (x,y in 0..1); the wick decays each frame when still.
   setPointer(x: number, y: number) { this.point = [x, 1 - y]; this.pointAmt = 1; }
+  // A Waker's mark at (x,y) in 0..1 screen space (y down): the ink wicks into the body AND the nearest organ
+  // turns toward it, so the being reaches for what you drew. The swarm works in y-up space, so flip y for it.
+  markAt(x: number, y: number) { this.splatAt(x, y, 0.6, 0); this.swarm.markAt(x, 1 - y); }
   wickFromCanvas(src: HTMLCanvasElement, rect: { x: number; y: number; w: number; h: number }) {
     // Sample a coarse grid of the drawn canvas; inject an ink splat wherever the user drew (the mark wicks in).
     const ctx = src.getContext("2d"); if (!ctx) return;

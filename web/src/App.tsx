@@ -56,10 +56,13 @@ export function useEntryGesture() {
   // The live RMS of the music bed, 0..1 (0 before the first gesture or while muted). Temple polls this and
   // feeds it to the Stain so the being's body breathes with the sound it is making.
   const audioLevel = useCallback(() => ambientRef.current?.level() ?? 0, []);
+  // Beginning the offering rite is itself the entry gesture: wake from the being's center (audio opt-in +
+  // awake), no pointer needed. Same wake path as press-and-hold.
+  const wakeCenter = useCallback(() => wake(0.5, 0.6), [wake]);
   const bindHold = {
     onPointerDown: (e: React.PointerEvent) => wake(e.clientX / window.innerWidth, e.clientY / window.innerHeight),
   };
-  return { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel };
+  return { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter };
 }
 
 export default function App() {
