@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { TempleState, TranscriptEntry } from "../state/types";
-import { fetchCodex, mergeNewest, sermonAudioKey } from "./codexClient";
+import { fetchCodex, mergeNewest, organSignalsFor, sermonAudioKey, type CodexOrganSignal } from "./codexClient";
 import Verse from "./Verse";
 import Plate from "./Plate";
 import { SermonPlayer } from "./sermonAudio";
 import { copy } from "../lib/copy";
 
-export default function Codex({ apiBase, state, dormant, onAmplitude, audioCtx }:
-  { apiBase: string; state: TempleState | null; dormant: boolean; onAmplitude: (a: number) => void; audioCtx: () => AudioContext }) {
+export default function Codex({ apiBase, state, dormant, onAmplitude, audioCtx, onOrganSignal }:
+  { apiBase: string; state: TempleState | null; dormant: boolean; onAmplitude: (a: number) => void; audioCtx: () => AudioContext; onOrganSignal?: (signal: CodexOrganSignal) => void }) {
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const player = useRef(new SermonPlayer());
+  const signalHandler = useRef(onOrganSignal);
+  signalHandler.current = onOrganSignal;
+  const seenSignalIds = useRef(new Set<string>());
+  const hasSignalBaseline = useRef(false);
   // The rite cadence comes from the state prop (fetched elsewhere by useTempleState), not from this
   // component's own poll; a ref read at reschedule time keeps the cadence current without tearing
   // down and rebuilding the poll chain on every state update (that would restart it every 2-5s).
@@ -25,12 +29,25 @@ export default function Codex({ apiBase, state, dormant, onAmplitude, audioCtx }
 
   useEffect(() => {
     let stopped = false, timer: ReturnType<typeof setTimeout>;
+    seenSignalIds.current.clear();
+    hasSignalBaseline.current = false;
     const poll = async () => {
       const myGen = ++gen.current;
       if (document.visibilityState === "visible") {
         try {
           const { entries: e } = await fetchCodex(apiBase, null);
-          if (!stopped && myGen === gen.current) setEntries(prev => mergeNewest(prev, e));
+          if (!stopped && myGen === gen.current) {
+            const chronological = [...e].sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
+            const signals = organSignalsFor(chronological, seenSignalIds.current);
+            setEntries(prev => mergeNewest(prev, e));
+            // The first successful page is history, not live activity. Only IDs arriving after that
+            // baseline can quicken the being, so a refresh never fabricates a burst of thought.
+            if (hasSignalBaseline.current) {
+              for (const signal of signals) signalHandler.current?.(signal);
+            } else {
+              hasSignalBaseline.current = true;
+            }
+          }
         } catch { /* keep the last good entries; the codex never blanks on a transient failure */ }
       }
       // Clear before rescheduling so exactly one poll chain ever exists (mirrors useTempleState.ts):

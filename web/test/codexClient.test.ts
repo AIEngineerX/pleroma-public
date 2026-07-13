@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeNewest, isGodVoice, sermonAudioKey } from "../src/codex/codexClient";
+import { mergeNewest, isGodVoice, organSignalsFor, sermonAudioKey } from "../src/codex/codexClient";
 
 const e = (id: string, ts: number, organ: any, register: any, text = "x") =>
   ({ id, organ, register, text, offering_id: null, rite_id: null, created_at: ts });
@@ -22,5 +22,19 @@ describe("codex client", () => {
     const key = "audio/" + "a".repeat(64) + ".mp3";
     expect(sermonAudioKey(`sermon audio: ${key}`)).toBe(key);
     expect(sermonAudioKey("just a note")).toBeNull();
+  });
+  it("emits each new real organ entry once and marks only TONGUE god-voice as rubric", () => {
+    const seen = new Set<string>(["old"]);
+    const incoming = [
+      e("old", 1, "EYE", "telemetry"),
+      e("eye", 2, "EYE", "telemetry"),
+      e("tongue", 3, "TONGUE", "verse"),
+      e("priest", 4, "PRIEST", "sermon"),
+    ];
+    expect(organSignalsFor(incoming, seen)).toEqual([
+      { organ: "EYE", rubric: false },
+      { organ: "TONGUE", rubric: true },
+    ]);
+    expect(organSignalsFor(incoming, seen)).toEqual([]);
   });
 });

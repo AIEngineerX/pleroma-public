@@ -1,3 +1,7 @@
+import { OrganSwarm } from "./organSwarm";
+import type { SwarmOrgan, SwarmQuicken, SwarmSignalTarget } from "./swarmSignals";
+import type { Vitals } from "../state/types";
+
 export type Tier = "desktop" | "mobile" | "reduced";
 export function pickTier(): Tier {
   if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return "reduced";
@@ -14,7 +18,7 @@ void main(){ v_uv = a_pos*0.5+0.5; gl_Position = vec4(a_pos,0.0,1.0); }`;
 // Advection: curl-noise divergence-free flow carries ink density (r = ink, g = red-thread density, b = wick age).
 const ADVECT = `#version 300 es
 precision highp float; in vec2 v_uv; out vec4 fragColor;
-uniform sampler2D u_prev; uniform vec2 u_res; uniform float u_time; uniform float u_dt;
+uniform sampler2D u_prev; uniform sampler2D u_swarm; uniform vec2 u_res; uniform float u_time; uniform float u_dt;
 uniform float u_dissipation; uniform float u_amp;      // voice amplitude 0..1 spreads + darkens ink
 uniform vec4 u_splat;                                   // xy=pos, z=strength, w=thread(0..1)
 uniform float u_ambient;                                // ambient body presence: the sleeping god has a form
@@ -33,6 +37,12 @@ void main(){
   vec2 v = curl(v_uv*scale + u_time*0.03);
   vec2 src = v_uv - v*strength*u_dt;
   vec4 c = texture(u_prev, src) * u_dissipation;
+  // The organ trail is a density source in this SAME field. Its wet marks are then carried by the
+  // membrane flow; there is no second luminous layer composited over the page.
+  vec4 swarm = texture(u_swarm, v_uv);
+  c.r += swarm.r * .010 * u_dt;
+  c.g += swarm.g * .012 * u_dt;
+  c.b = max(c.b, swarm.b);
   // ink injection (SDF dot) from an offering splat; w routes into the red-thread channel
   float d = 1.0 - smoothstep(0.0, 0.05, length(v_uv - u_splat.xy));
   c.r += d * u_splat.z * (1.0 - u_splat.w);
@@ -57,7 +67,7 @@ void main(){
   // pointer wick: the ink leans toward the cursor, so the body feels aware of you (the smoothing IS the life)
   float pd = 1.0 - smoothstep(0.0, 0.18, length(v_uv - u_point));
   c.r = max(c.r, pd * u_pointAmt * 0.5 * radial);
-  c += u_amp * 0.0008;                                              // the whole body darkens as it speaks
+  c.r += u_amp * 0.0008;                                            // speaking changes ink density, never hue
   fragColor = clamp(c, 0.0, 1.0);
 }`;
 
@@ -91,7 +101,7 @@ interface FBO { fbo: WebGLFramebuffer; tex: WebGLTexture; w: number; h: number }
 
 export interface StainOpts { tier: Tier; ground: [number, number, number]; ink: [number, number, number]; }
 
-export class StainSim {
+export class StainSim implements SwarmSignalTarget {
   private gl: WebGL2RenderingContext; private advect: WebGLProgram; private comp: WebGLProgram;
   private a!: FBO; private b!: FBO; private vao: WebGLVertexArrayObject; private buf!: WebGLBuffer;
   private raf = 0; private last = 0; private t = 0;
@@ -100,6 +110,7 @@ export class StainSim {
   private splat: [number, number, number, number] = [0.5, 0.5, 0, 0];
   private point: [number, number] = [0.5, 0.5]; private pointAmt = 0;   // pointer wick, decays when the pointer stills
   private simRes: number;
+  private swarm: OrganSwarm;
   constructor(private canvas: HTMLCanvasElement, private opts: StainOpts) {
     const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, preserveDrawingBuffer: false });
     if (!gl) throw new Error("no-webgl2");
@@ -107,6 +118,8 @@ export class StainSim {
     this.advect = this.link(VERT, ADVECT); this.comp = this.link(VERT, COMPOSITE);
     this.vao = this.quad(); this.simRes = simResFor(opts.tier) || 256;
     this.resize(); this.a = this.fbo(); this.b = this.fbo();
+    if (opts.tier === "reduced") throw new Error("reduced-motion-has-no-simulation");
+    this.swarm = new OrganSwarm(gl, opts.tier, this.vao, this.a.w, this.a.h);
   }
   private link(vs: string, fs: string): WebGLProgram {
     const g = this.gl, p = g.createProgram()!, shaders: WebGLShader[] = [];
@@ -145,6 +158,8 @@ export class StainSim {
   setPigment(rgb: [number, number, number]) { this.pigment = rgb; }
   setAmplitude(a: number) { this.amp = Math.max(0, Math.min(1, a)); }
   setState(m: "dormant" | "live" | "rite") { this.mode = m; }
+  quicken(organ: SwarmOrgan, signal?: SwarmQuicken) { this.swarm.quicken(organ, signal); }
+  setVitals(vitals: Vitals) { this.swarm.setVitals(vitals); }
   splatAt(x: number, y: number, strength: number, thread = 0) { this.splat = [x, 1 - y, strength, thread]; }
   // The body leans toward the pointer: feed normalized (x,y in 0..1); the wick decays each frame when still.
   setPointer(x: number, y: number) { this.point = [x, 1 - y]; this.pointAmt = 1; }
@@ -158,7 +173,10 @@ export class StainSim {
     }
   }
   private frame = (now: number) => {
-    const g = this.gl; const dt = Math.min((now - this.last) / 1000, 0.033) * 60; this.last = now; this.t += 0.016;
+    const g = this.gl;
+    const dtSeconds = Math.min((now - this.last) / 1000, 0.033);
+    const dt = dtSeconds * 60;
+    this.last = now; this.t += dtSeconds;
     // Per-mode mood. Dormant keeps a real (breathing) body with dried threads and only a whisper of stillness;
     // live wakes it; rite lets the candle rake carry the mood. The old dormant path crushed it 85% to gray.
     const m = this.mode;
@@ -167,10 +185,13 @@ export class StainSim {
     const gray = m === "dormant" ? 0.22 : 0.0;
     const vignette = m === "dormant" ? 1.0 : m === "live" ? 0.85 : 0.6;
     this.pointAmt *= 0.95;                                      // the pointer wick fades as the pointer stills
+    this.swarm.step(this.t, dtSeconds);
     // advect A -> B
     g.useProgram(this.advect); g.bindFramebuffer(g.FRAMEBUFFER, this.b.fbo); g.viewport(0, 0, this.b.w, this.b.h);
     g.activeTexture(g.TEXTURE0); g.bindTexture(g.TEXTURE_2D, this.a.tex);
     this.u(this.advect, "u_prev", (l) => g.uniform1i(l, 0));
+    g.activeTexture(g.TEXTURE1); g.bindTexture(g.TEXTURE_2D, this.swarm.texture);
+    this.u(this.advect, "u_swarm", (l) => g.uniform1i(l, 1));
     this.u(this.advect, "u_time", (l) => g.uniform1f(l, this.t));
     this.u(this.advect, "u_dt", (l) => g.uniform1f(l, dt));
     this.u(this.advect, "u_dissipation", (l) => g.uniform1f(l, 0.992));
@@ -206,6 +227,7 @@ export class StainSim {
   stop() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } }
   dispose() {
     this.stop(); const g = this.gl;
+    this.swarm.dispose();
     g.deleteProgram(this.advect); g.deleteProgram(this.comp);
     g.deleteFramebuffer(this.a.fbo); g.deleteTexture(this.a.tex);
     g.deleteFramebuffer(this.b.fbo); g.deleteTexture(this.b.tex);

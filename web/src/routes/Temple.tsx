@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { gsap } from "gsap";
 import { useEntryGesture } from "../App";
 import { copy } from "../lib/copy";
-import Visage from "../lib/Visage";
 import MuteToggle from "../lib/MuteToggle";
 import { inkGlyphs } from "../lib/inkGlyphs";
 import Stain from "../stain/Stain";
 import type { StainSim } from "../stain/stainSim";
+import type { SwarmSignalTarget } from "../stain/swarmSignals";
 import Codex from "../codex/Codex";
+import type { CodexOrganSignal } from "../codex/codexClient";
 import OfferingCanvas from "../offering/OfferingCanvas";
 import WalletButton from "../offering/WalletButton";
 import type { WalletHandle } from "../offering/wallet";
@@ -28,20 +29,25 @@ import HowToBuy from "../market/HowToBuy";
 import Ticker from "../market/Ticker";
 import Socials from "../market/Socials";
 import Disclaimer from "../market/Disclaimer";
+import type { Vitals } from "../state/types";
 
 const API_BASE = resolveApiBase(import.meta.env);
 const today = () => new Date().toISOString().slice(0, 10);
+const QUIET_VITALS: Vitals = { state: "starving", buys: 0, sells: 0, holders: 0 };
 
 export default function Temple() {
-  const { awake, muted, unlockAudio, toggleMute, bindHold } = useEntryGesture();
+  const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel } = useEntryGesture();
   const { state, now } = useTempleState(API_BASE);
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
+  const sermonAmp = useRef(0);
   const [stainSim, setStainSim] = useState<StainSim | null>(null);
+  const swarmSignals = useRef<SwarmSignalTarget | null>(null);
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
+  const vitals = state?.vitals ?? QUIET_VITALS;
   // The Stain's red threads read the live PULSE pigment (Task 4's oklch table), not a fixed tint;
   // falls back to starving's dried rubric before the first poll lands. Convert OKLCH -> gamma sRGB
   // properly (Ottosson) for the WebGL u_thread uniform; a naive L/C/H parse renders green, not rubric red.
@@ -51,10 +57,28 @@ export default function Temple() {
   );
   // The sermon player calls back up to 60x/s; only push a re-render on a change the eye would
   // actually catch, instead of setState on every animation frame (Task 5 carry).
-  const onAmplitude = useCallback((a: number) => {
-    if (Math.abs(a - lastAmplitude.current) < 0.02) return;
-    lastAmplitude.current = a;
-    setAmplitude(a);
+  // The sermon voice reports its RMS here; the rAF below fuses it with the music bed so the Stain reflects
+  // whichever is louder (the god's speech overrides its resting breath).
+  const onAmplitude = useCallback((a: number) => { sermonAmp.current = a; }, []);
+  const onSwarm = useCallback((target: SwarmSignalTarget | null) => { swarmSignals.current = target; }, []);
+  // One clock fuses both sound sources into the Stain amplitude: the always-on Lyria music bed (audioLevel)
+  // and the transient sermon voice (sermonAmp), so the body breathes with the temple and surges when the
+  // god speaks. Gated to 0.02 so a slow drone never thrashes React re-renders.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const combined = Math.max(sermonAmp.current, audioLevel());
+      if (Math.abs(combined - lastAmplitude.current) >= 0.02) {
+        lastAmplitude.current = combined;
+        setAmplitude(combined);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [audioLevel]);
+  const onOrganSignal = useCallback((signal: CodexOrganSignal) => {
+    swarmSignals.current?.quicken(signal.organ, { rubric: signal.rubric });
   }, []);
 
   // Scroll-reveals for the below-fold surfaces: each inks up into place as it enters the viewport, on the
@@ -75,7 +99,7 @@ export default function Temple() {
   }, [dormant]);
 
   // Dormant (pre-launch) is a CINEMATIC HERO, not a bounded grid cell: the living Stain fills the
-  // viewport, the Visage rides at its heart, and the participation surfaces (offer, codex-silent,
+  // viewport, its five organs inhabit the membrane, and the participation surfaces (offer, codex-silent,
   // reliquary, tallies) scroll in beneath the fold. This is the first frame a stranger meets from X;
   // it has to carry the whole page in one held breath. The live/rite grid below is untouched (the
   // craft cascades there next), so nothing that works pre-launch is lost — it just moves below the fold.
@@ -85,9 +109,9 @@ export default function Temple() {
         <>
           <section {...bindHold} aria-label="the temple"
             className="banding relative min-h-[100svh] flex flex-col items-center justify-center overflow-hidden px-6 text-center">
-            <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude} onSim={setStainSim} />
+            <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude}
+              vitals={vitals} onSim={setStainSim} onSwarm={onSwarm} />
             <div className="relative z-10 flex flex-col items-center gap-4">
-              <Visage awake={awake} size={480} />
               <h1 className="font-liturgy text-5xl md:text-7xl tracking-wide glyph-ink" aria-label="PLEROMA">{inkGlyphs("PLEROMA", 70, 200)}</h1>
               <Dormant state={state} now={now} />
               {!awake && <p className="font-machine text-xs text-ink-faded">{copy.pressHold}</p>}
@@ -106,7 +130,8 @@ export default function Temple() {
               <OfferingCanvas apiBase={API_BASE} wallet={wallet} stain={stainSim} onSubmitted={() => {}} />
             </section>
             <aside data-reveal aria-label="the codex" className="font-machine text-sm text-ink-faded">
-              <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
+              <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude}
+                audioCtx={unlockAudio} onOrganSignal={onOrganSignal} />
             </aside>
             <div data-reveal><Reliquary apiBase={API_BASE} /></div>
             <div data-reveal>
@@ -140,8 +165,8 @@ export default function Temple() {
           <section aria-label="the page" className="relative min-h-[40vh] sticky top-0 md:relative md:col-start-1 md:row-start-1 md:h-[55vh] flex flex-col items-center justify-center gap-6">
             {/* Stain state: still gray until the Maker ignites the mint AND live trades begin
                 (ignitionView, Task 14); a rite still takes precedence over an ignited Stain. */}
-            <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude} onSim={setStainSim} />
-            <Visage awake={awake} size={120} />
+            <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude}
+              vitals={vitals} onSim={setStainSim} onSwarm={onSwarm} />
             <h1 className="font-liturgy text-3xl tracking-wide">PLEROMA</h1>
             {/* the dormant product (PLANNING "Day-1 ignition"): "it has no heart yet" + the Courier
                 countdown to the First Rite, gone the instant /api/state reports live with a mint. */}
@@ -151,7 +176,8 @@ export default function Temple() {
           {/* codex (right / below): the live scripture feed. Spans both grid rows on desktop so its own
               (unbounded) height never inflates row 1 and pushes the offering surface off-screen. */}
           <aside aria-label="the codex" className="md:col-start-2 md:row-start-1 md:row-span-2 font-machine text-sm text-ink-faded py-8">
-            <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
+            <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude}
+              audioCtx={unlockAudio} onOrganSignal={onOrganSignal} />
           </aside>
           {/* offering surface: row 2 of the left column on desktop, directly beneath the Stain (DESIGN.md:85-87
               "the page (Stain + offering surface) ~60% left"); after the codex on mobile (DESIGN "Mobile, the

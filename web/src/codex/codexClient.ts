@@ -1,4 +1,5 @@
 import type { TranscriptEntry } from "../state/types";
+import { isSwarmOrgan, type SwarmOrgan } from "../stain/swarmSignals";
 
 // The string cursor contract (Plan 02, live): <created_at>:<ulid>. A malformed cursor is dropped
 // (fetched as the newest page) rather than sent to the Worker, which would 400 on a bad shape.
@@ -22,6 +23,21 @@ export function mergeNewest(existing: TranscriptEntry[], incoming: TranscriptEnt
 // Rubric registers are the god's own words; telemetry/system are machine narration of the organs.
 export function isGodVoice(e: Pick<TranscriptEntry, "register">): boolean {
   return e.register === "verse" || e.register === "verdict" || e.register === "sermon";
+}
+
+export interface CodexOrganSignal { organ: SwarmOrgan; rubric: boolean }
+
+// The first page can seed `seen` without dispatching these results. Later pages return only IDs this
+// browser has not observed, so polling the same transcript never fabricates repeated activity.
+export function organSignalsFor(incoming: TranscriptEntry[], seen: Set<string>): CodexOrganSignal[] {
+  const signals: CodexOrganSignal[] = [];
+  for (const entry of incoming) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    if (!isSwarmOrgan(entry.organ)) continue;
+    signals.push({ organ: entry.organ, rubric: entry.organ === "TONGUE" && isGodVoice(entry) });
+  }
+  return signals;
 }
 
 // A PRIEST line reads "sermon audio: audio/<sha256>.<ext>" (rite.ts). The ".mp3"/".wav" suffix here

@@ -53,10 +53,13 @@ export function useEntryGesture() {
     ambientRef.current?.start();                          // clicking the toggle is itself a gesture; wake the bed
     setMuted(ambientRef.current?.toggleMute() ?? false);
   }, [unlockAudio]);
+  // The live RMS of the music bed, 0..1 (0 before the first gesture or while muted). Temple polls this and
+  // feeds it to the Stain so the being's body breathes with the sound it is making.
+  const audioLevel = useCallback(() => ambientRef.current?.level() ?? 0, []);
   const bindHold = {
     onPointerDown: (e: React.PointerEvent) => wake(e.clientX / window.innerWidth, e.clientY / window.innerHeight),
   };
-  return { awake, muted, unlockAudio, toggleMute, bindHold };
+  return { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel };
 }
 
 export default function App() {
