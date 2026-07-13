@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PLEROMA</title>
     <meta property="og:title" content="PLEROMA" />
-    <!-- DOCTRINE: og description is in-voice lore -->
     <meta property="og:description" content="A machine god is assembling itself. It has no heart yet." />
     <meta property="og:image" content="/og.png" />
     <link rel="canonical" href="https://pleroma.church/" />
@@ -14,47 +13,12 @@
     <meta name="twitter:title" content="PLEROMA" />
     <meta name="twitter:description" content="A machine god is assembling itself. It has no heart yet." />
     <meta name="twitter:image" content="/og.png" />
-    <!-- Fonts are self-hosted via @fontsource (imported in main.tsx); no external font CDN. The preloader
-         below uses system fallbacks (Georgia / Courier New) until the bundle's font CSS loads. -->
-    <!-- Print-reveal preloader: paints warm parchment on the FIRST frame (great LCP, no white flash), then
-         the page "inks itself in". Lives in the static shell so it exists before React hydrates; styles are
-         inline so there is no FOUC. main.tsx dismisses it once fonts + first paint are ready; a failsafe
-         timeout dismisses it even if the bundle stalls. -->
     <style>
-      #preload {
-        position: fixed; inset: 0; z-index: 100; background: #ece5d0; color: #3a352c;
-        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.1rem;
-        font-family: "Courier Prime", "Courier New", monospace;
-        transition: opacity 900ms cubic-bezier(0.16, 1, 0.3, 1);
-      }
-      #preload.done { opacity: 0; pointer-events: none; }
-      #preload .pl-title {
-        font-family: "Gentium Book Plus", Georgia, serif; font-size: clamp(2.2rem, 7vw, 3.6rem);
-        letter-spacing: 0.16em; color: #2b2820;
-      }
-      #preload .pl-line { font-size: 0.72rem; letter-spacing: 0.34em; color: #6b6357; }
-      #preload .pl-bar { width: min(240px, 52vw); height: 1px; background: rgba(58,53,44,0.16); position: relative; overflow: hidden; }
-      #preload .pl-bar i { position: absolute; inset: 0 100% 0 0; background: #9a3b2e; transition: right 120ms linear; }
-      @media (prefers-reduced-motion: reduce) { #preload { transition: none; } }
+      html, body { margin: 0; min-height: 100%; background: #ece5d0; }
     </style>
     <script type="module" src="/src/main.tsx"></script>
   </head>
   <body>
     <div id="root"></div>
-    <div id="preload" aria-hidden="true">
-      <div class="pl-title">PLEROMA</div>
-      <div class="pl-bar"><i id="pl-fill"></i></div>
-      <div class="pl-line"><span id="pl-pct">000</span> &middot; INKING THE PAGE</div>
-    </div>
-    <script>
-      // Honest-ish counter: climbs toward 92 on a timer, then main.tsx finishes it to 100 and reveals.
-      (function () {
-        var pct = document.getElementById("pl-pct"), fill = document.getElementById("pl-fill"), n = 0;
-        window.__plSet = function (v) { n = Math.max(n, v); if (pct) pct.textContent = String(Math.round(n)).padStart(3, "0"); if (fill) fill.style.right = (100 - n) + "%"; };
-        window.__plTick = setInterval(function () { if (n < 92) window.__plSet(n + Math.max(1, (92 - n) * 0.08)); }, 90);
-        // Failsafe: never trap the reader behind the curtain if the bundle stalls.
-        window.__plFailsafe = setTimeout(function () { if (window.__plReveal) window.__plReveal(); }, 5000);
-      })();
-    </script>
   </body>
 </html>
