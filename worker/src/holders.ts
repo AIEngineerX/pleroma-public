@@ -64,6 +64,15 @@ export async function applyAttended(db: D1Database, owners: Set<string>): Promis
 // operator alert and leaves holders/attended stale (never zeroed) rather than throwing. A later successful
 // refresh clears the alert, so /api/state.degraded reflects current health, not a one-way ratchet.
 export async function reconcileHolders(env: Env): Promise<{ holders: number; attendedMarked: number }> {
+  // No mint or no Helius key means the holder data source is UNAVAILABLE, not "zero holders". Reconciling
+  // from that non-signal would zero the count and clear every wallet's `attended` flag (destructive on
+  // degradation). Skip and keep last-good; a later tick with a live key/mint refreshes. This is also the
+  // pre-launch steady state (PULSE_MINT empty), where there is nothing to reconcile.
+  if (!env.PULSE_MINT || !env.HELIUS_API_KEY) {
+    const row = await env.DB.prepare(`SELECT value FROM config WHERE key = 'pulse_state'`).first<{ value: string }>();
+    const holders = row ? (JSON.parse(row.value).holders ?? 0) : 0;
+    return { holders, attendedMarked: 0 };
+  }
   let count: number, owners: Set<string>;
   try {
     ({ count, owners } = await fetchHolders(env));

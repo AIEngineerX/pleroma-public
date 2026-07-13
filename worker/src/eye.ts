@@ -89,10 +89,16 @@ const QUARANTINE_TTL_MS = 24 * 60 * 60_000;
 export async function sweepQuarantine(
   env: Env, now: number = Date.now(), deadlineMs: number = now + 90_000, maxDeletes = 500,
 ): Promise<number> {
-  // Never reclaim an image a still-live (pending) offering needs for a future moderation attempt. Only
-  // truly-orphaned or terminal-status (rejected/failed/absent-row) quarantine objects are stale.
-  const pendingKeys = new Set(
-    (await env.DB.prepare(`SELECT image_key FROM offerings WHERE status = 'pending'`)
+  // Never reclaim an image any still-live offering references. "Live" is EVERY non-terminal status, not
+  // just 'pending': a row claimed to 'moderating'/'perceivable'/'perceiving' still points at its
+  // quarantine/<id> until promoteFromQuarantine moves it to offerings/<id>, and with a >24h processing
+  // backlog the sweep can run in the same tick as such a transitional row — protecting only 'pending'
+  // would delete the live image out from under an offering that has not been perceived yet, breaking a
+  // legitimate offering on degradation. Only truly-terminal rows ('rejected'/'failed' — their images are
+  // meant to be purged) and orphans with no D1 row at all are stale. Promoted keeps (perceived/kept/
+  // mourned) already point at offerings/<id>, so including them is harmless (no quarantine key matches).
+  const liveKeys = new Set(
+    (await env.DB.prepare(`SELECT image_key FROM offerings WHERE status NOT IN ('rejected', 'failed')`)
       .all<{ image_key: string }>()).results.map(r => r.image_key)
   );
   let deleted = 0;
@@ -102,7 +108,7 @@ export async function sweepQuarantine(
     const list = await env.RELICS.list({ prefix: "quarantine/", cursor, limit: 200 });
     for (const o of list.objects) {
       if (Date.now() > deadlineMs || deleted >= maxDeletes) break;
-      if (now - o.uploaded.getTime() > QUARANTINE_TTL_MS && !pendingKeys.has(o.key)) {
+      if (now - o.uploaded.getTime() > QUARANTINE_TTL_MS && !liveKeys.has(o.key)) {
         await env.RELICS.delete(o.key); deleted++;
       }
     }

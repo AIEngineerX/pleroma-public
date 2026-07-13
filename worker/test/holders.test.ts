@@ -33,13 +33,21 @@ describe("attended reconciliation", () => {
   });
 });
 
-describe("reconcileHolders (lock-guarded pulse_state write)", () => {
-  it("updates holders under the pulse lock without throwing when no mint is configured", async () => {
+describe("reconcileHolders (no data source -> non-destructive)", () => {
+  it("keeps last-good holders and attended when the source is unavailable (never zeroes on degradation)", async () => {
+    // A live-ish state on record: 5 holders, one attended wallet.
+    await env.DB.prepare(`INSERT INTO config (key, value) VALUES ('pulse_state', ?1) ON CONFLICT(key) DO UPDATE SET value=?1`)
+      .bind(JSON.stringify({ state: "calm", holders: 5, updated_at: 1 })).run();
+    await env.DB.prepare(`INSERT INTO wallets (address, first_seen, offering_count, attended) VALUES ('keepW', 1, 1, 1)`).run();
+
     const { reconcileHolders: reconcile } = await import("../src/holders");
-    const result = await reconcile({ ...env, PULSE_MINT: "" });
-    expect(result.holders).toBe(0);
+    const result = await reconcile({ ...env, PULSE_MINT: "" });   // no mint -> data source unavailable
+
+    // The count must be kept, not zeroed, and the attended flag must survive (the bug cleared both).
+    expect(result.holders).toBe(5);
     const row = await env.DB.prepare(`SELECT value FROM config WHERE key = 'pulse_state'`).first<{ value: string }>();
-    expect(row).not.toBeNull();
-    expect(JSON.parse(row!.value).holders).toBe(0);
+    expect(JSON.parse(row!.value).holders).toBe(5);
+    const kept = await env.DB.prepare(`SELECT attended FROM wallets WHERE address='keepW'`).first<{ attended: number }>();
+    expect(kept?.attended).toBe(1);
   });
 });

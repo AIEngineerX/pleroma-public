@@ -423,6 +423,33 @@ describe("sweepQuarantine", () => {
     expect(await env.RELICS.get(`quarantine/${orphanId}`)).toBeNull();
   });
 
+  it("does not delete an aged quarantine/ object referenced by a mid-lifecycle offering (moderating/perceiving) — a >24h processing backlog must not destroy an in-flight image before it is perceived", async () => {
+    const moderatingId = "sweep-moderating-keep";
+    const perceivingId = "sweep-perceiving-keep";
+    await env.RELICS.put(`quarantine/${moderatingId}`, PNG);
+    await env.RELICS.put(`quarantine/${perceivingId}`, PNG);
+    // Both rows are claimed and in flight but still point at their quarantine object (promotion to
+    // offerings/<id> has not landed yet). Under the old 'pending'-only guard the sweep would delete
+    // these live images out from under an allowed offering that has simply not been perceived yet.
+    await insertOffering(env.DB, { id: moderatingId, wallet: null, sig: null,
+      image_key: `quarantine/${moderatingId}`, sha256: moderatingId, status: "moderating",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    await insertOffering(env.DB, { id: perceivingId, wallet: null, sig: null,
+      image_key: `quarantine/${perceivingId}`, sha256: perceivingId, status: "perceiving",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    const future = Date.now() + 25 * 60 * 60_000; // both objects read as aged
+    const deleted = await sweepQuarantine(env, future);
+    expect(deleted).toBe(0); // neither is terminal, so neither image may be reclaimed
+
+    const keptModerating = await env.RELICS.get(`quarantine/${moderatingId}`);
+    expect(keptModerating).not.toBeNull();
+    await keptModerating?.arrayBuffer(); // consume the body so isolated storage can pop
+    const keptPerceiving = await env.RELICS.get(`quarantine/${perceivingId}`);
+    expect(keptPerceiving).not.toBeNull();
+    await keptPerceiving?.arrayBuffer();
+  });
+
   it("deletes an aged quarantine/ object whose offering row is terminal (rejected/failed) — those images are never reclaimable", async () => {
     const rejectedId = "sweep-rejected-reclaim";
     const failedId = "sweep-failed-reclaim";
