@@ -8,6 +8,13 @@ import Canon from "./canon/Canon";
 import DreamArchive from "./canon/DreamArchive";
 import Concordat from "./canon/Concordat";
 import { Ambient } from "./lib/ambient";
+import {
+  createPressHold,
+  ENTRY_HOLD_MS,
+  ENTRY_HOLD_SLOP_PX,
+  type PressHold,
+  type PressPoint,
+} from "./entry/pressHold";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -27,43 +34,143 @@ function useSmoothScroll() {
   }, []);
 }
 
+const INTERACTIVE_TARGETS = "button,a,input,textarea,select,summary,[role='button'],canvas";
+
+function pointFromEvent(event: React.PointerEvent): PressPoint {
+  const target = event.target;
+  return {
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    eligible:
+      event.isPrimary &&
+      event.button === 0 &&
+      target instanceof Element &&
+      !target.closest(INTERACTIVE_TARGETS),
+  };
+}
+
+type AudioContextConstructor = new () => AudioContext;
+
+function getAudioContextConstructor(): AudioContextConstructor | null {
+  const audioWindow = window as typeof window & { webkitAudioContext?: AudioContextConstructor };
+  return audioWindow.AudioContext ?? audioWindow.webkitAudioContext ?? null;
+}
+
 export function useEntryGesture() {
   const [awake, setAwake] = useState(false);
   const [muted, setMuted] = useState<boolean>(() => {
     try { return localStorage.getItem("pleroma-muted") === "1"; } catch { return false; }
   });
+  const [holdPoint, setHoldPoint] = useState<{ x: number; y: number } | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
   const ambientRef = useRef<Ambient | null>(null);
-  const unlockAudio = useCallback(() => {
-    if (!ctxRef.current) {
-      ctxRef.current = new AudioContext();
-      ambientRef.current = new Ambient(ctxRef.current);   // built (silent) on first unlock; sounds only on start()
+  const ambientReadyRef = useRef(false);
+  const controllerRef = useRef<PressHold | null>(null);
+  const mountedRef = useRef(true);
+
+  const setPlaybackState = useCallback((ambient: Ambient, playing: boolean) => {
+    if (!mountedRef.current || ambientRef.current !== ambient) return;
+    setAwake(playing);
+    setMuted(ambient.isMuted());
+  }, []);
+
+  const primeAmbient = useCallback((): AudioContext | null => {
+    if (!ambientReadyRef.current) {
+      const Context = getAudioContextConstructor();
+      ctxRef.current = Context ? new Context() : null;
+      ambientRef.current = new Ambient(ctxRef.current);
+      ambientReadyRef.current = true;
     }
-    void ctxRef.current.resume();
+    if (ctxRef.current) void ctxRef.current.resume();
     return ctxRef.current;
   }, []);
+
+  const unlockAudio = useCallback((): AudioContext => {
+    const context = primeAmbient();
+    if (!context) throw new Error("Web Audio API unavailable");
+    return context;
+  }, [primeAmbient]);
+
   const wake = useCallback((x: number, y: number) => {
     document.documentElement.style.setProperty("--touch-x", String(x));
     document.documentElement.style.setProperty("--touch-y", String(y));
-    unlockAudio();
-    ambientRef.current?.start();                          // the entry gesture IS the audio opt-in
-    setAwake(true);
-  }, [unlockAudio]);
+    primeAmbient();
+    const ambient = ambientRef.current!;
+    setMuted(ambient.isMuted());
+    void ambient.start().then((playing) => setPlaybackState(ambient, playing));
+  }, [primeAmbient, setPlaybackState]);
+
   const toggleMute = useCallback(() => {
-    unlockAudio();
-    ambientRef.current?.start();                          // clicking the toggle is itself a gesture; wake the bed
-    setMuted(ambientRef.current?.toggleMute() ?? false);
-  }, [unlockAudio]);
-  // The live RMS of the music bed, 0..1 (0 before the first gesture or while muted). Temple polls this and
-  // feeds it to the Stain so the being's body breathes with the sound it is making.
+    primeAmbient();
+    const ambient = ambientRef.current!;
+    if (awake && !ambient.isMuted()) {
+      setMuted(ambient.toggleMute());
+      return;
+    }
+    if (ambient.isMuted()) ambient.toggleMute();
+    setMuted(false);
+    setAwake(false);
+    void ambient.start().then((playing) => setPlaybackState(ambient, playing));
+  }, [awake, primeAmbient, setPlaybackState]);
+
   const audioLevel = useCallback(() => ambientRef.current?.level() ?? 0, []);
-  // Beginning the offering rite is itself the entry gesture: wake from the being's center (audio opt-in +
-  // awake), no pointer needed. Same wake path as press-and-hold.
   const wakeCenter = useCallback(() => wake(0.5, 0.6), [wake]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const controller = createPressHold({
+      holdMs: ENTRY_HOLD_MS,
+      slopPx: ENTRY_HOLD_SLOP_PX,
+      onPrime: () => { primeAmbient(); },
+      onPendingChange: (point) => setHoldPoint(point ? { x: point.x, y: point.y } : null),
+      onCommit: (point) => wake(point.x / window.innerWidth, point.y / window.innerHeight),
+    });
+    controllerRef.current = controller;
+
+    const onMove = (event: PointerEvent) => controller.move({
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      eligible: true,
+    });
+    const onUp = (event: PointerEvent) => controller.up(event.pointerId);
+    const onCancel = (event: PointerEvent) => controller.cancel(event.pointerId);
+    const onLostCapture = (event: PointerEvent) => controller.cancel(event.pointerId);
+    const onScroll = () => controller.scroll();
+
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerup", onUp, { passive: true });
+    window.addEventListener("pointercancel", onCancel, { passive: true });
+    window.addEventListener("lostpointercapture", onLostCapture, { passive: true });
+    window.addEventListener("wheel", onScroll, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      mountedRef.current = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("lostpointercapture", onLostCapture);
+      window.removeEventListener("wheel", onScroll);
+      window.removeEventListener("scroll", onScroll);
+      controller.dispose();
+      controllerRef.current = null;
+      ambientRef.current?.dispose();
+      ambientRef.current = null;
+      ambientReadyRef.current = false;
+      const context = ctxRef.current;
+      ctxRef.current = null;
+      if (context && context.state !== "closed") void context.close();
+    };
+  }, [primeAmbient, wake]);
+
   const bindHold = {
-    onPointerDown: (e: React.PointerEvent) => wake(e.clientX / window.innerWidth, e.clientY / window.innerHeight),
+    onPointerDown: (event: React.PointerEvent) => {
+      controllerRef.current?.down(pointFromEvent(event));
+    },
   };
-  return { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter };
+
+  return { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter, holdPoint };
 }
 
 export default function App() {

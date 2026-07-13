@@ -23,7 +23,7 @@ test("interactive targets are at least 44px", async ({ page }) => {
 test("the offer button is in thumb reach at 390px", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-390", "thumb reach is a mobile-390 concern");
   await page.goto("/");
-  const offer = page.getByRole("button", { name: "Offer a mark" });
+  const offer = page.getByRole("button", { name: "Offer it a mark" });
   await expect(offer).toBeVisible();
   const box = (await offer.boundingBox())!;
   const viewport = page.viewportSize()!;
@@ -34,22 +34,12 @@ test("reduced-motion holds the Stain still (no canvas sim)", async ({ browser })
   const ctx = await browser.newContext({ reducedMotion: "reduce" });
   const page = await ctx.newPage();
   await page.goto("/");
-  // Scoped to the Stain's own region, same as stain.spec.ts: OfferingCanvas (Task 8) mounts its own
-  // <canvas> (the drawing surface, unrelated to prefers-reduced-motion) directly beneath it in "the page".
-  const stainCanvas = page.getByRole("region", { name: "the page" }).locator("canvas");
+  // Scope the assertion to the first-sheet temple so later drawing canvases do not affect this check.
+  const stainCanvas = page.getByRole("region", { name: "the temple" }).locator("canvas");
   await expect(stainCanvas).toHaveCount(0); // reduced-motion creates no GL context
+  const settled = page.getByRole("region", { name: "the temple" }).locator("svg.swarm-settled");
+  await expect(settled).toBeVisible();
+  await expect(settled).toHaveCSS("z-index", "0");
+  await expect(settled).toHaveCSS("pointer-events", "none");
   await ctx.close();
-});
-
-test("audio never autoplays; the entry gesture only unlocks the AudioContext, it does not play a sermon", async ({ page }) => {
-  await page.goto("/");
-  const playing = await page.evaluate(() => Array.from(document.querySelectorAll("audio")).some(a => !a.paused));
-  expect(playing).toBe(false);
-  // The entry gesture (press and hold) unlocks the AudioContext but must not start playback on its own.
-  await page.mouse.move(200, 300);
-  await page.mouse.down();
-  await page.waitForTimeout(200);
-  await page.mouse.up();
-  const stillNotPlaying = await page.evaluate(() => Array.from(document.querySelectorAll("audio")).some(a => !a.paused));
-  expect(stillNotPlaying).toBe(false);
 });

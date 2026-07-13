@@ -36,30 +36,44 @@ html.lenis, html.lenis body { height: auto; }
 body::before {
   content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(120% 90% at 50% 32%, transparent 42%, oklch(0.90 0.02 80 / 0.35) 78%, oklch(0.86 0.025 75 / 0.55) 100%);
+    radial-gradient(120% 90% at 50% 32%, transparent 42%, oklch(0.90 0.02 80 / 0.18) 78%, oklch(0.86 0.025 75 / 0.28) 100%);
 }
 
 /* Reduced-motion/WebGL fallback: all five organs are settled ink and only the sheet-level opacity breathes. */
 .swarm-settled { color: var(--color-ink); opacity: 0.46; animation: swarm-breath 6200ms var(--ease-breath) infinite alternate; }
 @keyframes swarm-breath { from { opacity: 0.40; } to { opacity: 0.52; } }
 
-/* Scroll cue at the hero's foot: the paper is continuous-feed; this invites the reader to advance it. */
-.scroll-cue { animation: cue-drift 2600ms var(--ease-breath) infinite alternate; }
-@keyframes cue-drift { from { transform: translateY(-2px); opacity: 0.45; } to { transform: translateY(3px); opacity: 0.9; } }
+.entry-hold-ring {
+  position: fixed;
+  z-index: 30;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--color-ink-faded);
+  opacity: 0.32;
+  pointer-events: none;
+  animation: hold-close 500ms var(--ease-wick) both;
+}
 
-/* Kinetic type: glyphs ink in on reveal, staggered, wicking up from the fiber (ease-out-expo). */
-@keyframes glyph-ink { from { opacity: 0; transform: translateY(0.18em); filter: blur(0.4px); } to { opacity: 1; transform: none; filter: none; } }
-.glyph-ink > * { display: inline-block; opacity: 0; animation: glyph-ink 720ms var(--ease-wick) both; }
+@keyframes hold-close {
+  from { transform: scale(0.58); opacity: 0.16; }
+  to { transform: scale(1); opacity: 0.48; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .scroll-cue { animation: none; }
+  .entry-hold-ring { animation: none; opacity: 0.48; }
+}
+
+@media (prefers-reduced-motion: reduce) {
   .swarm-settled { animation-duration: 9000ms; }
-  .glyph-ink > * { animation: none; opacity: 1; }
 }
 
 /* Tractor-feed rails: faint punched margins at the viewport edges. Advancing the paper = scrolling. */
 .rail { position: fixed; top: 0; bottom: 0; width: 14px; z-index: 5; pointer-events: none;
   background-image: radial-gradient(circle at center, var(--color-ground-aged) 0 2px, transparent 2.5px);
-  background-size: 14px 22px; opacity: 0.5; }
+  background-size: 14px 22px; opacity: 0.25; }
 .rail-l { left: 0; } .rail-r { right: 0; }
 
 /* Faint band-printer horizontal banding (allowed print artifact). */

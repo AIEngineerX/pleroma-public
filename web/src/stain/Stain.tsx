@@ -16,7 +16,7 @@ function SettledSwarm({ pigment }: { pigment: [number, number, number] }) {
   const rubric = `rgb(${pigment.map(channel => Math.round(channel * 255)).join(" ")})`;
   return (
     <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice"
-      className="swarm-settled absolute inset-0 -z-10 h-full w-full">
+      className="swarm-settled absolute inset-0 z-0 h-full w-full pointer-events-none">
       <g fill="none" stroke="currentColor" strokeWidth="0.18" opacity="0.28">
         <path d="M50 28 C61 31 69 39 70 50" />
         <path d="M70 50 C68 60 60 68 50 72" />
@@ -77,5 +77,5 @@ export default function Stain({ state, pigment, amplitude, vitals, onSim, onSwar
     // Settled ink that breathes by opacity only (DESIGN reduced-motion rule). No printing, no sim.
     return <SettledSwarm pigment={pigment} />;
   }
-  return <canvas ref={ref} data-organ-swarm={tier} aria-hidden className="absolute inset-0 -z-10 h-full w-full" />;
+  return <canvas ref={ref} data-organ-swarm={tier} aria-hidden className="absolute inset-0 z-0 h-full w-full pointer-events-none" />;
 }

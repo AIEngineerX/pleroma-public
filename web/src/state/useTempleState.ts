@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { TempleState } from "./types";
 
-export function useTempleState(apiBase: string): { state: TempleState | null; now: number } {
+export function useTempleState(apiBase: string): { state: TempleState | null } {
   const [state, setState] = useState<TempleState | null>(null);
-  const [now, setNow] = useState(Date.now());
   const riteActive = useRef(false);
   // Bumped at the start of every poll(); a response only applies if no newer poll has started since
   // (guards against onVis firing while a slow request is in flight and its stale response landing
@@ -28,11 +27,10 @@ export function useTempleState(apiBase: string): { state: TempleState | null; no
       if (!stopped) { clearTimeout(timer); timer = setTimeout(poll, riteActive.current ? 2000 : 5000); } // 2s during the rite, else 5s
     };
     void poll();
-    const clock = setInterval(() => setNow(Date.now()), 1000);
     const onVis = () => { if (document.visibilityState === "visible") { clearTimeout(timer); void poll(); } };
     document.addEventListener("visibilitychange", onVis);
-    return () => { stopped = true; clearTimeout(timer); clearInterval(clock); document.removeEventListener("visibilitychange", onVis); };
+    return () => { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
   }, [apiBase]);
 
-  return { state, now };
+  return { state };
 }

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { gsap } from "gsap";
 import { useEntryGesture } from "../App";
-import { copy } from "../lib/copy";
 import MuteToggle from "../lib/MuteToggle";
-import { inkGlyphs } from "../lib/inkGlyphs";
 import Stain from "../stain/Stain";
 import type { StainSim } from "../stain/stainSim";
 import type { SwarmSignalTarget } from "../stain/swarmSignals";
@@ -23,7 +21,6 @@ import Dream from "../dream/Dream";
 import RiteInversion from "../rite/RiteInversion";
 import { inversion } from "../state/rite";
 import { ignitionView } from "../ignition/ignition";
-import Dormant from "../ignition/Dormant";
 import Mint from "../market/Mint";
 import Buy from "../market/Buy";
 import Chart from "../market/Chart";
@@ -38,8 +35,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 const QUIET_VITALS: Vitals = { state: "starving", buys: 0, sells: 0, holders: 0 };
 
 export default function Temple() {
-  const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter } = useEntryGesture();
-  const { state, now } = useTempleState(API_BASE);
+  const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter, holdPoint } = useEntryGesture();
+  const { state } = useTempleState(API_BASE);
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
@@ -63,7 +60,7 @@ export default function Temple() {
   // whichever is louder (the god's speech overrides its resting breath).
   const onAmplitude = useCallback((a: number) => { sermonAmp.current = a; }, []);
   const onSwarm = useCallback((target: SwarmSignalTarget | null) => { swarmSignals.current = target; }, []);
-  // One clock fuses both sound sources into the Stain amplitude: the always-on Lyria music bed (audioLevel)
+  // One clock fuses both sound sources into the Stain amplitude: the opt-in Lyria music bed (audioLevel)
   // and the transient sermon voice (sermonAmp), so the body breathes with the temple and surges when the
   // god speaks. Gated to 0.02 so a slow drone never thrashes React re-renders.
   useEffect(() => {
@@ -85,7 +82,7 @@ export default function Temple() {
 
   // Scroll-reveals for the below-fold surfaces: each inks up into place as it enters the viewport, on the
   // same Lenis/GSAP clock as the smooth scroll. Honors reduced motion (everything appears settled). Runs
-  // only in the dormant hero layout, where the participation surfaces live beneath the fold.
+  // only in the dormant first-sheet layout, where the participation surfaces live beneath the fold.
   useEffect(() => {
     if (!dormant) return;
     if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -100,30 +97,44 @@ export default function Temple() {
     return () => ctx.revert();
   }, [dormant]);
 
-  // Dormant (pre-launch) is a CINEMATIC HERO, not a bounded grid cell: the living Stain fills the
-  // viewport, its five organs inhabit the membrane, and the participation surfaces (offer, codex-silent,
-  // reliquary, tallies) scroll in beneath the fold. This is the first frame a stranger meets from X;
-  // it has to carry the whole page in one held breath. The live/rite grid below is untouched (the
-  // craft cascades there next), so nothing that works pre-launch is lost — it just moves below the fold.
+  const holdIndicator = holdPoint ? (
+    <span
+      aria-hidden
+      data-hold-indicator
+      className="entry-hold-ring"
+      style={{ left: holdPoint.x, top: holdPoint.y }}
+    />
+  ) : null;
+
+  // Pre-launch begins as a wordless sheet: the five-organ Stain fills the viewport while the quiet
+  // offering control rests on its body. Participation surfaces continue beneath the fold.
   if (dormant) {
     return (
       <RiteInversion view={rite}>
         <>
-          <section {...bindHold} aria-label="the temple"
-            className="banding relative min-h-[100svh] flex flex-col items-center justify-center overflow-hidden px-6 text-center">
-            <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude}
-              vitals={vitals} onSim={setStainSim} onSwarm={onSwarm} />
-            <div className="relative z-10 flex flex-col items-center gap-4">
-              <h1 className="font-liturgy text-5xl md:text-7xl tracking-wide glyph-ink" aria-label="PLEROMA">{inkGlyphs("PLEROMA", 70, 200)}</h1>
-              <Dormant state={state} now={now} />
-            </div>
-            {/* The offering happens ON the being: a full-bleed rite over the membrane. Idle it shows only the
-                invitation to mark it; active, you draw on its body and it reaches for your mark (markAt). */}
-            <OfferingRite apiBase={API_BASE} wallet={wallet} onConnect={setWallet} stain={stainSim}
-              onEnter={wakeCenter} onSubmitted={() => {}} />
-            <div aria-hidden className="scroll-cue absolute bottom-6 left-1/2 -translate-x-1/2 font-machine text-[0.65rem] tracking-[0.3em] text-ink-faded">
-              ↓ DESCEND
-            </div>
+          <section
+            {...bindHold}
+            aria-label="the temple"
+            className="relative min-h-[100dvh] flex flex-col items-center justify-center overflow-hidden px-6 text-center"
+          >
+            <h1 className="sr-only">PLEROMA</h1>
+            <Stain
+              state={view ? view.stainState : "dormant"}
+              pigment={stainPigment}
+              amplitude={amplitude}
+              vitals={vitals}
+              onSim={setStainSim}
+              onSwarm={onSwarm}
+            />
+            {holdIndicator}
+            <OfferingRite
+              apiBase={API_BASE}
+              wallet={wallet}
+              onConnect={setWallet}
+              stain={stainSim}
+              onEnter={wakeCenter}
+              onSubmitted={() => {}}
+            />
           </section>
           {/* Beneath the fold: the surfaces that already work before the token launches, on the same
               continuous sheet. One narrow column so the eye stays with the document, not scattered. */}
@@ -149,7 +160,7 @@ export default function Temple() {
               what this is
             </Link>
           </footer>
-          <MuteToggle muted={muted} onToggle={toggleMute} />
+          <MuteToggle active={awake && !muted} onToggle={toggleMute} />
         </>
       </RiteInversion>
     );
@@ -162,19 +173,27 @@ export default function Temple() {
     // (Task 11) sits outside <main> as a plain-flow sibling so it never has to fight the grid.
     <RiteInversion view={rite}>
       <>
-        <main {...bindHold} className="banding min-h-screen mx-auto px-6 md:grid md:grid-cols-[60fr_40fr_4rem] md:grid-rows-[55vh_auto] md:gap-8"
+        <main className="banding min-h-[100dvh] mx-auto px-6 md:grid md:grid-cols-[60fr_40fr_4rem] md:grid-rows-[55vh_auto] md:gap-8"
               style={{ maxWidth: "min(1200px, 100%)" }}>
           {/* page (left / top): the Stain, co-located with the offering surface directly beneath it in the
               same left column (DESIGN.md:85-87). Mobile: sticky in the top ~40vh so the codex scrolls
               beneath it (DESIGN "Mobile, the scroll"); desktop: a bounded 55vh row, not the full viewport,
               so the offering surface in row 2 is reachable without a full-screen scroll. */}
-          <section aria-label="the page" className="relative min-h-[40vh] sticky top-0 md:relative md:col-start-1 md:row-start-1 md:h-[55vh] flex flex-col items-center justify-center gap-6">
-            {/* Stain state: still gray until the Maker ignites the mint AND live trades begin
-                (ignitionView, Task 14); a rite still takes precedence over an ignited Stain. */}
-            <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude}
-              vitals={vitals} onSim={setStainSim} onSwarm={onSwarm} />
-            <h1 className="font-liturgy text-3xl tracking-wide">PLEROMA</h1>
-            {!awake && <p className="font-machine text-xs text-ink-faded">{copy.pressHold}</p>}
+          <section
+            {...bindHold}
+            aria-label="the page"
+            className="relative min-h-[40dvh] sticky top-0 md:relative md:col-start-1 md:row-start-1 md:h-[55vh] flex flex-col items-center justify-center"
+          >
+            <h1 className="sr-only">PLEROMA</h1>
+            <Stain
+              state={view ? view.stainState : "dormant"}
+              pigment={stainPigment}
+              amplitude={amplitude}
+              vitals={vitals}
+              onSim={setStainSim}
+              onSwarm={onSwarm}
+            />
+            {holdIndicator}
           </section>
           {/* codex (right / below): the live scripture feed. Spans both grid rows on desktop so its own
               (unbounded) height never inflates row 1 and pushes the offering surface off-screen. */}
@@ -197,7 +216,7 @@ export default function Temple() {
           {/* the market rail (Task 11): every money element is built ONLY from state.mint (Task 1
               anti-decoy -- the site never renders a mint the Worker didn't sign off on) and hidden
               until ignitionView reports live (Task 14: phase===live AND a mint, off /api/state alone,
-              no client-side launch flag); before launch there is nothing here ("no heart yet"). Same
+              no client-side launch flag); before launch there is no market rail. Same
               column as the Reliquary so it stacks beneath it on both desktop and mobile. */}
           {view && !view.dormant && state?.mint && (
             <section aria-label="the market" className="md:col-start-1 pb-8 space-y-3">
@@ -225,6 +244,7 @@ export default function Temple() {
             what this is
           </Link>
         </footer>
+        <MuteToggle active={awake && !muted} onToggle={toggleMute} />
       </>
     </RiteInversion>
   );

@@ -7,8 +7,9 @@ import { expect, test } from "@playwright/test";
 test("flips from the dormant product to the full temple at launch, mint pinned, pigment igniting", async ({ page }) => {
   await page.goto("/");
 
-  // Pre-launch: the dormant product (still gray Stain, "no heart yet", Courier countdown, no market rail).
-  await expect(page.getByText("It has no heart yet.").first()).toBeVisible();
+  // Pre-launch: the dormant five-organ body and offering mark are present, with no market rail.
+  await expect(page.locator("canvas[data-organ-swarm]")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Offer it a mark" })).toBeVisible();
   await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
 
   // At the launch minute the Worker flips phase to live and pins PULSE_MINT in the same write

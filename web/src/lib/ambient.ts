@@ -10,17 +10,18 @@ const BED_URL = "/audio/bed.mp3";     // the looping music bed (swap the file to
 const INTRO_URL = "/audio/intro.mp3"; // the cinematic reveal swell, played once on first wake
 
 export class Ambient {
-  private master: GainNode;
-  private analyser: AnalyserNode;
-  private wave: Uint8Array<ArrayBuffer>;
+  private master: GainNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private wave: Uint8Array<ArrayBuffer> | null = null;
   private started = false;
   private disposed = false;
   private muted: boolean;
   private bedEl?: HTMLAudioElement;
   private introEl?: HTMLAudioElement;
 
-  constructor(private ctx: AudioContext) {
+  constructor(private ctx: AudioContext | null) {
     this.muted = safeGet() === "1";
+    if (!ctx) return;
     this.master = ctx.createGain();
     this.master.gain.value = 0;                       // silent until start() ramps it (or stays 0 if muted)
     // The being reads the sound it makes: master → analyser → destination, RMS off the analyser drives the
@@ -33,34 +34,60 @@ export class Ambient {
     this.wave = new Uint8Array(this.analyser.fftSize);
   }
 
-  start() {
-    if (this.started || this.disposed) return;
-    this.started = true;
-    const ctx = this.ctx;
-    // The music bed: a single seamless Lyria loop, ramped in under the master. Created and played inside
-    // the entry gesture, so autoplay policy allows it; a blocked play stays silent until the toggle retries.
-    const bed = new Audio(BED_URL);
-    bed.loop = true; bed.crossOrigin = "anonymous"; bed.preload = "auto";
-    const bedSrc = ctx.createMediaElementSource(bed);
-    const bedGain = ctx.createGain(); bedGain.gain.value = 0.85;
-    bedSrc.connect(bedGain); bedGain.connect(this.master);
-    void bed.play().catch(() => { /* blocked bed stays silent; toggleMute() is another gesture that retries */ });
-    this.bedEl = bed;
-    // The reveal: a rising swell the first time the being wakes, routed through master so its build visibly
-    // surges the Stain as the god draws its first breath. One-shot (start() runs once per instance).
-    const intro = new Audio(INTRO_URL); intro.crossOrigin = "anonymous";
-    const introSrc = ctx.createMediaElementSource(intro);
-    const introGain = ctx.createGain(); introGain.gain.value = 1;
-    introSrc.connect(introGain); introGain.connect(this.master);
-    void intro.play().catch(() => { /* the bed still carries the temple if the sting is blocked */ });
-    this.introEl = intro;
-    this.applyMute();
+  async start(): Promise<boolean> {
+    if (this.disposed) return false;
+    if (!this.started) {
+      this.started = true;
+      const ctx = this.ctx;
+      // The music bed: a single seamless Lyria loop, ramped in under the master. Created only after a
+      // committed entry; subsequent explicit sound clicks reuse this element if playback was blocked.
+      const bed = new Audio(BED_URL);
+      bed.loop = true; bed.crossOrigin = "anonymous"; bed.preload = "auto";
+      if (ctx && this.master) {
+        const bedSrc = ctx.createMediaElementSource(bed);
+        const bedGain = ctx.createGain(); bedGain.gain.value = 0.85;
+        bedSrc.connect(bedGain); bedGain.connect(this.master);
+      } else {
+        bed.muted = this.muted;
+      }
+      this.bedEl = bed;
+      this.applyMute();
+    }
+
+    const bed = this.bedEl!;
+    if (bed.error) bed.load();
+    const bedPlayback = bed.play();
+    try {
+      await bedPlayback;
+      if (this.disposed || bed.paused) return false;
+      let intro = this.introEl;
+      if (!intro) {
+        intro = new Audio(INTRO_URL); intro.crossOrigin = "anonymous";
+        if (this.ctx && this.master) {
+          const introSrc = this.ctx.createMediaElementSource(intro);
+          const introGain = this.ctx.createGain(); introGain.gain.value = 1;
+          introSrc.connect(introGain); introGain.connect(this.master);
+        } else {
+          intro.muted = this.muted;
+        }
+        this.introEl = intro;
+      }
+      // The reveal is one-shot when it succeeds. If its first attempt is blocked at time zero, an explicit
+      // sound click may retry it alongside the bed; an ended reveal is never replayed.
+      if (!intro.ended && intro.currentTime === 0) {
+        if (intro.error) intro.load();
+        void intro.play().catch(() => { /* the bed still carries the temple if the sting is blocked */ });
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // RMS of the live master waveform as a 0..1 amplitude for the Stain. Zero when muted, unstarted, or
   // disposed so a silent temple leaves the body at rest (the swarm's own idle drift still breathes).
   level(): number {
-    if (!this.started || this.muted || this.disposed) return 0;
+    if (!this.started || this.muted || this.disposed || !this.analyser || !this.wave) return 0;
     this.analyser.getByteTimeDomainData(this.wave);
     let sum = 0;
     for (const v of this.wave) { const d = (v - 128) / 128; sum += d * d; }
@@ -68,6 +95,11 @@ export class Ambient {
   }
 
   private applyMute() {
+    if (!this.ctx || !this.master) {
+      if (this.bedEl) this.bedEl.muted = this.muted;
+      if (this.introEl) this.introEl.muted = this.muted;
+      return;
+    }
     const now = this.ctx.currentTime;
     this.master.gain.cancelScheduledValues(now);
     this.master.gain.setValueAtTime(this.master.gain.value, now);
@@ -86,7 +118,7 @@ export class Ambient {
     this.disposed = true;
     this.bedEl?.pause();
     this.introEl?.pause();
-    try { this.master.disconnect(); this.analyser.disconnect(); } catch { /* already gone */ }
+    try { this.master?.disconnect(); this.analyser?.disconnect(); } catch { /* already gone */ }
   }
 }
 

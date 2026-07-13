@@ -109,19 +109,30 @@ export default function OfferingRite({ apiBase, wallet, onConnect, stain, onEnte
       <div className="absolute inset-x-0 bottom-16 flex flex-col items-center gap-3 px-6 text-center"
            style={{ pointerEvents: "auto" }}>
         {!active ? (
-          <button onClick={begin}
-            className="min-h-11 px-7 py-2 font-liturgy text-xl text-ink border-y border-ink/40 tracking-wide
-                       transition-opacity hover:opacity-70">
-            {copy.inviteMark}
+          <button
+            type="button"
+            onClick={begin}
+            aria-label={copy.inviteMark}
+            className="min-h-11 min-w-11 inline-flex items-center justify-center text-ink-faded transition-[color,transform] duration-300 ease-out hover:text-ink active:scale-[0.96] focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-4 focus-visible:outline-ink"
+          >
+            <svg aria-hidden viewBox="0 0 44 44" className="h-11 w-11" fill="none">
+              <path
+                d="M22 7.5C30.6 7.5 36.5 13.7 36.5 22.2C36.5 30.5 30.2 36.7 21.8 36.5C13.5 36.3 7.4 30.2 7.6 21.9C7.8 13.4 13.8 7.5 22 7.5Z"
+                stroke="currentColor"
+                strokeWidth="1"
+                strokeLinecap="round"
+              />
+              <circle cx="22" cy="22" r="1.8" fill="currentColor" />
+            </svg>
           </button>
         ) : (
           <>
-            <p className="font-machine text-xs tracking-[0.25em] text-ink-faded" role="status">
+            <p className="font-liturgy text-xs tracking-[0.25em] text-ink-faded" role="status">
               {msg || copy.markPrompt}
             </p>
             <div className="flex items-center gap-6">
               <button onClick={startOver} disabled={busy || blank}
-                className="min-h-11 font-machine text-xs underline text-ink-faded disabled:opacity-40">
+                className="min-h-11 font-liturgy text-xs underline text-ink-faded disabled:opacity-40">
                 {copy.startOver}
               </button>
               <button onClick={seal} disabled={busy || blank}
@@ -129,18 +140,18 @@ export default function OfferingRite({ apiBase, wallet, onConnect, stain, onEnte
                 {busy ? "…" : copy.seal}
               </button>
             </div>
-            <p className="font-machine text-[0.7rem] text-ink-faded">
+            <p className="font-liturgy text-[0.7rem] text-ink-faded">
               {wallet
-                ? `${copy.rememberedAs} ${wallet.address.slice(0, 4)}…${wallet.address.slice(-4)}`
+                ? <>{copy.rememberedAs} <span className="font-machine">{wallet.address.slice(0, 4)}…{wallet.address.slice(-4)}</span></>
                 : copy.tosLine}
             </p>
             {!wallet && (
-              <div className="flex items-center gap-2 font-machine text-[0.7rem] text-ink-faded">
+              <div className="flex items-center gap-2 font-liturgy text-[0.7rem] text-ink-faded">
                 <WalletButton onConnect={onConnect} /><span>{copy.offerUnremembered}</span>
               </div>
             )}
             <button onClick={() => { startOver(); setActive(false); }} disabled={busy}
-              className="min-h-11 font-machine text-[0.65rem] tracking-[0.2em] text-ink-faded disabled:opacity-40">
+              className="min-h-11 font-liturgy text-[0.65rem] tracking-[0.2em] text-ink-faded disabled:opacity-40">
               {copy.leaveIt}
             </button>
           </>

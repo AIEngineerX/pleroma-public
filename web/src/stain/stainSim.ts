@@ -112,7 +112,7 @@ export class StainSim implements SwarmSignalTarget {
   private simRes: number;
   private swarm: OrganSwarm;
   constructor(private canvas: HTMLCanvasElement, private opts: StainOpts) {
-    const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, preserveDrawingBuffer: false });
+    const gl = canvas.getContext("webgl2", { alpha: true, antialias: false, preserveDrawingBuffer: false });
     if (!gl) throw new Error("no-webgl2");
     this.gl = gl; gl.getExtension("EXT_color_buffer_float");
     this.advect = this.link(VERT, ADVECT); this.comp = this.link(VERT, COMPOSITE);
