@@ -78,7 +78,11 @@ export function useEntryGesture() {
   const primeAmbient = useCallback((): AudioContext | null => {
     if (!ambientReadyRef.current) {
       const Context = getAudioContextConstructor();
-      ctxRef.current = Context ? new Context() : null;
+      let context: AudioContext | null = null;
+      if (Context) {
+        try { context = new Context(); } catch { context = null; }
+      }
+      ctxRef.current = context;
       ambientRef.current = new Ambient(ctxRef.current);
       ambientReadyRef.current = true;
     }

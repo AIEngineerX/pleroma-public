@@ -189,3 +189,38 @@ test("real HTML media wakes without Web Audio and preserves the mute choice", as
   await expect(page.getByRole("button", { name: "mute the temple" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("pleroma-muted"))).toBe("0");
 });
+
+test("a throwing AudioContext constructor falls back to real HTML media", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Chromium exposes HTML media requests reliably");
+  await page.addInitScript(() => {
+    class ThrowingAudioContext {
+      constructor() { throw new Error("synthetic AudioContext constructor failure"); }
+    }
+    Object.defineProperty(window, "AudioContext", { configurable: true, value: ThrowingAudioContext });
+    Object.defineProperty(window, "webkitAudioContext", { configurable: true, value: undefined });
+  });
+  const pageErrors: string[] = [];
+  const audioRequests: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("request", (request) => {
+    if (/\/audio\/(?:bed|intro)\.mp3$/.test(new URL(request.url()).pathname)) {
+      audioRequests.push(request.url());
+    }
+  });
+  await routeDormantState(page);
+  await page.goto("/");
+
+  const temple = page.getByRole("region", { name: "the temple" });
+  const box = (await temple.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.45);
+  await page.mouse.down();
+  await page.waitForTimeout(80);
+  expect(audioRequests).toHaveLength(0);
+  await expect.soft(page.locator("[data-hold-indicator]")).toBeVisible();
+  await page.waitForTimeout(570);
+  await page.mouse.up();
+
+  expect.soft(pageErrors).toEqual([]);
+  await expect.soft(page.getByRole("button", { name: "mute the temple" })).toBeVisible();
+  await expect.poll(() => audioRequests.length).toBeGreaterThan(0);
+});
