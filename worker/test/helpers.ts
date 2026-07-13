@@ -9,6 +9,7 @@ import migration8 from "../migrations/0008_vitals.sql?raw";
 import migration9 from "../migrations/0009_dreams.sql?raw";
 import migration10 from "../migrations/0010_ratelimit.sql?raw";
 import migration11 from "../migrations/0011_launch.sql?raw";
+import migration12 from "../migrations/0012_pulse_idempotent_vitals.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -72,6 +73,12 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   // 0011 seeds the 'launched' config flag; its INSERT is preceded by `-- ...` comment lines, so strip
   // line comments first (same reason as 0007/0008/0009/0010), then collapse whitespace before exec.
   for (const stmt of migration11.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0012 evolves pulse_events (ADD COLUMN x3 + INDEX) and drops the vitals table; its leading `-- ...`
+  // comment block is stripped first (same reason as 0007-0011), then whitespace collapsed before exec.
+  for (const stmt of migration12.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }

@@ -1,6 +1,6 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { classifySwap, aggregate, nextPulseState, currentVitals } from "../src/pulse";
+import { classifySwap, classifyEvent, nextPulseState, currentVitals } from "../src/pulse";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -86,21 +86,29 @@ describe("PULSE classification + aggregation", () => {
     expect(classifySwap(wsolSellTx("s7"), MINT, [WSOL_POOL])).toBe("sell");
   });
 
-  it("aggregates classified swaps into per-minute buckets with volume", () => {
+  it("classifies each swap into a minute bucket with side and pool-directed volume", () => {
     const now = Date.parse("2026-07-12T01:00:30Z");
-    const aggs = aggregate([buyTx("a"), buyTx("b"), sellTx("c")], MINT, [POOL], now);
-    expect(aggs.length).toBe(1);
-    expect(aggs[0].buys).toBe(2);
-    expect(aggs[0].sells).toBe(1);
-    expect(aggs[0].buy_volume).toBeCloseTo(4); // 2 x 2 SOL
+    const minute = Math.floor(Date.parse("2026-07-12T01:00:30Z") / 60_000);
+    const buy = classifyEvent({ ...buyTx("a"), timestamp: now / 1000 }, MINT, [POOL], now);
+    const sell = classifyEvent({ ...sellTx("c"), timestamp: now / 1000 }, MINT, [POOL], now);
+    expect(buy).toMatchObject({ side: "buy", minute });
+    expect(buy?.sol_volume).toBeCloseTo(2); // 2 SOL into the pool
+    expect(sell).toMatchObject({ side: "sell", minute });
+    expect(sell?.sol_volume).toBeCloseTo(1);
+    // A tx that never touches our pools classifies with side=null (recorded for dedup, contributes nothing).
+    const none = classifyEvent(buyTxOtherPool("z"), MINT, [POOL], now);
+    expect(none?.side).toBeNull();
+    expect(none?.sol_volume).toBe(0);
   });
 
   it("counts wSOL SPL-transfer volume for a wSOL-denominated pool (nativeTransfers empty)", () => {
     const now = Date.parse("2026-07-12T01:00:30Z");
-    const aggs = aggregate([wsolBuyTx("w1"), wsolSellTx("w2")], MINT, [WSOL_POOL], now);
-    expect(aggs.length).toBe(1);
-    expect(aggs[0].buy_volume).toBeCloseTo(1.5);
-    expect(aggs[0].sell_volume).toBeCloseTo(1.2);
+    const buy = classifyEvent({ ...wsolBuyTx("w1"), timestamp: now / 1000 }, MINT, [WSOL_POOL], now);
+    const sell = classifyEvent({ ...wsolSellTx("w2"), timestamp: now / 1000 }, MINT, [WSOL_POOL], now);
+    expect(buy?.side).toBe("buy");
+    expect(buy?.sol_volume).toBeCloseTo(1.5);
+    expect(sell?.side).toBe("sell");
+    expect(sell?.sol_volume).toBeCloseTo(1.2);
   });
 });
 
@@ -142,6 +150,27 @@ describe("POST /api/pulse", () => {
     const v = await currentVitals(env.DB);
     expect(v.buys).toBe(1); // dedup-sig counted once despite three deliveries of it
     expect(v.sells).toBe(1);
+  });
+
+  it("counts a signature once even if a lease overrun makes two handlers record it (idempotent vitals)", async () => {
+    // The bug: under a pulse-lock lease overrun two handlers process the SAME signature; the old code's
+    // pulse_events insert deduped (ON CONFLICT DO NOTHING) but its `vitals buys = buys + delta` increment
+    // was unconditional, so the second handler double-counted the swap. Vitals now DERIVE from the
+    // deduplicated pulse_events log, so recording the same signature twice contributes exactly once.
+    const now = Date.now();
+    const minute = Math.floor(now / 60_000);
+    const record = () => env.DB.prepare(
+      `INSERT INTO pulse_events (signature, seen_at, minute, side, sol_volume) VALUES ('overrun-sig', ?1, ?2, 'buy', 2)
+       ON CONFLICT(signature) DO NOTHING`
+    ).bind(now, minute).run();
+    await record();
+    await record(); // the concurrent/overrun second write the old code would have double-counted
+    const v = await currentVitals(env.DB);
+    expect(v.buys).toBe(1);
+    const vol = await env.DB.prepare(
+      `SELECT COALESCE(SUM(sol_volume),0) AS bv FROM pulse_events WHERE side='buy' AND minute=?1`
+    ).bind(minute).first<{ bv: number }>();
+    expect(vol?.bv).toBeCloseTo(2); // volume counted once, not doubled
   });
 
   it("rejects a batch larger than the cap", async () => {

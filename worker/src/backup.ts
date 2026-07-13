@@ -1,10 +1,11 @@
 import type { Env } from "./env";
 
 // Every persisted table. Migrations own the schema; the backup owns the rows. Update this list when a
-// migration adds a table (0006 relics, 0007 rites, 0008 vitals/pulse_events, 0009 dreams, 0010 rate_limits).
+// migration adds a table (0006 relics, 0007 rites, 0008 pulse_events, 0009 dreams, 0010 rate_limits).
+// 0012 dropped the incremental `vitals` table (vitals now derive from pulse_events).
 export const TABLES = [
   "offerings", "transcripts", "wallets", "nonces", "spend", "config",
-  "relics", "rites", "vitals", "pulse_events", "dreams", "rate_limits",
+  "relics", "rites", "pulse_events", "dreams", "rate_limits",
 ] as const;
 
 export async function exportBackup(env: Env, date: string): Promise<{ key: string; rows: number }> {

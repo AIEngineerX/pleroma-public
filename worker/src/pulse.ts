@@ -4,7 +4,7 @@ import { acquireLock, releaseLock } from "./lock";
 
 const MAX_BATCH = 500;          // H2: Helius batches are small (~<=100); this bounds a single POST's work
 const PULSE_LEASE_MS = 30_000;  // M1: lock lease; self-heals if a holder dies
-const D1_MAX_PARAMS = 100; // D1 hard limit: <=100 bound parameters per query
+const INGEST_CHUNK = 100; // statements per D1 batch: bounds one ingest round-trip's work
 
 export interface HeliusTokenTransfer { fromUserAccount?: string; toUserAccount?: string; mint?: string; tokenAmount?: number }
 export interface HeliusNativeTransfer { fromUserAccount?: string; toUserAccount?: string; amount?: number }
@@ -70,21 +70,18 @@ function solOutOf(tx: HeliusTx, pools: string[]): number {
   return lamports / 1e9 + wsol;
 }
 
-export interface MinuteAgg { minute: number; buys: number; sells: number; buy_volume: number; sell_volume: number }
-
-export function aggregate(txs: HeliusTx[], mint: string, pools: string[], nowMs: number): MinuteAgg[] {
-  const byMinute = new Map<number, MinuteAgg>();
-  for (const tx of txs) {
-    const side = classifySwap(tx, mint, pools);
-    if (!side) continue;
-    const ms = tx.timestamp ? tx.timestamp * 1000 : nowMs;
-    const minute = Math.floor(ms / 60_000);
-    const a = byMinute.get(minute) ?? { minute, buys: 0, sells: 0, buy_volume: 0, sell_volume: 0 };
-    if (side === "buy") { a.buys++; a.buy_volume += solInto(tx, pools); }
-    else { a.sells++; a.sell_volume += solOutOf(tx, pools); }
-    byMinute.set(minute, a);
-  }
-  return [...byMinute.values()];
+// One deduplicated swap's contribution to the vitals aggregate, folded into its pulse_events row so the
+// count derives from the (idempotent) dedup log rather than a separate incremental counter. side is null
+// for a tx that does not move our mint through our pools — still recorded for dedup, but contributes
+// nothing. sol_volume is the SOL into the pool for a buy, out of the pool for a sell.
+export interface PulseEvent { signature: string; minute: number; side: "buy" | "sell" | null; sol_volume: number }
+export function classifyEvent(tx: HeliusTx, mint: string, pools: string[], nowMs: number): PulseEvent | null {
+  if (!tx.signature) return null;
+  const side = classifySwap(tx, mint, pools);
+  const ms = tx.timestamp ? tx.timestamp * 1000 : nowMs;
+  const minute = Math.floor(ms / 60_000);
+  const sol_volume = side === "buy" ? solInto(tx, pools) : side === "sell" ? solOutOf(tx, pools) : 0;
+  return { signature: tx.signature, minute, side, sol_volume };
 }
 
 // Hysteretic state machine over the 15-minute window's net buy pressure. Each adjacent pair has an UP
@@ -115,12 +112,17 @@ async function writeState(db: D1Database, s: { state: PulseState; holders: numbe
      ON CONFLICT(key) DO UPDATE SET value = ?1`).bind(JSON.stringify(s)).run();
 }
 
+// Vitals are DERIVED from the deduplicated pulse_events log, never stored incrementally: a signature that
+// appears twice (Helius redelivery or a pulse-lock lease overrun) exists as a single row and so is summed
+// once. Windowed by the `minute` column (indexed) over the trailing 15 minutes.
 async function windowMetrics(db: D1Database, nowMs: number): Promise<{ buys: number; sells: number; netVolume: number }> {
   const sinceMinute = Math.floor(nowMs / 60_000) - 15;
   const r = await db.prepare(
-    `SELECT COALESCE(SUM(buys),0) AS b, COALESCE(SUM(sells),0) AS s,
-            COALESCE(SUM(buy_volume),0) AS bv, COALESCE(SUM(sell_volume),0) AS sv
-       FROM vitals WHERE minute >= ?1`
+    `SELECT COALESCE(SUM(CASE WHEN side = 'buy'  THEN 1 ELSE 0 END), 0) AS b,
+            COALESCE(SUM(CASE WHEN side = 'sell' THEN 1 ELSE 0 END), 0) AS s,
+            COALESCE(SUM(CASE WHEN side = 'buy'  THEN sol_volume ELSE 0 END), 0) AS bv,
+            COALESCE(SUM(CASE WHEN side = 'sell' THEN sol_volume ELSE 0 END), 0) AS sv
+       FROM pulse_events WHERE minute >= ?1`
   ).bind(sinceMinute).first<{ b: number; s: number; bv: number; sv: number }>();
   return { buys: r?.b ?? 0, sells: r?.s ?? 0, netVolume: (r?.bv ?? 0) - (r?.sv ?? 0) };
 }
@@ -169,36 +171,25 @@ export async function handlePulse(env: Env, req: Request): Promise<Response> {
       unique.push(tx);
     }
 
-    // Ingest in <=100-signature chunks so each dedup SELECT stays within D1's 100-bound-param limit.
-    // Each chunk's mark-seen + count is one atomic batch; a crash between chunks leaves committed chunks
-    // fully consistent and the rest unprocessed (Helius re-delivers; already-seen sigs dedup-skip).
+    // Record each swap as one idempotent pulse_events row carrying its classification: the signature is
+    // both the dedup key and the idempotency key. ON CONFLICT DO NOTHING means a re-delivered or
+    // concurrently-recorded signature (a pulse-lock lease overrun) inserts nothing and so contributes
+    // nothing to the DERIVED vitals aggregate — no double count is structurally possible. `ingested`
+    // counts only rows this handler actually inserted (meta.changes), i.e. genuinely new signatures.
+    // Chunked so each batch stays bounded; a crash between chunks leaves committed chunks fully consistent
+    // and the rest unprocessed (Helius re-delivers; already-seen sigs are no-ops next time).
     let ingested = 0;
-    for (let off = 0; off < unique.length; off += D1_MAX_PARAMS) {
-      const chunk = unique.slice(off, off + D1_MAX_PARAMS);
-      const placeholders = chunk.map((_, i) => `?${i + 1}`).join(",");
-      const existing = await env.DB.prepare(
-        `SELECT signature FROM pulse_events WHERE signature IN (${placeholders})`
-      ).bind(...chunk.map((t) => t.signature)).all<{ signature: string }>();
-      const already = new Set(existing.results.map((r) => r.signature));
-      const fresh = chunk.filter((t) => !already.has(t.signature!));
-      if (fresh.length === 0) continue;
-
-      const aggs = aggregate(fresh, mint, pools, now);
-      const stmts: D1PreparedStatement[] = [];
-      for (const tx of fresh) {
-        stmts.push(env.DB.prepare(
-          `INSERT INTO pulse_events (signature, seen_at) VALUES (?1, ?2) ON CONFLICT(signature) DO NOTHING`
-        ).bind(tx.signature, now));
-      }
-      for (const a of aggs) {
-        stmts.push(env.DB.prepare(
-          `INSERT INTO vitals (minute, buys, sells, buy_volume, sell_volume) VALUES (?1, ?2, ?3, ?4, ?5)
-           ON CONFLICT(minute) DO UPDATE SET buys = buys + ?2, sells = sells + ?3,
-             buy_volume = buy_volume + ?4, sell_volume = sell_volume + ?5`
-        ).bind(a.minute, a.buys, a.sells, a.buy_volume, a.sell_volume));
-      }
-      await env.DB.batch(stmts);
-      ingested += fresh.length;
+    for (let off = 0; off < unique.length; off += INGEST_CHUNK) {
+      const chunk = unique.slice(off, off + INGEST_CHUNK);
+      const stmts = chunk.map((tx) => {
+        const ev = classifyEvent(tx, mint, pools, now)!; // `unique` already dropped signature-less txs
+        return env.DB.prepare(
+          `INSERT INTO pulse_events (signature, seen_at, minute, side, sol_volume) VALUES (?1, ?2, ?3, ?4, ?5)
+           ON CONFLICT(signature) DO NOTHING`
+        ).bind(ev.signature, now, ev.minute, ev.side, ev.sol_volume);
+      });
+      const results = await env.DB.batch(stmts);
+      for (const r of results) ingested += r.meta.changes;
     }
 
     const prev = await readState(env.DB);
