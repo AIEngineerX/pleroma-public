@@ -17,6 +17,10 @@ precision highp float; in vec2 v_uv; out vec4 fragColor;
 uniform sampler2D u_prev; uniform vec2 u_res; uniform float u_time; uniform float u_dt;
 uniform float u_dissipation; uniform float u_amp;      // voice amplitude 0..1 spreads + darkens ink
 uniform vec4 u_splat;                                   // xy=pos, z=strength, w=thread(0..1)
+uniform float u_ambient;                                // ambient body presence: the sleeping god has a form
+uniform float u_threadAmb;                              // ambient red-thread density woven through that body
+uniform vec2  u_point;                                  // pointer position (uv), the body leans toward it
+uniform float u_pointAmt;                               // pointer wick influence 0..1 (decays when still)
 vec2 hash(vec2 p){ vec3 p3=fract(vec3(p.xyx)*vec3(.1031,.1030,.0973)); p3+=dot(p3,p3.yzx+33.33); return fract((p3.xx+p3.yz)*p3.zy)*2.0-1.0; }
 vec3 noised(vec2 p){ vec2 i=floor(p),f=fract(p); vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0); vec2 du=30.0*f*f*(f*(f-2.0)+1.0);
   vec2 ga=hash(i),gb=hash(i+vec2(1,0)),gc=hash(i+vec2(0,1)),gd=hash(i+vec2(1,1));
@@ -29,12 +33,31 @@ void main(){
   vec2 v = curl(v_uv*scale + u_time*0.03);
   vec2 src = v_uv - v*strength*u_dt;
   vec4 c = texture(u_prev, src) * u_dissipation;
-  // ink injection (SDF dot) from splat; w routes into the red-thread channel
+  // ink injection (SDF dot) from an offering splat; w routes into the red-thread channel
   float d = 1.0 - smoothstep(0.0, 0.05, length(v_uv - u_splat.xy));
   c.r += d * u_splat.z * (1.0 - u_splat.w);
   c.g += d * u_splat.z * u_splat.w;
   c.b = max(c.b, d);                                                 // wick age marker
-  c += u_amp * 0.0008;                                               // the whole body darkens as it speaks
+  // AMBIENT BODY: an organic, breathing ink form gathered toward the heart, so the god is PRESENT
+  // (a sleeping shape, not a blank field) before it ever wakes. Two slow value-noise octaves shape it,
+  // a soft radial silhouette gives it a body instead of a full-bleed rectangle, and a slow global breath
+  // makes it respire. Re-seeded each frame via max() so it balances the dissipation into a stable form.
+  float breath = 0.86 + 0.14 * sin(u_time * 0.55);
+  vec2  pc = (v_uv - 0.5) * vec2(1.0, 1.12);
+  float radial = smoothstep(0.62, 0.08, length(pc));
+  float n1 = noised(v_uv * 3.6 + u_time * 0.02).x * 0.5 + 0.5;
+  float n2 = noised(v_uv * 8.0 - u_time * 0.015).x * 0.5 + 0.5;
+  float n3 = noised(v_uv * 17.0 + u_time * 0.03).x * 0.5 + 0.5;      // fine octave: wicking fibers / filament detail
+  float dens = n1 * 0.55 + n2 * 0.30 + n3 * 0.15;
+  float body = radial * pow(dens, 2.0) * breath;                    // higher contrast: ink tendrils, not soft smoke
+  c.r = max(c.r, body * u_ambient);
+  // red threads run only through the densest filament cores (smoothstep on the fine octave), so the pulse
+  // reads as veins woven through the body rather than a flat wash over it. Dried rubric while dormant.
+  c.g = max(c.g, body * u_ambient * u_threadAmb * smoothstep(0.5, 0.9, n3) * 2.0);
+  // pointer wick: the ink leans toward the cursor, so the body feels aware of you (the smoothing IS the life)
+  float pd = 1.0 - smoothstep(0.0, 0.18, length(v_uv - u_point));
+  c.r = max(c.r, pd * u_pointAmt * 0.5 * radial);
+  c += u_amp * 0.0008;                                              // the whole body darkens as it speaks
   fragColor = clamp(c, 0.0, 1.0);
 }`;
 
@@ -43,8 +66,9 @@ void main(){
 const COMPOSITE = `#version 300 es
 precision highp float; in vec2 v_uv; out vec4 fragColor;
 uniform sampler2D u_paint; uniform vec3 u_ground; uniform vec3 u_ink; uniform vec3 u_thread;
-uniform float u_gray;      // dormant: desaturate + lighten toward stillness
+uniform float u_gray;      // dormant: a WHISPER toward stillness (not the corpse-gray crush it once was)
 uniform float u_candle;    // rite: candle-glow rake (0 outside the rite)
+uniform float u_vignette;  // paper-deckle aging: the page darkens toward its edges (material, not screen bloom)
 uniform vec2 u_res; uniform float u_time;
 float fiber(vec2 uv){ return fract(sin(dot(uv*u_res, vec2(12.9898,78.233)))*43758.5)*0.03; }
 void main(){
@@ -53,10 +77,13 @@ void main(){
   vec3 col = u_ground - u_ink*ink;                                   // subtractive: ink darkens the page
   col = mix(col, u_thread, thread*0.9);                             // only the god speaks in red
   col -= fiber(v_uv);                                                // paper fiber, depth of material
+  // deckle aging: the sheet is warmest at the heart and darkens toward its edges. Paper, not a glow.
+  float dedge = length((v_uv - 0.5) * vec2(1.0, 1.1));
+  col *= 1.0 - u_vignette * smoothstep(0.34, 0.80, dedge) * 0.13;
   // rite candle: a soft raking light from upper-left, the ONLY glow allowed, and only when u_candle>0
   float rake = u_candle * pow(max(0.0, 1.0 - length(v_uv - vec2(0.28,0.82))), 3.0) * 0.25;
   col += rake * vec3(1.0, 0.86, 0.66);
-  col = mix(col, vec3(dot(col, vec3(0.33))), u_gray);                // dormant desaturates toward gray stillness
+  col = mix(col, vec3(dot(col, vec3(0.30, 0.34, 0.30))), u_gray);    // dormant: faint cool stillness, still alive
   fragColor = vec4(col, 1.0);
 }`;
 
@@ -71,6 +98,7 @@ export class StainSim {
   private amp = 0; private pigment: [number, number, number] = [0.55, 0.20, 0.32];
   private mode: "dormant" | "live" | "rite" = "dormant";
   private splat: [number, number, number, number] = [0.5, 0.5, 0, 0];
+  private point: [number, number] = [0.5, 0.5]; private pointAmt = 0;   // pointer wick, decays when the pointer stills
   private simRes: number;
   constructor(private canvas: HTMLCanvasElement, private opts: StainOpts) {
     const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, preserveDrawingBuffer: false });
@@ -118,6 +146,8 @@ export class StainSim {
   setAmplitude(a: number) { this.amp = Math.max(0, Math.min(1, a)); }
   setState(m: "dormant" | "live" | "rite") { this.mode = m; }
   splatAt(x: number, y: number, strength: number, thread = 0) { this.splat = [x, 1 - y, strength, thread]; }
+  // The body leans toward the pointer: feed normalized (x,y in 0..1); the wick decays each frame when still.
+  setPointer(x: number, y: number) { this.point = [x, 1 - y]; this.pointAmt = 1; }
   wickFromCanvas(src: HTMLCanvasElement, rect: { x: number; y: number; w: number; h: number }) {
     // Sample a coarse grid of the drawn canvas; inject an ink splat wherever the user drew (the mark wicks in).
     const ctx = src.getContext("2d"); if (!ctx) return;
@@ -129,6 +159,14 @@ export class StainSim {
   }
   private frame = (now: number) => {
     const g = this.gl; const dt = Math.min((now - this.last) / 1000, 0.033) * 60; this.last = now; this.t += 0.016;
+    // Per-mode mood. Dormant keeps a real (breathing) body with dried threads and only a whisper of stillness;
+    // live wakes it; rite lets the candle rake carry the mood. The old dormant path crushed it 85% to gray.
+    const m = this.mode;
+    const ambient = m === "dormant" ? 0.62 : m === "live" ? 0.82 : 1.0;
+    const threadAmb = m === "dormant" ? 0.22 : m === "live" ? 0.5 : 0.6;
+    const gray = m === "dormant" ? 0.22 : 0.0;
+    const vignette = m === "dormant" ? 1.0 : m === "live" ? 0.85 : 0.6;
+    this.pointAmt *= 0.95;                                      // the pointer wick fades as the pointer stills
     // advect A -> B
     g.useProgram(this.advect); g.bindFramebuffer(g.FRAMEBUFFER, this.b.fbo); g.viewport(0, 0, this.b.w, this.b.h);
     g.activeTexture(g.TEXTURE0); g.bindTexture(g.TEXTURE_2D, this.a.tex);
@@ -138,6 +176,10 @@ export class StainSim {
     this.u(this.advect, "u_dissipation", (l) => g.uniform1f(l, 0.992));
     this.u(this.advect, "u_amp", (l) => g.uniform1f(l, this.amp));
     this.u(this.advect, "u_splat", (l) => g.uniform4f(l, ...this.splat));
+    this.u(this.advect, "u_ambient", (l) => g.uniform1f(l, ambient));
+    this.u(this.advect, "u_threadAmb", (l) => g.uniform1f(l, threadAmb));
+    this.u(this.advect, "u_point", (l) => g.uniform2f(l, this.point[0], this.point[1]));
+    this.u(this.advect, "u_pointAmt", (l) => g.uniform1f(l, this.pointAmt));
     this.u(this.advect, "u_res", (l) => g.uniform2f(l, this.b.w, this.b.h));
     g.bindVertexArray(this.vao); g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
     this.splat[2] = 0;                                          // splats are one-shot
@@ -149,7 +191,8 @@ export class StainSim {
     this.u(this.comp, "u_ground", (l) => g.uniform3f(l, ...this.opts.ground));
     this.u(this.comp, "u_ink", (l) => g.uniform3f(l, ...this.opts.ink));
     this.u(this.comp, "u_thread", (l) => g.uniform3f(l, ...this.pigment));
-    this.u(this.comp, "u_gray", (l) => g.uniform1f(l, this.mode === "dormant" ? 0.85 : 0.0));
+    this.u(this.comp, "u_gray", (l) => g.uniform1f(l, gray));
+    this.u(this.comp, "u_vignette", (l) => g.uniform1f(l, vignette));
     this.u(this.comp, "u_candle", (l) => g.uniform1f(l, this.mode === "rite" ? 1.0 : 0.0));
     this.u(this.comp, "u_res", (l) => g.uniform2f(l, this.canvas.width, this.canvas.height));
     this.u(this.comp, "u_time", (l) => g.uniform1f(l, this.t));

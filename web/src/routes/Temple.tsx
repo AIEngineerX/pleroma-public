@@ -1,7 +1,10 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { gsap } from "gsap";
 import { useEntryGesture } from "../App";
 import { copy } from "../lib/copy";
-import { Emblem } from "../lib/emblem";
+import Visage from "../lib/Visage";
+import MuteToggle from "../lib/MuteToggle";
+import { inkGlyphs } from "../lib/inkGlyphs";
 import Stain from "../stain/Stain";
 import type { StainSim } from "../stain/stainSim";
 import Codex from "../codex/Codex";
@@ -30,7 +33,7 @@ const API_BASE = resolveApiBase(import.meta.env);
 const today = () => new Date().toISOString().slice(0, 10);
 
 export default function Temple() {
-  const { awake, unlockAudio, bindHold } = useEntryGesture();
+  const { awake, muted, unlockAudio, toggleMute, bindHold } = useEntryGesture();
   const { state, now } = useTempleState(API_BASE);
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
@@ -54,6 +57,73 @@ export default function Temple() {
     setAmplitude(a);
   }, []);
 
+  // Scroll-reveals for the below-fold surfaces: each inks up into place as it enters the viewport, on the
+  // same Lenis/GSAP clock as the smooth scroll. Honors reduced motion (everything appears settled). Runs
+  // only in the dormant hero layout, where the participation surfaces live beneath the fold.
+  useEffect(() => {
+    if (!dormant) return;
+    if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const ctx = gsap.context(() => {
+      gsap.utils.toArray<HTMLElement>("[data-reveal]").forEach((el) => {
+        gsap.from(el, {
+          opacity: 0, y: 26, duration: 0.9, ease: "power3.out",
+          scrollTrigger: { trigger: el, start: "top 88%", once: true },
+        });
+      });
+    });
+    return () => ctx.revert();
+  }, [dormant]);
+
+  // Dormant (pre-launch) is a CINEMATIC HERO, not a bounded grid cell: the living Stain fills the
+  // viewport, the Visage rides at its heart, and the participation surfaces (offer, codex-silent,
+  // reliquary, tallies) scroll in beneath the fold. This is the first frame a stranger meets from X;
+  // it has to carry the whole page in one held breath. The live/rite grid below is untouched (the
+  // craft cascades there next), so nothing that works pre-launch is lost — it just moves below the fold.
+  if (dormant) {
+    return (
+      <RiteInversion view={rite}>
+        <>
+          <section {...bindHold} aria-label="the temple"
+            className="banding relative min-h-[100svh] flex flex-col items-center justify-center overflow-hidden px-6 text-center">
+            <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude} onSim={setStainSim} />
+            <div className="relative z-10 flex flex-col items-center gap-4">
+              <Visage awake={awake} size={480} />
+              <h1 className="font-liturgy text-5xl md:text-7xl tracking-wide glyph-ink" aria-label="PLEROMA">{inkGlyphs("PLEROMA", 70, 200)}</h1>
+              <Dormant state={state} now={now} />
+              {!awake && <p className="font-machine text-xs text-ink-faded">{copy.pressHold}</p>}
+            </div>
+            <div aria-hidden className="scroll-cue absolute bottom-6 left-1/2 -translate-x-1/2 font-machine text-[0.65rem] tracking-[0.3em] text-ink-faded">
+              ↓ DESCEND
+            </div>
+          </section>
+          {/* Beneath the fold: the surfaces that already work before the token launches, on the same
+              continuous sheet. One narrow column so the eye stays with the document, not scattered. */}
+          <main className="relative z-10 mx-auto px-6 flex flex-col gap-10 pt-16" style={{ maxWidth: "min(680px, 100%)" }}>
+            <section data-reveal aria-label="offer a mark" className="flex flex-col items-center gap-2">
+              {wallet
+                ? <p className="font-machine text-xs text-ink-faded">wallet connected, {wallet.address.slice(0, 4)}...{wallet.address.slice(-4)}</p>
+                : <WalletButton onConnect={setWallet} />}
+              <OfferingCanvas apiBase={API_BASE} wallet={wallet} stain={stainSim} onSubmitted={() => {}} />
+            </section>
+            <aside data-reveal aria-label="the codex" className="font-machine text-sm text-ink-faded">
+              <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
+            </aside>
+            <div data-reveal><Reliquary apiBase={API_BASE} /></div>
+            <div data-reveal>
+              <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null}
+                className="pt-4 border-t border-[var(--color-ground-aged)]" />
+            </div>
+          </main>
+          <footer className="relative z-10 flex flex-col items-center gap-1 py-12">
+            <Socials />
+            <Disclaimer />
+          </footer>
+          <MuteToggle muted={muted} onToggle={toggleMute} />
+        </>
+      </RiteInversion>
+    );
+  }
+
   return (
     // The inversion wraps the whole document region, not just a grid child: it must apply to the
     // page as a document-level state change (Plan 03 Global), and <main>'s own grid children need
@@ -71,7 +141,7 @@ export default function Temple() {
             {/* Stain state: still gray until the Maker ignites the mint AND live trades begin
                 (ignitionView, Task 14); a rite still takes precedence over an ignited Stain. */}
             <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude} onSim={setStainSim} />
-            <Emblem />
+            <Visage awake={awake} size={120} />
             <h1 className="font-liturgy text-3xl tracking-wide">PLEROMA</h1>
             {/* the dormant product (PLANNING "Day-1 ignition"): "it has no heart yet" + the Courier
                 countdown to the First Rite, gone the instant /api/state reports live with a mint. */}

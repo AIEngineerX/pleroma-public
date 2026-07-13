@@ -11,12 +11,26 @@ export default function Stain({ state, pigment, amplitude, onSim }: Props) {
 
   useEffect(() => {
     if (tier === "reduced" || !ref.current) return;   // reduced-motion: no GL context at all
+    const canvas = ref.current;
     try {
-      sim.current = new StainSim(ref.current, { tier, ground: [0.94, 0.90, 0.80], ink: [0.62, 0.60, 0.55] });
+      // ground = warm parchment; ink = iron-gall (dark warm brown-black) so the body reads as INK darkening
+      // the page, not a gray wash. u_ink is subtracted from ground, so a large value = a deep stain.
+      sim.current = new StainSim(canvas, { tier, ground: [0.94, 0.90, 0.80], ink: [0.74, 0.71, 0.64] });
       sim.current.start();
       onSim?.(sim.current);          // hand the instance up so an offering can wick into it (Task 8)
     } catch { sim.current = null; }                            // WebGL2 unavailable -> CSS fallback below
-    return () => { sim.current?.dispose(); sim.current = null; onSim?.(null); };
+    // The body leans toward the pointer (desktop only; coarse pointers get ambient breath alone). Mapped to
+    // the canvas rect so it tracks wherever the Stain sits in the layout, and passive so it never blocks scroll.
+    const onMove = (e: PointerEvent) => {
+      const s = sim.current; if (!s) return;
+      const r = canvas.getBoundingClientRect(); if (r.width === 0) return;
+      s.setPointer((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+    };
+    if (tier === "desktop") window.addEventListener("pointermove", onMove, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      sim.current?.dispose(); sim.current = null; onSim?.(null);
+    };
   }, []); // mount-once by design, same as the lazy tier pick above; onSim is a stable setState from the caller
 
   useEffect(() => { sim.current?.setPigment(pigment); }, [pigment]);

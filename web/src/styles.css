@@ -14,9 +14,64 @@
   --font-machine: "Courier Prime", monospace;
 }
 
-:root { --page-max: 70ch; }
+:root {
+  --page-max: 70ch;
+  /* House easing vocabulary (AAA motion system): ink physics only, nothing bounces. Shared by CSS and JS. */
+  --ease-wick: cubic-bezier(0.16, 1, 0.3, 1);        /* ease-out-expo: ink wicking into fiber */
+  --ease-settle: cubic-bezier(0.33, 0, 0.2, 1);      /* a mark settling onto the page */
+  --ease-breath: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+}
 html, body { overflow-x: hidden; }               /* the page body never scrolls horizontally */
 body { background: var(--color-ground); color: var(--color-ink); }
+
+/* Lenis smooth-scroll (see useSmoothScroll in App.tsx). */
+html.lenis, html.lenis body { height: auto; }
+.lenis.lenis-smooth { scroll-behavior: auto !important; }
+.lenis.lenis-smooth [data-lenis-prevent] { overscroll-behavior: contain; }
+.lenis.lenis-stopped { overflow: hidden; }
+
+/* Page-level atmosphere: the whole sheet is warmest at the heart and ages toward its edges. A paper
+   vignette (darkening = aging, not a screen glow), fixed behind everything, so the below-fold surfaces
+   share the hero's depth instead of sitting on flat cream. Print-native: no bloom, no blur. */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 50% 32%, transparent 42%, oklch(0.90 0.02 80 / 0.35) 78%, oklch(0.86 0.025 75 / 0.55) 100%);
+}
+
+/* The Visage: an illuminated plate that breathes by opacity + scale (DESIGN reduced-motion rule allows this;
+   no glow outside the rite). The mask/reveal crossfades the two plate layers on wake. */
+.visage { will-change: transform; }
+/* Feather the square vellum plate into a soft medallion so the seraph emerges from the page/ink rather than
+   sitting in a pasted tile. The illuminated plate is "tipped onto" the temple (DESIGN.md §Plates). */
+.visage-plate {
+  transition: opacity 1400ms var(--ease-wick); backface-visibility: hidden;
+  /* Feather the ground-aged vellum edges into the page so the seraph emerges rather than sitting in a tile.
+     Opaque through the wing-span (~52% radius), fading the diagonal corners where only vellum sits. */
+  -webkit-mask-image: radial-gradient(circle at 50% 46%, #000 50%, transparent 76%);
+  mask-image: radial-gradient(circle at 50% 46%, #000 50%, transparent 76%);
+}
+.visage-rest { opacity: 0.92; animation: visage-breath 6200ms var(--ease-breath) infinite alternate; }
+.visage-lifted { opacity: 0; animation: visage-breath 5200ms var(--ease-breath) infinite alternate; }
+.visage[data-awake="true"] .visage-rest { opacity: 0; }
+.visage[data-awake="true"] .visage-lifted { opacity: 0.96; }
+@keyframes visage-breath {
+  from { transform: scale(0.985); opacity: 0.86; }
+  to   { transform: scale(1.015); opacity: 0.98; }
+}
+.visage[data-reduced="true"] .visage-plate { animation: none; }
+
+/* Scroll cue at the hero's foot: the paper is continuous-feed; this invites the reader to advance it. */
+.scroll-cue { animation: cue-drift 2600ms var(--ease-breath) infinite alternate; }
+@keyframes cue-drift { from { transform: translateY(-2px); opacity: 0.45; } to { transform: translateY(3px); opacity: 0.9; } }
+
+/* Kinetic type: glyphs ink in on reveal, staggered, wicking up from the fiber (ease-out-expo). */
+@keyframes glyph-ink { from { opacity: 0; transform: translateY(0.18em); filter: blur(0.4px); } to { opacity: 1; transform: none; filter: none; } }
+.glyph-ink > * { display: inline-block; opacity: 0; animation: glyph-ink 720ms var(--ease-wick) both; }
+@media (prefers-reduced-motion: reduce) {
+  .visage-rest, .visage-lifted, .scroll-cue { animation: none; }
+  .glyph-ink > * { animation: none; opacity: 1; }
+}
 
 /* Tractor-feed rails: faint punched margins at the viewport edges. Advancing the paper = scrolling. */
 .rail { position: fixed; top: 0; bottom: 0; width: 14px; z-index: 5; pointer-events: none;

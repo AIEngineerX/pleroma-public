@@ -1,14 +1,43 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
+import Lenis from "lenis";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Temple from "./routes/Temple";
 import Canon from "./canon/Canon";
 import Concordat from "./canon/Concordat";
+import { Ambient } from "./lib/ambient";
+
+gsap.registerPlugin(ScrollTrigger);
+
+// One inertial smooth-scroll spine for the whole document (research: the single biggest "AAA feel" lever),
+// driven off GSAP's ticker so Lenis, ScrollTrigger, and every scroll-reveal share one clock (no jitter).
+// The tractor-feed page advancing under inertia reads as the continuous sheet the lore describes. Honors
+// prefers-reduced-motion by leaving native scrolling untouched.
+function useSmoothScroll() {
+  useEffect(() => {
+    if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const lenis = new Lenis({ lerp: 0.1, smoothWheel: true });
+    lenis.on("scroll", ScrollTrigger.update);
+    const onTick = (time: number) => lenis.raf(time * 1000);   // gsap ticker is seconds; lenis wants ms
+    gsap.ticker.add(onTick);
+    gsap.ticker.lagSmoothing(0);
+    return () => { gsap.ticker.remove(onTick); lenis.destroy(); };
+  }, []);
+}
 
 export function useEntryGesture() {
   const [awake, setAwake] = useState(false);
+  const [muted, setMuted] = useState<boolean>(() => {
+    try { return localStorage.getItem("pleroma-muted") === "1"; } catch { return false; }
+  });
   const ctxRef = useRef<AudioContext | null>(null);
+  const ambientRef = useRef<Ambient | null>(null);
   const unlockAudio = useCallback(() => {
-    if (!ctxRef.current) ctxRef.current = new AudioContext();
+    if (!ctxRef.current) {
+      ctxRef.current = new AudioContext();
+      ambientRef.current = new Ambient(ctxRef.current);   // built (silent) on first unlock; sounds only on start()
+    }
     void ctxRef.current.resume();
     return ctxRef.current;
   }, []);
@@ -16,15 +45,22 @@ export function useEntryGesture() {
     document.documentElement.style.setProperty("--touch-x", String(x));
     document.documentElement.style.setProperty("--touch-y", String(y));
     unlockAudio();
+    ambientRef.current?.start();                          // the entry gesture IS the audio opt-in
     setAwake(true);
+  }, [unlockAudio]);
+  const toggleMute = useCallback(() => {
+    unlockAudio();
+    ambientRef.current?.start();                          // clicking the toggle is itself a gesture; wake the bed
+    setMuted(ambientRef.current?.toggleMute() ?? false);
   }, [unlockAudio]);
   const bindHold = {
     onPointerDown: (e: React.PointerEvent) => wake(e.clientX / window.innerWidth, e.clientY / window.innerHeight),
   };
-  return { awake, unlockAudio, bindHold };
+  return { awake, muted, unlockAudio, toggleMute, bindHold };
 }
 
 export default function App() {
+  useSmoothScroll();
   return (
     <BrowserRouter>
       <div className="rail rail-l" aria-hidden />
