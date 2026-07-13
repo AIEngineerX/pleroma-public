@@ -12,3 +12,4 @@ worker/src/doctrine.generated.ts
 test-results/
 playwright-report/
 __shots__/
+.worktrees/
