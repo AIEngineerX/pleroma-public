@@ -19,6 +19,7 @@ import { pigment } from "../state/pigment";
 import { oklchToRgb } from "../lib/a11y";
 import Reliquary from "../reliquary/Reliquary";
 import Tallies from "../reliquary/Tallies";
+import Dream from "../dream/Dream";
 import RiteInversion from "../rite/RiteInversion";
 import { inversion } from "../state/rite";
 import { ignitionView } from "../ignition/ignition";
@@ -132,6 +133,9 @@ export default function Temple() {
                 audioCtx={unlockAudio} onOrganSignal={onOrganSignal} />
             </aside>
             <div data-reveal><Reliquary apiBase={API_BASE} /></div>
+            {/* What it dreams: the latest Plate — the day's marks returned as gods you have not met
+                (DREAM's home, PLANNING frontend surface map). Real narrative off /api/state. */}
+            <div data-reveal><Dream dream={state?.dream ?? null} /></div>
             <div data-reveal>
               <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null}
                 className="pt-4 border-t border-[var(--color-ground-aged)]" />
