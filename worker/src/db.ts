@@ -102,6 +102,29 @@ export async function publishPerception(
   return results[1].meta.changes === 1;
 }
 
+// Atomically publish the day's sermon: insert the TONGUE/sermon transcript ONLY if this rite has none yet.
+// The rite lock prevents concurrent double-compose in the common case, but a lease overrun (lock.ts has no
+// fencing token) or a resumed partial run could otherwise land two sermons for one rite — editing/
+// duplicating scripture, which the integrity invariant forbids. The guarded INSERT ... WHERE NOT EXISTS is
+// the primary guard; the partial UNIQUE index (migration 0013) is the hard backstop, so a UNIQUE violation
+// from a lost race is caught and reported as "did not win" rather than thrown. Returns true iff THIS call
+// inserted the sermon — the caller gates its (metered, side-effecting) TTS on that, so only the winner speaks.
+export async function publishSermon(
+  db: D1Database, s: { transcriptId: string; riteId: string; utterance: string; at: number },
+): Promise<boolean> {
+  try {
+    const r = await db.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       SELECT ?1, 'TONGUE', 'sermon', ?2, NULL, ?3, ?4
+       WHERE NOT EXISTS (SELECT 1 FROM transcripts WHERE organ = 'TONGUE' AND register = 'sermon' AND rite_id = ?3)`
+    ).bind(s.transcriptId, s.utterance, s.riteId, s.at).run();
+    return r.meta.changes === 1;
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("UNIQUE")) return false; // backstop tripped: another actor spoke
+    throw e;
+  }
+}
+
 export async function addTranscript(db: D1Database, t: TranscriptRow): Promise<void> {
   await db.prepare(
     `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)

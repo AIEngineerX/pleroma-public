@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { countHolders, reconcileHolders } from "../src/holders";
+import { countHolders, parseHolderPage, reconcileHolders } from "../src/holders";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -15,6 +15,23 @@ describe("holder counting", () => {
     expect(count).toBe(2); // A and C
     expect(owners.has("A")).toBe(true);
     expect(owners.has("B")).toBe(false);
+  });
+});
+
+describe("parseHolderPage (degraded-response handling)", () => {
+  it("throws on a JSON-RPC error returned with HTTP 200 (must not collapse to zero holders)", () => {
+    // Helius can return a 200 whose body is an error, not a result. The old code read result?.token_accounts
+    // ?? [] and saw 'zero holders', zeroing the count and clearing every attended flag. This must throw so
+    // the caller keeps last-good and raises the stale alert.
+    expect(() => parseHolderPage({ error: { code: -32000, message: "temporarily unavailable" } })).toThrow();
+    expect(() => parseHolderPage({})).toThrow(); // missing result entirely
+  });
+
+  it("treats a present result with an empty account list as a legitimate true-zero page", () => {
+    // A VALID response that genuinely has no holders must still be honored as zero (not an outage).
+    expect(parseHolderPage({ result: { token_accounts: [] } })).toEqual([]);
+    const accts = parseHolderPage({ result: { token_accounts: [{ owner: "A", amount: 5 }] } });
+    expect(accts).toEqual([{ owner: "A", amount: 5 }]);
   });
 });
 

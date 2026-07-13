@@ -173,6 +173,22 @@ describe("POST /api/pulse", () => {
     expect(vol?.bv).toBeCloseTo(2); // volume counted once, not doubled
   });
 
+  it("pulse_state CAS: a stalled writer on an old baseline cannot revert a committed newer write", async () => {
+    // Both actors read the same pulse_state baseline. Actor B (holder-reconcile) commits holders=12.
+    // Actor A (a webhook handler that stalled past the pulse-lease) then resumes and tries to write its
+    // stale holders=10. Without the CAS, A's write reverts the public holder count; with it, A loses.
+    const { readPulseState, writePulseState } = await import("../src/pulse");
+    const base = await readPulseState(env.DB); // seeded { starving, 0, updated_at: 0 }
+    const bWon = await writePulseState(env.DB,
+      { state: base.state, holders: 12, updated_at: base.updated_at + 100 }, base.updated_at);
+    expect(bWon).toBe(true);
+    const aWon = await writePulseState(env.DB,
+      { state: base.state, holders: 10, updated_at: base.updated_at + 50 }, base.updated_at); // stale baseline
+    expect(aWon).toBe(false);
+    const after = await readPulseState(env.DB);
+    expect(after.holders).toBe(12); // B's fresher count preserved, not reverted to 10
+  });
+
   it("rejects a batch larger than the cap", async () => {
     const big = JSON.stringify(Array.from({ length: 501 }, (_, i) => buyTx(`big-${i}`)));
     const res = await SELF.fetch("http://x/api/pulse", {

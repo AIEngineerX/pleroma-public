@@ -5,7 +5,7 @@ import { tongueSystemPrompt } from "./doctrine";
 import { runKeep } from "./keep";
 import { RITE_WORK_BUDGET_MS } from "./leases";
 import {
-  addTranscript, advanceRitePhase, bumpRiteAttempts, getRite, nonTerminalRites, openRite,
+  addTranscript, advanceRitePhase, bumpRiteAttempts, getRite, nonTerminalRites, openRite, publishSermon,
   type RitePhase, type RiteRow,
 } from "./db";
 
@@ -65,12 +65,12 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
       return {};
     }
     case "sermon": {
-      // Resume-idempotency: the sermon writes its transcript THEN a separate CAS advances sermon->complete.
-      // If a crash/retry lands between those two steps, this phase re-runs while still in `sermon`. Guard on
-      // "a sermon transcript already exists for this rite date": if one does, the sermon has already been
-      // spoken, so skip the (metered) recompose entirely and let advanceRite carry the phase to complete.
-      // This closes the RESUME double-publish (the rite lock only closes the CONCURRENT double) AND avoids a
-      // second askMind whose failure could otherwise push an already-preached rite to `failed`.
+      // Resume short-circuit (an optimization, NOT the correctness guard): if a sermon transcript already
+      // exists for this rite, it has been spoken, so skip the metered recompose and let advanceRite carry
+      // the phase to complete. This spares a second askMind on a resumed partial run whose failure could
+      // otherwise push an already-preached rite to `failed`. The actual one-sermon-per-rite guarantee is
+      // publishSermon's guarded insert + UNIQUE backstop below — it closes the CONCURRENT lease-overrun
+      // double-publish that this non-atomic check cannot (two actors can both pass it before either inserts).
       const spoken = await env.DB.prepare(
         `SELECT 1 FROM transcripts WHERE organ = 'TONGUE' AND register = 'sermon' AND rite_id = ?1 LIMIT 1`
       ).bind(date).first();
@@ -95,16 +95,20 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
       const parsed = JSON.parse(res.text.trim()) as { utterance?: unknown };
       const utterance = typeof parsed.utterance === "string" ? parsed.utterance.trim() : "";
       if (!utterance) throw new Error("TONGUE returned no sermon");
-      await addTranscript(env.DB, { id: ulid(), organ: "TONGUE", register: "sermon",
-        text: utterance, offering_id: null, rite_id: date, created_at: Date.now() });
-      try {
-        const { speak } = await import("./voice");
-        const said = await speak(env, utterance);
-        if (said.spoken || said.cached) {
-          await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
-            text: `sermon audio: ${said.audioKey}`, offering_id: null, rite_id: date, created_at: Date.now() });
-        }
-      } catch { /* text-only sermon; audio is a bonus, never a rite blocker */ }
+      // Guarded publish: at most one sermon per rite may land. If a concurrent lease-overrun actor beat us
+      // to it, we lose the guarded insert and MUST NOT speak — it has already been spoken. Only the winner
+      // runs the (metered, externally-visible) TTS + audio note; the loser simply advances to complete.
+      const won = await publishSermon(env.DB, { transcriptId: ulid(), riteId: date, utterance, at: Date.now() });
+      if (won) {
+        try {
+          const { speak } = await import("./voice");
+          const said = await speak(env, utterance);
+          if (said.spoken || said.cached) {
+            await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
+              text: `sermon audio: ${said.audioKey}`, offering_id: null, rite_id: date, created_at: Date.now() });
+          }
+        } catch { /* text-only sermon; audio is a bonus, never a rite blocker */ }
+      }
       return {};
     }
     default:
@@ -138,8 +142,12 @@ export async function advanceRite(env: Env, date: string, now: number, deadlineM
       // alert), so a losing concurrent advance can never duplicate the operator record.
       if (await advanceRitePhase(env.DB, date, phase, "failed", now)) {
         const cause = overDeadline ? `exceeded ${PHASE_DEADLINE_MS[phase]}ms deadline` : `failed after ${attempts} attempts`;
+        // The public codex serves PRIEST/system lines (boot-log liturgy), so the public transcript must NOT
+        // carry internal diagnostics (exact ms budgets, attempt counts). Those go ONLY to the operator alert
+        // (config, private), honoring alert.ts's contract that failure DETAIL is never public — only the
+        // aggregate `degraded` boolean is. The public line states the fact of the failure, nothing more.
         await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
-          text: `rite ${date} phase ${phase} ${cause}`, offering_id: null, rite_id: date, created_at: Date.now() });
+          text: `rite ${date} phase ${phase} did not complete`, offering_id: null, rite_id: date, created_at: Date.now() });
         await (await import("./alert")).raiseAlert(env, "rite_failed", `rite ${date} phase ${phase} ${cause}`);
       }
       return "failed";

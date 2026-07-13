@@ -101,6 +101,32 @@ describe("runEyeBatch", () => {
     expect(note?.text).toContain(id);
   });
 
+  it("gates the terminal 'set aside' PRIEST note on winning the failed-CAS — a lost race writes no false note", async () => {
+    // Overlap: this tick would fail a row on a missing image, but a concurrent tick has already moved the
+    // row on (here: to perceivable). The terminal-note write must be gated on the failed-CAS result;
+    // otherwise the public codex (which serves PRIEST/system lines) shows a false "set aside" for a row
+    // that is actually still live. Driven directly rather than through runEyeBatch, same as the CAS-guard
+    // tests below, because the losing branch cannot be reached single-threaded once a tick has claimed.
+    const won = "cas-win-note", lost = "cas-lost-note";
+    await insertOffering(env.DB, { id: won, wallet: null, sig: null, image_key: `quarantine/${won}`,
+      sha256: won, status: "moderating", attempts: 0, created_at: Date.now(), perceived_at: null });
+    await insertOffering(env.DB, { id: lost, wallet: null, sig: null, image_key: `quarantine/${lost}`,
+      sha256: lost, status: "perceivable", attempts: 0, created_at: Date.now(), perceived_at: null }); // already moved on
+
+    // The eye.ts sequence: CAS to failed, then note ONLY if the CAS won.
+    for (const id of [won, lost]) {
+      if (await setOfferingStatus(env.DB, id, "failed", { expectedStatus: "moderating" })) {
+        await env.DB.prepare(`INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+          VALUES (?1, 'PRIEST', 'system', ?2, ?3, NULL, ?4)`).bind(ulid(), `offering ${id} set aside`, id, Date.now()).run();
+      }
+    }
+    const noteFor = async (id: string) => (await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM transcripts WHERE organ='PRIEST' AND register='system' AND offering_id=?1`
+    ).bind(id).first<{ n: number }>())?.n;
+    expect(await noteFor(won)).toBe(1);  // winner: row was moderating, CAS won, note written
+    expect(await noteFor(lost)).toBe(0); // loser: row wasn't moderating, CAS lost, NO false note
+  });
+
   it("stops immediately when the deadline has already passed, before touching any item", async () => {
     const pendingId = "deadline-pending";
     const perceivableId = "deadline-perceivable";

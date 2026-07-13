@@ -159,8 +159,12 @@ export async function runEyeBatch(
     try {
       const obj = await env.RELICS.get(o.image_key);
       if (!obj) {
-        await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "moderating" });
-        await priestNote(env, o.id, setAsideLine(o.id));
+        // Only log the terminal note if THIS tick actually won the moderating->failed CAS. If an
+        // overlapping tick already moved the row on (e.g. promoted it to perceivable), our CAS is a
+        // no-op — logging "set aside" anyway would publish a false terminal state to the public codex.
+        if (await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "moderating" })) {
+          await priestNote(env, o.id, setAsideLine(o.id));
+        }
         continue;
       }
       const bytes = new Uint8Array(await obj.arrayBuffer());
@@ -202,8 +206,8 @@ export async function runEyeBatch(
         continue;
       }
       const dead = o.attempts >= 2;
-      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true, expectedStatus: "moderating" });
-      if (dead) await priestNote(env, o.id, setAsideLine(o.id));
+      const won = await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true, expectedStatus: "moderating" });
+      if (dead && won) await priestNote(env, o.id, setAsideLine(o.id)); // only if this tick won the CAS
     }
   }
 
@@ -226,8 +230,11 @@ export async function runEyeBatch(
     try {
       const obj = await env.RELICS.get(o.image_key);
       if (!obj) {
-        await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "perceiving" });
-        await priestNote(env, o.id, setAsideLine(o.id));
+        // Same CAS-gated note as the moderation path: don't record a terminal "set aside" unless this
+        // tick actually won the perceiving->failed transition (an overlapping tick may have moved it).
+        if (await setOfferingStatus(env.DB, o.id, "failed", { expectedStatus: "perceiving" })) {
+          await priestNote(env, o.id, setAsideLine(o.id));
+        }
         continue;
       }
       const dataB64 = toBase64(new Uint8Array(await obj.arrayBuffer()));

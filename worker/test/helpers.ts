@@ -10,6 +10,7 @@ import migration9 from "../migrations/0009_dreams.sql?raw";
 import migration10 from "../migrations/0010_ratelimit.sql?raw";
 import migration11 from "../migrations/0011_launch.sql?raw";
 import migration12 from "../migrations/0012_pulse_idempotent_vitals.sql?raw";
+import migration13 from "../migrations/0013_one_sermon_per_rite.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -79,6 +80,12 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   // 0012 evolves pulse_events (ADD COLUMN x3 + INDEX) and drops the vitals table; its leading `-- ...`
   // comment block is stripped first (same reason as 0007-0011), then whitespace collapsed before exec.
   for (const stmt of migration12.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0013 adds the partial-unique sermon index; strip its leading `-- ...` comment block first (same reason
+  // as 0007-0012), then collapse whitespace before exec.
+  for (const stmt of migration13.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }

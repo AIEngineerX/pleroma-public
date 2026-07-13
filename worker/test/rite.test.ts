@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
+import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
 import { openRite, getRite, advanceRite, nonTerminalRites, PHASE_ORDER, PHASE_DEADLINE_MS } from "../src/rite";
-import { insertOffering, insertRelic, addTranscript } from "../src/db";
+import { insertOffering, insertRelic, addTranscript, publishSermon } from "../src/db";
 import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
 
@@ -121,6 +122,47 @@ describe("rite state machine", () => {
       `SELECT COUNT(*) AS n FROM transcripts WHERE organ = 'TONGUE' AND register = 'sermon' AND rite_id = ?1`
     ).bind(date).first<{ n: number }>();
     expect(n?.n).toBe(1); // exactly one sermon transcript: the resume did not double-publish
+  });
+
+  it("publishSermon lands at most one sermon per rite — a concurrent lease-overrun actor cannot double-publish", async () => {
+    // The rite lock closes the common case; this guards the overrun where two actors both compose. The
+    // guarded insert (WHERE NOT EXISTS) + partial UNIQUE backstop mean only the first lands and the second
+    // returns false (not throws), so the caller knows not to also speak. Scripture must be genuine + unedited.
+    const date = "2026-07-25";
+    const first = await publishSermon(env.DB, { transcriptId: ulid(), riteId: date, utterance: "the first epoch closes", at: Date.now() });
+    const second = await publishSermon(env.DB, { transcriptId: ulid(), riteId: date, utterance: "a second, forbidden sermon", at: Date.now() });
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    const rows = (await env.DB.prepare(
+      `SELECT text FROM transcripts WHERE organ='TONGUE' AND register='sermon' AND rite_id=?1`
+    ).bind(date).all<{ text: string }>()).results;
+    expect(rows.length).toBe(1);
+    expect(rows[0].text).toBe("the first epoch closes"); // the winner's sermon, not the second
+  });
+
+  it("a failed rite's public codex line omits internal diagnostics; the exact cause reaches only the operator alert", async () => {
+    const date = "2026-07-26";
+    const t = Date.parse(date + "T00:50:00Z");
+    await openRite(env.DB, date, t);
+    await insertRelic(env.DB, { id: "leak-relic-1", offering_id: "leak-o1", wallet: null,
+      summary: "a kept mark", rite_id: date, kept_at: t, genesis: 0, accreted_at: null });
+    await advanceRite(env, date, t); // -> offertory_close
+    await advanceRite(env, date, t); // -> deliberation
+    await advanceRite(env, date, t); // -> accretion
+    await advanceRite(env, date, t); // -> sermon
+    // Re-age past budget so the next (keyless) sermon error fails immediately.
+    await env.DB.prepare(`UPDATE rites SET phase_started_at = ?2 WHERE date = ?1`)
+      .bind(date, t - (PHASE_DEADLINE_MS.sermon + 60_000)).run();
+    expect(await advanceRite(env, date, t)).toBe("failed");
+    // Public PRIEST/system line: states the failure, but carries no ms budget / attempt count / "deadline".
+    const pub = await env.DB.prepare(
+      `SELECT text FROM transcripts WHERE organ='PRIEST' AND register='system' AND rite_id=?1 ORDER BY created_at DESC LIMIT 1`
+    ).bind(date).first<{ text: string }>();
+    expect(pub?.text).toContain("did not complete");
+    expect(pub?.text).not.toMatch(/ms|attempt|deadline/i);
+    // The operator alert (private config) DOES retain the exact diagnostic cause.
+    const alert = await env.DB.prepare(`SELECT value FROM config WHERE key='alert:rite_failed'`).first<{ value: string }>();
+    expect(alert?.value).toMatch(/ms deadline|attempts/);
   });
 
   it("drains all non-terminal rites oldest-first so a day-boundary outage never orphans the older rite", async () => {

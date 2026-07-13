@@ -103,13 +103,24 @@ export function nextPulseState(current: PulseState, m: { buys: number; sells: nu
   return LEVELS[i];
 }
 
-async function readState(db: D1Database): Promise<{ state: PulseState; holders: number; updated_at: number }> {
+export interface PulseStateRow { state: PulseState; holders: number; updated_at: number }
+export async function readPulseState(db: D1Database): Promise<PulseStateRow> {
   const row = await db.prepare(`SELECT value FROM config WHERE key = 'pulse_state'`).first<{ value: string }>();
   return row ? JSON.parse(row.value) : { state: "starving", holders: 0, updated_at: 0 };
 }
-async function writeState(db: D1Database, s: { state: PulseState; holders: number; updated_at: number }): Promise<void> {
-  await db.prepare(`INSERT INTO config (key, value) VALUES ('pulse_state', ?1)
-     ON CONFLICT(key) DO UPDATE SET value = ?1`).bind(JSON.stringify(s)).run();
+
+// Optimistic-concurrency write: commit ONLY if pulse_state's stored updated_at still equals the value the
+// caller read (expectedUpdatedAt). The "pulse" lease (lock.ts) has no fencing token, so a stalled holder
+// and a lease-stealing holder can both believe they own it; without this guard the stalled writer's stale
+// blob (an older holder count, or a state computed from a partial aggregate) would clobber the fresher
+// writer's already-committed value. A lost CAS is best-effort — the next tick/webhook recomputes and
+// rewrites. Both writers of pulse_state (this handler and reconcileHolders) go through here. Returns
+// whether the write committed.
+export async function writePulseState(db: D1Database, s: PulseStateRow, expectedUpdatedAt: number): Promise<boolean> {
+  const r = await db.prepare(
+    `UPDATE config SET value = ?1 WHERE key = 'pulse_state' AND json_extract(value, '$.updated_at') = ?2`
+  ).bind(JSON.stringify(s), expectedUpdatedAt).run();
+  return r.meta.changes === 1;
 }
 
 // Vitals are DERIVED from the deduplicated pulse_events log, never stored incrementally: a signature that
@@ -128,7 +139,7 @@ async function windowMetrics(db: D1Database, nowMs: number): Promise<{ buys: num
 }
 
 export async function currentVitals(db: D1Database): Promise<{ state: PulseState; buys: number; sells: number; holders: number }> {
-  const s = await readState(db);
+  const s = await readPulseState(db);
   const m = await windowMetrics(db, Date.now());
   return { state: s.state, buys: m.buys, sells: m.sells, holders: s.holders };
 }
@@ -192,9 +203,11 @@ export async function handlePulse(env: Env, req: Request): Promise<Response> {
       for (const r of results) ingested += r.meta.changes;
     }
 
-    const prev = await readState(env.DB);
+    const prev = await readPulseState(env.DB);
     const state = nextPulseState(prev.state, await windowMetrics(env.DB, now));
-    await writeState(env.DB, { state, holders: prev.holders, updated_at: now });
+    // CAS on the baseline we just read: if a concurrent holder-reconcile (lease overrun) wrote a newer
+    // pulse_state in between, our recompute is stale — skip rather than revert it; next webhook refreshes.
+    await writePulseState(env.DB, { state, holders: prev.holders, updated_at: now }, prev.updated_at);
     return Response.json({ ok: true, ingested, state });
   } finally {
     await releaseLock(env.DB, "pulse", holder);

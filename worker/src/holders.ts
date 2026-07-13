@@ -1,6 +1,7 @@
 import { ulid } from "ulid";
 import type { Env } from "./env";
 import { acquireLock, releaseLock } from "./lock";
+import { readPulseState, writePulseState } from "./pulse";
 import { withTimeout } from "./timeouts";
 
 const PULSE_LOCK_TTL_MS = 30_000; // matches pulse.ts PULSE_LEASE_MS — same "pulse" lock guards config.pulse_state
@@ -11,6 +12,21 @@ export function countHolders(pages: TokenAccount[][]): { count: number; owners: 
   const owners = new Set<string>();
   for (const page of pages) for (const a of page) if (a.amount > 0) owners.add(a.owner);
   return { count: owners.size, owners };
+}
+
+export interface HeliusHolderPage { error?: unknown; result?: { token_accounts?: Array<{ owner: string; amount: number }> } }
+
+// Pure validation of one getTokenAccounts page, extracted so the degraded-response handling is
+// unit-testable without a live Helius call (same pattern as parseVerse in eye.ts). A JSON-RPC error or a
+// MISSING result — both of which Helius can return with HTTP 200 — throws: the caller must treat that as an
+// outage, never as "zero holders" (collapsing it to zero would clear every wallet's attended flag, the
+// destructive-on-degradation failure the missing-key guard already closes for absent config). A PRESENT
+// result with an absent/empty token_accounts array is a legitimate end-of-data / true-zero page: returns [].
+export function parseHolderPage(data: HeliusHolderPage): TokenAccount[] {
+  if (data.error || !data.result) {
+    throw new Error(`helius getTokenAccounts error: ${JSON.stringify(data.error ?? "missing result")}`);
+  }
+  return (data.result.token_accounts ?? []).map(a => ({ owner: a.owner, amount: Number(a.amount) }));
 }
 
 // Helius DAS getTokenAccounts by mint, paginated. Bounded by maxPages so one tick can't run unbounded;
@@ -30,10 +46,9 @@ export async function fetchHolders(env: Env, maxPages = 20): Promise<{ count: nu
       signal,
     }));
     if (!res.ok) throw new Error(`helius getTokenAccounts ${res.status}`);
-    const data = await res.json<{ result?: { token_accounts?: Array<{ owner: string; amount: number }> } }>();
-    const accounts = data.result?.token_accounts ?? [];
+    const accounts = parseHolderPage(await res.json<HeliusHolderPage>());
     if (accounts.length === 0) break;
-    pages.push(accounts.map(a => ({ owner: a.owner, amount: Number(a.amount) })));
+    pages.push(accounts);
     if (accounts.length < 1000) break;
   }
   return countHolders(pages);
@@ -87,12 +102,12 @@ export async function reconcileHolders(env: Env): Promise<{ holders: number; att
   const holder = ulid();
   if (await acquireLock(env.DB, "pulse", holder, PULSE_LOCK_TTL_MS)) {
     try {
-      const row = await env.DB.prepare(`SELECT value FROM config WHERE key = 'pulse_state'`).first<{ value: string }>();
-      const s = row ? JSON.parse(row.value) : { state: "starving", holders: 0, updated_at: 0 };
-      s.holders = count;
-      s.updated_at = Date.now();
-      await env.DB.prepare(`INSERT INTO config (key, value) VALUES ('pulse_state', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1`)
-        .bind(JSON.stringify(s)).run();
+      // Read-modify-write of pulse_state, serialized against handlePulse by the shared "pulse" lock AND
+      // guarded by writePulseState's CAS on updated_at: the lock reduces contention, the CAS is the actual
+      // safety net (the lease has no fencing token, so a lease overrun could otherwise let this stale write
+      // revert a fresher one). Only holders changes here; state is preserved from the read baseline.
+      const prev = await readPulseState(env.DB);
+      await writePulseState(env.DB, { state: prev.state, holders: count, updated_at: Date.now() }, prev.updated_at);
     } finally {
       await releaseLock(env.DB, "pulse", holder);
     }
