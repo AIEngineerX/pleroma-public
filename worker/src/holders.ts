@@ -1,7 +1,7 @@
 import { ulid } from "ulid";
 import type { Env } from "./env";
 import { acquireLock, releaseLock } from "./lock";
-import { readPulseState, writePulseState } from "./pulse";
+import { nextPulseState, readPulseState, windowMetrics, writePulseState } from "./pulse";
 import { withTimeout } from "./timeouts";
 
 const PULSE_LOCK_TTL_MS = 30_000; // matches pulse.ts PULSE_LEASE_MS — same "pulse" lock guards config.pulse_state
@@ -14,19 +14,25 @@ export function countHolders(pages: TokenAccount[][]): { count: number; owners: 
   return { count: owners.size, owners };
 }
 
-export interface HeliusHolderPage { error?: unknown; result?: { token_accounts?: Array<{ owner: string; amount: number }> } }
+export interface HeliusHolderPage { error?: unknown; result?: unknown }
 
 // Pure validation of one getTokenAccounts page, extracted so the degraded-response handling is
-// unit-testable without a live Helius call (same pattern as parseVerse in eye.ts). A JSON-RPC error or a
-// MISSING result — both of which Helius can return with HTTP 200 — throws: the caller must treat that as an
-// outage, never as "zero holders" (collapsing it to zero would clear every wallet's attended flag, the
-// destructive-on-degradation failure the missing-key guard already closes for absent config). A PRESENT
-// result with an absent/empty token_accounts array is a legitimate end-of-data / true-zero page: returns [].
+// unit-testable without a live Helius call (same pattern as parseVerse in eye.ts). Anything that is not a
+// well-formed success — a JSON-RPC error body, a missing result, or a result whose token_accounts is not an
+// ARRAY (e.g. {}, [], null, a string) — throws: all of these can arrive with HTTP 200, and collapsing them
+// to "zero holders" would clear every wallet's attended flag (the destructive-on-degradation failure the
+// missing-key guard closes for absent config). ONLY a present token_accounts ARRAY is honored; an EMPTY
+// array is a legitimate end-of-data / true-zero page and returns []. A malformed row whose amount is
+// non-numeric is dropped by countHolders' `amount > 0` (NaN) rather than miscounted.
 export function parseHolderPage(data: HeliusHolderPage): TokenAccount[] {
-  if (data.error || !data.result) {
-    throw new Error(`helius getTokenAccounts error: ${JSON.stringify(data.error ?? "missing result")}`);
+  const result = data.result;
+  const accounts = result && typeof result === "object" && !Array.isArray(result)
+    ? (result as { token_accounts?: unknown }).token_accounts
+    : undefined;
+  if (data.error || !Array.isArray(accounts)) {
+    throw new Error(`helius getTokenAccounts error: ${JSON.stringify(data.error ?? "malformed result")}`);
   }
-  return (data.result.token_accounts ?? []).map(a => ({ owner: a.owner, amount: Number(a.amount) }));
+  return (accounts as Array<{ owner: string; amount: number }>).map(a => ({ owner: a.owner, amount: Number(a.amount) }));
 }
 
 // Helius DAS getTokenAccounts by mint, paginated. Bounded by maxPages so one tick can't run unbounded;
@@ -105,9 +111,14 @@ export async function reconcileHolders(env: Env): Promise<{ holders: number; att
       // Read-modify-write of pulse_state, serialized against handlePulse by the shared "pulse" lock AND
       // guarded by writePulseState's CAS on updated_at: the lock reduces contention, the CAS is the actual
       // safety net (the lease has no fencing token, so a lease overrun could otherwise let this stale write
-      // revert a fresher one). Only holders changes here; state is preserved from the read baseline.
+      // revert a fresher one). This tick ALSO recomputes `state` from the durable pulse_events window, not
+      // just the holder count: that makes the reconcile the backstop that recovers any hysteresis transition
+      // a webhook computed but dropped on a lost CAS — state converges within a tick without a new webhook.
+      // updated_at is forced strictly above the baseline so a same-millisecond version can never repeat.
       const prev = await readPulseState(env.DB);
-      await writePulseState(env.DB, { state: prev.state, holders: count, updated_at: Date.now() }, prev.updated_at);
+      const state = nextPulseState(prev.state, await windowMetrics(env.DB, Date.now()));
+      const version = Math.max(Date.now(), prev.updated_at + 1);
+      await writePulseState(env.DB, { state, holders: count, updated_at: version }, prev.updated_at);
     } finally {
       await releaseLock(env.DB, "pulse", holder);
     }

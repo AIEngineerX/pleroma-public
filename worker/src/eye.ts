@@ -265,8 +265,8 @@ export async function runEyeBatch(
         break;
       }
       const dead = o.attempts >= 2;
-      await setOfferingStatus(env.DB, o.id, dead ? "failed" : "perceivable", { bumpAttempts: true, expectedStatus: "perceiving" });
-      if (dead) await priestNote(env, o.id, setAsideLine(o.id));
+      const won = await setOfferingStatus(env.DB, o.id, dead ? "failed" : "perceivable", { bumpAttempts: true, expectedStatus: "perceiving" });
+      if (dead && won) await priestNote(env, o.id, setAsideLine(o.id)); // only if this tick won the CAS
     }
   }
   if (perceived > 0) {

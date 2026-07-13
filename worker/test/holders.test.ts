@@ -19,15 +19,19 @@ describe("holder counting", () => {
 });
 
 describe("parseHolderPage (degraded-response handling)", () => {
-  it("throws on a JSON-RPC error returned with HTTP 200 (must not collapse to zero holders)", () => {
-    // Helius can return a 200 whose body is an error, not a result. The old code read result?.token_accounts
-    // ?? [] and saw 'zero holders', zeroing the count and clearing every attended flag. This must throw so
-    // the caller keeps last-good and raises the stale alert.
+  it("throws on any degraded HTTP-200 shape whose token_accounts is not an array (must not collapse to zero)", () => {
+    // Helius can return a 200 whose body is an error, or a result missing/mis-typing token_accounts. The old
+    // code read result?.token_accounts ?? [] and saw 'zero holders', zeroing the count and clearing every
+    // attended flag. Every one of these must throw so the caller keeps last-good and raises the stale alert.
     expect(() => parseHolderPage({ error: { code: -32000, message: "temporarily unavailable" } })).toThrow();
-    expect(() => parseHolderPage({})).toThrow(); // missing result entirely
+    expect(() => parseHolderPage({})).toThrow();                              // missing result entirely
+    expect(() => parseHolderPage({ result: {} })).toThrow();                  // result present, token_accounts absent
+    expect(() => parseHolderPage({ result: [] })).toThrow();                  // result is an array, not the object
+    expect(() => parseHolderPage({ result: "temporarily degraded" })).toThrow(); // result is a string
+    expect(() => parseHolderPage({ result: { token_accounts: null } })).toThrow(); // token_accounts null
   });
 
-  it("treats a present result with an empty account list as a legitimate true-zero page", () => {
+  it("treats a present token_accounts array as authoritative — an empty one is a legitimate true-zero page", () => {
     // A VALID response that genuinely has no holders must still be honored as zero (not an outage).
     expect(parseHolderPage({ result: { token_accounts: [] } })).toEqual([]);
     const accts = parseHolderPage({ result: { token_accounts: [{ owner: "A", amount: 5 }] } });

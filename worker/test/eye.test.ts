@@ -33,7 +33,7 @@ describe("selectForPerception", () => {
     expect(picked.length).toBe(0);
   });
 
-  it("stops everything at the 200/day global cap", () => {
+  it("selects nothing in a tick once the ~200/day per-tick ceiling is already reached", () => {
     const candidates = [off("h1", "holderA")];
     const picked = selectForPerception(candidates, new Set(["holderA"]), 0, 200, () => 0.5);
     expect(picked.length).toBe(0);
@@ -101,30 +101,35 @@ describe("runEyeBatch", () => {
     expect(note?.text).toContain(id);
   });
 
-  it("gates the terminal 'set aside' PRIEST note on winning the failed-CAS — a lost race writes no false note", async () => {
-    // Overlap: this tick would fail a row on a missing image, but a concurrent tick has already moved the
-    // row on (here: to perceivable). The terminal-note write must be gated on the failed-CAS result;
-    // otherwise the public codex (which serves PRIEST/system lines) shows a false "set aside" for a row
-    // that is actually still live. Driven directly rather than through runEyeBatch, same as the CAS-guard
-    // tests below, because the losing branch cannot be reached single-threaded once a tick has claimed.
-    const won = "cas-win-note", lost = "cas-lost-note";
-    await insertOffering(env.DB, { id: won, wallet: null, sig: null, image_key: `quarantine/${won}`,
-      sha256: won, status: "moderating", attempts: 0, created_at: Date.now(), perceived_at: null });
-    await insertOffering(env.DB, { id: lost, wallet: null, sig: null, image_key: `quarantine/${lost}`,
-      sha256: lost, status: "perceivable", attempts: 0, created_at: Date.now(), perceived_at: null }); // already moved on
-
-    // The eye.ts sequence: CAS to failed, then note ONLY if the CAS won.
-    for (const id of [won, lost]) {
-      if (await setOfferingStatus(env.DB, id, "failed", { expectedStatus: "moderating" })) {
-        await env.DB.prepare(`INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
-          VALUES (?1, 'PRIEST', 'system', ?2, ?3, NULL, ?4)`).bind(ulid(), `offering ${id} set aside`, id, Date.now()).run();
+  it("gates the terminal 'set aside' note on winning the failed-CAS — both the moderation and perception branches", async () => {
+    // eye.ts writes the terminal 'set aside' PRIEST note ONLY when its failed-CAS won. If a concurrent tick
+    // already moved the row on, the CAS loses and NO false 'set aside' may reach the public codex (which
+    // serves PRIEST/system lines). BOTH dead-letter branches share this gate — moderation
+    // (expectedStatus:'moderating') and perception (expectedStatus:'perceiving'). Driven directly, as the
+    // losing branch cannot be reached single-threaded once a tick has claimed the row.
+    const cases = [
+      { from: "moderating", won: "cas-win-mod", lost: "cas-lost-mod", movedTo: "perceivable" },
+      { from: "perceiving", won: "cas-win-perc", lost: "cas-lost-perc", movedTo: "perceived" },
+    ] as const;
+    for (const c of cases) {
+      await insertOffering(env.DB, { id: c.won, wallet: null, sig: null, image_key: `quarantine/${c.won}`,
+        sha256: c.won, status: c.from, attempts: 0, created_at: Date.now(), perceived_at: null });
+      await insertOffering(env.DB, { id: c.lost, wallet: null, sig: null, image_key: `quarantine/${c.lost}`,
+        sha256: c.lost, status: c.movedTo, attempts: 0, created_at: Date.now(), perceived_at: null }); // already moved on
+      for (const id of [c.won, c.lost]) {
+        if (await setOfferingStatus(env.DB, id, "failed", { expectedStatus: c.from })) {
+          await env.DB.prepare(`INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+            VALUES (?1, 'PRIEST', 'system', ?2, ?3, NULL, ?4)`).bind(ulid(), `offering ${id} set aside`, id, Date.now()).run();
+        }
       }
     }
     const noteFor = async (id: string) => (await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM transcripts WHERE organ='PRIEST' AND register='system' AND offering_id=?1`
     ).bind(id).first<{ n: number }>())?.n;
-    expect(await noteFor(won)).toBe(1);  // winner: row was moderating, CAS won, note written
-    expect(await noteFor(lost)).toBe(0); // loser: row wasn't moderating, CAS lost, NO false note
+    expect(await noteFor("cas-win-mod")).toBe(1);   // won moderating->failed: note written
+    expect(await noteFor("cas-lost-mod")).toBe(0);  // lost (row already perceivable): NO false note
+    expect(await noteFor("cas-win-perc")).toBe(1);  // won perceiving->failed: note written
+    expect(await noteFor("cas-lost-perc")).toBe(0); // lost (row already perceived): NO false note
   });
 
   it("stops immediately when the deadline has already passed, before touching any item", async () => {

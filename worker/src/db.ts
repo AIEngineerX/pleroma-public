@@ -120,7 +120,10 @@ export async function publishSermon(
     ).bind(s.transcriptId, s.utterance, s.riteId, s.at).run();
     return r.meta.changes === 1;
   } catch (e) {
-    if (e instanceof Error && e.message.includes("UNIQUE")) return false; // backstop tripped: another actor spoke
+    // Only a violation of the SERMON uniqueness (rite_id / the partial index) means another actor spoke —
+    // return false so the caller skips its TTS. A transcripts.id primary-key collision is a different,
+    // genuine error and must propagate (the caller retries with a fresh ULID), never be misread as a lost race.
+    if (e instanceof Error && /UNIQUE/.test(e.message) && /rite_id|transcripts_one_sermon_per_rite/.test(e.message)) return false;
     throw e;
   }
 }

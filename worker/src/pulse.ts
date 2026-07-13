@@ -126,7 +126,7 @@ export async function writePulseState(db: D1Database, s: PulseStateRow, expected
 // Vitals are DERIVED from the deduplicated pulse_events log, never stored incrementally: a signature that
 // appears twice (Helius redelivery or a pulse-lock lease overrun) exists as a single row and so is summed
 // once. Windowed by the `minute` column (indexed) over the trailing 15 minutes.
-async function windowMetrics(db: D1Database, nowMs: number): Promise<{ buys: number; sells: number; netVolume: number }> {
+export async function windowMetrics(db: D1Database, nowMs: number): Promise<{ buys: number; sells: number; netVolume: number }> {
   const sinceMinute = Math.floor(nowMs / 60_000) - 15;
   const r = await db.prepare(
     `SELECT COALESCE(SUM(CASE WHEN side = 'buy'  THEN 1 ELSE 0 END), 0) AS b,
@@ -206,9 +206,14 @@ export async function handlePulse(env: Env, req: Request): Promise<Response> {
     const prev = await readPulseState(env.DB);
     const state = nextPulseState(prev.state, await windowMetrics(env.DB, now));
     // CAS on the baseline we just read: if a concurrent holder-reconcile (lease overrun) wrote a newer
-    // pulse_state in between, our recompute is stale — skip rather than revert it; next webhook refreshes.
-    await writePulseState(env.DB, { state, holders: prev.holders, updated_at: now }, prev.updated_at);
-    return Response.json({ ok: true, ingested, state });
+    // pulse_state in between, our recompute is stale — skip rather than revert it. A dropped transition is
+    // not lost: the ingested events are durably in pulse_events, and the 15-min holder reconcile recomputes
+    // `state` from that same window (reconcileHolders), so a state change converges within a tick even if no
+    // further webhook arrives. updated_at is forced strictly above the baseline so the version can never
+    // repeat within a millisecond (ABA-proofing the CAS).
+    const version = Math.max(now, prev.updated_at + 1);
+    const committed = await writePulseState(env.DB, { state, holders: prev.holders, updated_at: version }, prev.updated_at);
+    return Response.json({ ok: true, ingested, state, committed });
   } finally {
     await releaseLock(env.DB, "pulse", holder);
   }
