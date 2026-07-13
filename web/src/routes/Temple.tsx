@@ -174,9 +174,6 @@ export default function Temple() {
             <Stain state={view ? view.stainState : "dormant"} pigment={stainPigment} amplitude={amplitude}
               vitals={vitals} onSim={setStainSim} onSwarm={onSwarm} />
             <h1 className="font-liturgy text-3xl tracking-wide">PLEROMA</h1>
-            {/* the dormant product (PLANNING "Day-1 ignition"): "it has no heart yet" + the Courier
-                countdown to the First Rite, gone the instant /api/state reports live with a mint. */}
-            {dormant && <Dormant state={state} now={now} />}
             {!awake && <p className="font-machine text-xs text-ink-faded">{copy.pressHold}</p>}
           </section>
           {/* codex (right / below): the live scripture feed. Spans both grid rows on desktop so its own
