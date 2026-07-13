@@ -8,6 +8,7 @@ export default defineWorkersConfig({
         miniflare: { bindings: {
           ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "test-not-set",
           VOICE_VENDOR: process.env.VOICE_VENDOR ?? "",
+          VIDEO_VENDOR: process.env.VIDEO_VENDOR ?? "",
           ELEVENLABS_VOICE_ID: process.env.ELEVENLABS_VOICE_ID ?? "",
           XAI_API_KEY: process.env.XAI_API_KEY ?? "",
           ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY ?? "",
