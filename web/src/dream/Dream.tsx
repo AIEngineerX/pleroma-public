@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type { DreamView } from "../state/types";
 import { copy } from "../lib/copy";
 
@@ -51,6 +52,9 @@ export default function Dream({ dream, apiBase = "" }: { dream: DreamView | null
               {copy.dreamCredit} {dream.wakers.map(shortWallet).join(", ")}
             </p>
           )}
+          <Link to="/canon/dreams" className="font-machine text-[0.7rem] tracking-widest text-ink-faded no-underline">
+            {copy.dreamArchiveLink}
+          </Link>
         </>
       ) : (
         <p className="font-machine text-xs text-ink-faded max-w-[44ch]">{copy.dreamEmpty}</p>

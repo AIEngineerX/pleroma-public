@@ -4,6 +4,10 @@ export type RitePhase =
 export interface Vitals { state: PulseState; buys: number; sells: number; holders: number }
 export interface RiteView { date: string; phase: RitePhase }
 export interface DreamView { narrative: string; video_key: string | null; wakers: string[]; created_at: number }
+export interface DreamArchiveEntry {
+  id: string; rite_date: string; narrative: string; video_key: string | null;
+  wakers: string[]; status: string; created_at: number;
+}
 export interface TempleState {
   phase: "dormant" | "live"; asleep: boolean; degraded: boolean;
   countdown_to: number | null; communicants_today: number; spend_state: "ok" | "asleep";

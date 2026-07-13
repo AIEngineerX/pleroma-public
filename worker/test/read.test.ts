@@ -64,3 +64,26 @@ describe("read api", () => {
     expect(s.asleep).toBe(false);
   });
 });
+
+describe("dream archive api", () => {
+  it("lists dreams newest-first with parsed wakers + video_key, and 400s a bad cursor", async () => {
+    const mk = (date: string, created_at: number, videoKey: string | null, wakers: string[]) =>
+      env.DB.prepare(
+        `INSERT INTO dreams (id, rite_date, narrative, video_prompt, video_key, wakers, status, created_at)
+         VALUES (?1, ?2, ?3, 'p', ?4, ?5, ?6, ?7)`
+      ).bind(ulid(), date, `dream ${date}`, videoKey, JSON.stringify(wakers), videoKey ? "rendered" : "composed", created_at).run();
+    await mk("2026-09-01", 5001, null, []);
+    await mk("2026-09-02", 5002, "dream/01JZDVKA000000000000000000.mp4", ["wA", "wB"]);
+    await mk("2026-09-03", 5003, null, ["wC"]);
+
+    const { entries } = await (await SELF.fetch("http://x/api/dreams"))
+      .json<{ entries: Array<{ rite_date: string; video_key: string | null; wakers: string[] }> }>();
+    expect(entries[0].rite_date).toBe("2026-09-03");     // newest first
+    expect(Array.isArray(entries[0].wakers)).toBe(true); // wakers JSON parsed to a real array
+    const rendered = entries.find(e => e.rite_date === "2026-09-02");
+    expect(rendered?.video_key).toBe("dream/01JZDVKA000000000000000000.mp4");
+    expect(rendered?.wakers).toEqual(["wA", "wB"]);
+
+    expect((await SELF.fetch("http://x/api/dreams?cursor=nope")).status).toBe(400);
+  });
+});

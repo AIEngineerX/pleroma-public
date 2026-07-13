@@ -9,7 +9,7 @@ import { runEyeBatch, sweepQuarantine } from "./eye";
 import { RITE_LEASE_MS, RITE_WORK_BUDGET_MS } from "./leases";
 import { openRite, nonTerminalRites } from "./db";
 import { advanceRite } from "./rite";
-import { getCodex, getRelics, getState, getTallies } from "./read";
+import { getCodex, getDreams, getRelics, getState, getTallies } from "./read";
 import { handlePulse } from "./pulse";
 import { serveAudio, serveDreamVideo, serveOfferingImage } from "./media";
 
@@ -30,6 +30,7 @@ app.post("/api/offerings", async (c) => {
 app.get("/api/codex", (c) => getCodex(c.env, c.req.query("cursor") ?? null));
 app.get("/api/state", (c) => getState(c.env));
 app.get("/api/relics", (c) => getRelics(c.env, c.req.query("cursor") ?? null));
+app.get("/api/dreams", (c) => getDreams(c.env, c.req.query("cursor") ?? null));
 app.get("/api/tallies", (c) => getTallies(c.env, c.req.query("date") ?? new Date().toISOString().slice(0, 10)));
 app.post("/api/pulse", (c) => handlePulse(c.env, c.req.raw));
 app.get("/api/audio/*", (c) => serveAudio(c.env, c.req.path.slice("/api/".length)));

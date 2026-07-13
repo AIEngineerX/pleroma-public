@@ -5,6 +5,7 @@ import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Temple from "./routes/Temple";
 import Canon from "./canon/Canon";
+import DreamArchive from "./canon/DreamArchive";
 import Concordat from "./canon/Concordat";
 import { Ambient } from "./lib/ambient";
 
@@ -73,6 +74,7 @@ export default function App() {
       <div className="rail rail-r" aria-hidden />
       <Routes>
         <Route path="/" element={<Temple />} />
+        <Route path="/canon/dreams" element={<DreamArchive />} />
         <Route path="/canon/*" element={<Canon />} />
         <Route path="/concordat" element={<Concordat />} />
       </Routes>

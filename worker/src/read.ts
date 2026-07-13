@@ -92,6 +92,25 @@ export async function getRelics(env: Env, cursor: string | null): Promise<Respon
   return Response.json({ entries: rows, next });
 }
 
+export async function getDreams(env: Env, cursor: string | null): Promise<Response> {
+  let curCreated: number | null = null, curId: string | null = null;
+  if (cursor !== null) {
+    // Same keyset-cursor contract as getRelics: <created_at>:<ulid>, 15 digits max (< MAX_SAFE_INTEGER).
+    const m = /^(\d{1,15}):([0-9A-HJKMNP-TV-Z]{26})$/.exec(cursor);
+    if (!m) return Response.json({ error: "bad cursor" }, { status: 400 });
+    curCreated = Number(m[1]); curId = m[2];
+  }
+  const rows = (await env.DB.prepare(
+    `SELECT id, rite_date, narrative, video_key, wakers, status, created_at FROM dreams
+     WHERE (?1 IS NULL) OR (created_at < ?1) OR (created_at = ?1 AND id < ?2)
+     ORDER BY created_at DESC, id DESC LIMIT 50`
+  ).bind(curCreated, curId).all<{ id: string; rite_date: string; narrative: string; video_key: string | null; wakers: string; status: string; created_at: number }>()).results;
+  const entries = rows.map(r => ({ ...r, wakers: JSON.parse(r.wakers) as string[] }));
+  const last = rows[rows.length - 1];
+  const next = rows.length === 50 ? `${last.created_at}:${last.id}` : null;
+  return Response.json({ entries, next });
+}
+
 export async function getTallies(env: Env, date: string): Promise<Response> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return Response.json({ error: "bad date" }, { status: 400 });
   const start = Date.parse(date + "T00:00:00.000Z"); const end = start + 86_400_000;
