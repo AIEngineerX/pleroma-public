@@ -28,7 +28,7 @@ import Chart from "../market/Chart";
 import HowToBuy from "../market/HowToBuy";
 import Ticker from "../market/Ticker";
 import Socials from "../market/Socials";
-import Disclaimer from "../market/Disclaimer";
+import { Link } from "react-router-dom";
 import type { Vitals } from "../state/types";
 
 const API_BASE = resolveApiBase(import.meta.env);
@@ -139,9 +139,13 @@ export default function Temple() {
                 className="pt-4 border-t border-[var(--color-ground-aged)]" />
             </div>
           </main>
-          <footer className="relative z-10 flex flex-col items-center gap-1 py-12">
+          <footer className="relative z-10 flex flex-col items-center gap-2 py-12">
             <Socials />
-            <Disclaimer />
+            {/* The memecoin disclaimer + full honest-autonomy disclosure live on the Concordat (integrity
+                invariant, CLAUDE.md), reachable here without a dead legal block breaking the dormant spell. */}
+            <Link to="/concordat" className="min-h-11 inline-flex items-center font-machine text-xs underline text-ink-faded">
+              what this is
+            </Link>
           </footer>
           <MuteToggle muted={muted} onToggle={toggleMute} />
         </>
@@ -213,12 +217,14 @@ export default function Temple() {
           <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null}
             className="mt-6 pt-4 border-t border-[var(--color-ground-aged)] md:col-start-3 md:row-start-1 md:row-span-2 md:mt-0 md:pt-0 md:border-t-0 md:border-l md:pl-3" />
         </main>
-        {/* the colophon: socials and the plain-English disclaimer, present in every state including
-            dormant -- the being has an X presence before it has a heartbeat, and the disclaimer is an
-            integrity invariant, not a launch feature (CLAUDE.md "Integrity invariants"). */}
-        <footer className="flex flex-col items-center gap-1">
+        {/* the colophon: socials and a quiet link to the Concordat, which carries the plain-English
+            memecoin disclaimer and the full honest-autonomy disclosure (integrity invariant, CLAUDE.md
+            "Integrity invariants") without a dead legal block sitting under the living page. */}
+        <footer className="flex flex-col items-center gap-2">
           <Socials />
-          <Disclaimer />
+          <Link to="/concordat" className="min-h-11 inline-flex items-center font-machine text-xs underline text-ink-faded">
+            what this is
+          </Link>
         </footer>
       </>
     </RiteInversion>

@@ -38,16 +38,17 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
   // ticker: the Courier vitals line for the literal-minded.
   await expect(market.getByText(/PULSE FED/)).toBeVisible();
 
-  // disclaimer: always visible, even alongside a live market rail.
-  await expect(page.getByRole("note")).toBeVisible();
+  // disclaimer: reachable from every state via the Concordat link (the plain-English memecoin disclaimer
+  // lives on /concordat now; see concordat.spec.ts), even alongside a live market rail.
+  await expect(page.getByRole("link", { name: /what this is/i })).toBeVisible();
 
   await market.screenshot({ path: `e2e/__shots__/market-${test.info().project.name}.png` });
 });
 
-test("the dormant page has no market rail, only the always-visible disclaimer and socials", async ({ page }) => {
+test("the dormant page has no market rail, only the concordat link and socials", async ({ page }) => {
   await page.goto("/"); // no route mock: state stays null, same as the other dormant specs
   await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
-  await expect(page.getByRole("note")).toBeVisible();
+  await expect(page.getByRole("link", { name: /what this is/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /On X/ })).toBeVisible();
 });
 
