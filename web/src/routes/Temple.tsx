@@ -38,6 +38,7 @@ export default function Temple() {
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
   const [stainSim, setStainSim] = useState<StainSim | null>(null);
+  const [forceSettledRenderer, setForceSettledRenderer] = useState(false);
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
@@ -56,6 +57,7 @@ export default function Temple() {
   // The sermon voice reports its RMS here; the rAF below fuses it with the music bed so the Stain reflects
   // whichever is louder (the god's speech overrides its resting breath).
   const onAmplitude = useCallback((a: number) => { sermonAmp.current = a; }, []);
+  const onRendererFallback = useCallback(() => { setForceSettledRenderer(true); }, []);
   // One clock fuses both sound sources into the Stain amplitude: the opt-in Lyria music bed (audioLevel)
   // and the transient sermon voice (sermonAmp), so the body breathes with the temple and surges when the
   // god speaks. Gated to 0.02 so a slow drone never thrashes React re-renders.
@@ -118,6 +120,8 @@ export default function Temple() {
               relicMemory={experience.relicMemory}
               activeCommand={activeCommand}
               onCommandComplete={commandComplete}
+              forceSettledRenderer={forceSettledRenderer}
+              onRendererFallback={onRendererFallback}
               onSim={setStainSim}
             />
             {holdIndicator}
@@ -186,6 +190,8 @@ export default function Temple() {
               relicMemory={experience.relicMemory}
               activeCommand={activeCommand}
               onCommandComplete={commandComplete}
+              forceSettledRenderer={forceSettledRenderer}
+              onRendererFallback={onRendererFallback}
               onSim={setStainSim}
             />
             {holdIndicator}

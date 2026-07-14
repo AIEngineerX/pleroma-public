@@ -17,8 +17,12 @@ interface Props {
   relicMemory: readonly RelicInkSample[];
   activeCommand: BodyCommand | null;
   onCommandComplete(id: string): void;
+  forceSettledRenderer: boolean;
+  onRendererFallback(): void;
   onSim?: (sim: StainSim | null) => void;
 }
+
+const SEMANTIC_DWELL_MS = 1_200;
 
 function initialSettledState(
   vitals: VitalsFeed,
@@ -35,6 +39,8 @@ export default function Stain({
   relicMemory,
   activeCommand,
   onCommandComplete,
+  forceSettledRenderer,
+  onRendererFallback,
   onSim,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -42,15 +48,29 @@ export default function Stain({
   const simRef = useRef<StainSim | null>(null);
   const lostContext = useRef(false);
   const commandGeneration = useRef(0);
-  const completedCommands = useRef(new Set<string>());
+  const completedCommandId = useRef<string | null>(null);
+  const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presentedCommandRef = useRef<BodyCommand | null>(null);
-  const hasPresentedCommand = useRef(false);
-  const latest = useRef({ vitals, relicMemory, activeCommand, onCommandComplete, onSim });
-  latest.current = { vitals, relicMemory, activeCommand, onCommandComplete, onSim };
+  const latest = useRef({
+    vitals,
+    relicMemory,
+    activeCommand,
+    onCommandComplete,
+    onRendererFallback,
+    onSim,
+  });
+  latest.current = {
+    vitals,
+    relicMemory,
+    activeCommand,
+    onCommandComplete,
+    onRendererFallback,
+    onSim,
+  };
 
   const [tier] = useState<Tier>(pickTier);
   const [renderer, setRenderer] = useState<"webgl" | "svg">(
-    tier === "reduced" ? "svg" : "webgl",
+    tier === "reduced" || forceSettledRenderer ? "svg" : "webgl",
   );
   const [fallbackBreath, setFallbackBreath] = useState(false);
   const [presentedCommand, setPresentedCommand] = useState<BodyCommand | null>(null);
@@ -62,39 +82,66 @@ export default function Stain({
     initialSettledState(vitals, relicMemory));
   const initialPulseKind = useRef(vitals.kind).current;
 
+  const clearDwell = () => {
+    if (dwellTimer.current === null) return;
+    clearTimeout(dwellTimer.current);
+    dwellTimer.current = null;
+  };
+
   const finishCommand = useRef<(id: string, generation: number) => void>(() => undefined);
   finishCommand.current = (id, generation) => {
-    if (completedCommands.current.has(id)) return;
+    if (completedCommandId.current === id) return;
     if (generation !== commandGeneration.current) return;
     if (latest.current.activeCommand?.id !== id) return;
-    completedCommands.current.add(id);
+    completedCommandId.current = id;
     setCompletion((current) => ({ id, count: current.count + 1 }));
     latest.current.onCommandComplete(id);
+  };
+
+  const acknowledgeCommand = useRef<(
+    command: BodyCommand,
+    id: string,
+    generation: number,
+  ) => void>(() => undefined);
+  acknowledgeCommand.current = (command, id, generation) => {
+    if (id !== command.id || generation !== commandGeneration.current) return;
+    if (signalForBodyCommand(command) === null) {
+      finishCommand.current(id, generation);
+      return;
+    }
+    clearDwell();
+    dwellTimer.current = setTimeout(() => {
+      dwellTimer.current = null;
+      finishCommand.current(id, generation);
+    }, SEMANTIC_DWELL_MS);
   };
 
   useEffect(() => {
     let disposed = false;
     const canvas = canvasRef.current;
 
-    const installSettledRenderer = (replayPresented: boolean) => {
+    const installSettledRenderer = (replayActive: boolean) => {
       if (disposed) return;
       const adapter = new SettledBodyRendererAdapter(setSettled);
       adapterRef.current = adapter;
       adapter.setVitals(latest.current.vitals);
       adapter.hydrateRelics(latest.current.relicMemory);
-      if (replayPresented && hasPresentedCommand.current && presentedCommandRef.current !== null) {
-        const replay = presentedCommandRef.current;
+      const replay = replayActive ? latest.current.activeCommand : null;
+      if (replay !== null && completedCommandId.current !== replay.id) {
+        presentedCommandRef.current = replay;
+        setPresentedCommand(replay);
         const generation = ++commandGeneration.current;
-        adapter.dispatch(replay, (id) => finishCommand.current(id, generation));
+        adapter.dispatch(replay, (id) => acknowledgeCommand.current(replay, id, generation));
       }
       setFallbackBreath(tier !== "reduced");
       setRenderer("svg");
     };
 
-    if (tier === "reduced") {
+    if (tier === "reduced" || forceSettledRenderer) {
       installSettledRenderer(false);
       return () => {
         disposed = true;
+        clearDwell();
         commandGeneration.current += 1;
         adapterRef.current?.dispose();
         adapterRef.current = null;
@@ -104,21 +151,46 @@ export default function Stain({
 
     if (canvas === null) return;
 
+    let pointerListening = false;
+    const removePointerListener = () => {
+      if (!pointerListening) return;
+      window.removeEventListener("pointermove", onPointerMove);
+      pointerListening = false;
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      const sim = simRef.current;
+      if (sim === null) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+      sim.setPointer(x, y);
+      canvas.dataset.pointerX = x.toFixed(3);
+      canvas.dataset.pointerY = y.toFixed(3);
+    };
+
     const onContextLost = (event: Event) => {
       event.preventDefault();
       if (lostContext.current || disposed) return;
       lostContext.current = true;
+      clearDwell();
       commandGeneration.current += 1;
       const failed = simRef.current;
       failed?.stop();
       failed?.setAnchorSink(null);
+      removePointerListener();
       simRef.current = null;
       adapterRef.current = null;
       latest.current.onSim?.(null);
+      latest.current.onRendererFallback();
       installSettledRenderer(true);
     };
 
     canvas.addEventListener("webglcontextlost", onContextLost, false);
+    if (tier === "desktop") {
+      window.addEventListener("pointermove", onPointerMove, { passive: true });
+      pointerListening = true;
+    }
     try {
       const sim = new StainSim(canvas, {
         tier,
@@ -135,16 +207,22 @@ export default function Stain({
       sim.start();
       latest.current.onSim?.(sim);
     } catch {
+      removePointerListener();
       simRef.current = null;
       adapterRef.current = null;
       latest.current.onSim?.(null);
-      if (!lostContext.current) installSettledRenderer(false);
+      if (!lostContext.current) {
+        latest.current.onRendererFallback();
+        installSettledRenderer(false);
+      }
     }
 
     return () => {
       disposed = true;
+      clearDwell();
       commandGeneration.current += 1;
       canvas.removeEventListener("webglcontextlost", onContextLost, false);
+      removePointerListener();
       const sim = simRef.current;
       const adapter = adapterRef.current;
       if (adapter !== null && adapter !== sim) adapter.dispose();
@@ -163,16 +241,25 @@ export default function Stain({
 
   useEffect(() => {
     if (activeCommand === null) {
+      clearDwell();
       commandGeneration.current += 1;
+      presentedCommandRef.current = null;
+      setPresentedCommand(null);
+      if (adapterRef.current instanceof SettledBodyRendererAdapter) {
+        adapterRef.current.clearCommand();
+      }
       return;
     }
     const adapter = adapterRef.current;
     if (adapter === null) return;
+    clearDwell();
     presentedCommandRef.current = activeCommand;
-    hasPresentedCommand.current = true;
     setPresentedCommand(activeCommand);
     const generation = ++commandGeneration.current;
-    adapter.dispatch(activeCommand, (id) => finishCommand.current(id, generation));
+    adapter.dispatch(
+      activeCommand,
+      (id) => acknowledgeCommand.current(activeCommand, id, generation),
+    );
   }, [activeCommand]);
 
   const signal = presentedCommand === null ? null : signalForBodyCommand(presentedCommand);

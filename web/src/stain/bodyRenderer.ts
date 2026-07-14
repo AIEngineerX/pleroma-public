@@ -55,6 +55,15 @@ function isBodyOrgan(organ: string): organ is BodyOrgan {
     || organ === "DREAM";
 }
 
+function isEligibleUtterance(command: Extract<BodyCommand, { kind: "utterance" }>): boolean {
+  const { organ, register } = command.entry;
+  if (organ === "EYE") return register === "verse";
+  if (organ === "KEEP") return register === "verdict";
+  if (organ === "TONGUE") return register === "verse" || register === "sermon";
+  if (organ === "DREAM") return register === "verse" && command.mode === "memory";
+  return false;
+}
+
 export function signalForBodyCommand(command: BodyCommand): BodySignal | null {
   switch (command.kind) {
     case "quicken":
@@ -64,7 +73,7 @@ export function signalForBodyCommand(command: BodyCommand): BodySignal | null {
         pipeline: command.pipeline,
       };
     case "utterance":
-      if (!isBodyOrgan(command.entry.organ)) return null;
+      if (!isBodyOrgan(command.entry.organ) || !isEligibleUtterance(command)) return null;
       return {
         organ: command.entry.organ,
         intensity: command.intensity,
@@ -145,6 +154,12 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
       && next.every((sample, index) => sample.offeringId === this.relicMemory[index]?.offeringId);
     if (unchanged) return;
     this.relicMemory = next;
+    this.emit();
+  }
+
+  clearCommand(): void {
+    if (this.disposed || this.command === null) return;
+    this.command = null;
     this.emit();
   }
 

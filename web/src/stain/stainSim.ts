@@ -1,5 +1,4 @@
 import { OrganSwarm } from "./organSwarm";
-import type { Vitals } from "../state/types";
 import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
 import {
   BODY_ANCHORS,
@@ -109,10 +108,6 @@ interface FBO { fbo: WebGLFramebuffer; tex: WebGLTexture; w: number; h: number }
 
 export interface StainOpts { tier: Tier; ground: [number, number, number]; ink: [number, number, number]; }
 
-function isVitalsFeed(value: VitalsFeed | Vitals): value is VitalsFeed {
-  return "kind" in value;
-}
-
 function initialAnchors(): Record<BodyAnchorName, BodyAnchor> {
   return {
     EYE: { ...BODY_ANCHORS.EYE },
@@ -199,10 +194,8 @@ export class StainSim implements BodyRendererAdapter {
   setAnchorSink(sink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null) {
     this.anchorSink = sink;
   }
-  setVitals(feed: VitalsFeed | Vitals) {
-    this.vitalsFeed = isVitalsFeed(feed)
-      ? feed
-      : { kind: "current", value: feed, receivedAt: Date.now() };
+  setVitals(feed: VitalsFeed) {
+    this.vitalsFeed = feed;
     this.swarm.setVitals(this.vitalsFeed);
   }
   splatAt(x: number, y: number, strength: number, thread = 0) { this.splat = [x, 1 - y, strength, thread]; }

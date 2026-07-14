@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { BodyCommand, RelicInkSample } from "../src/experience/types";
+import type { TranscriptEntry } from "../src/state/types";
 import {
   BODY_ANCHORS,
   SettledBodyRendererAdapter,
@@ -80,25 +81,56 @@ describe("shared body renderer semantics", () => {
     expect(markup.match(/data-relic-offering="offering-two"/g)).toHaveLength(1);
   });
 
-  it("does not derive body activity from a PRIEST utterance", () => {
-    const command: BodyCommand = {
-      id: "utterance:priest",
-      kind: "utterance",
-      entry: {
-        id: "priest-row",
-        organ: "PRIEST",
-        register: "system",
-        text: "record only",
-        offering_id: null,
-        rite_id: null,
-        created_at: 1,
-      },
-      mode: "live",
-      intensity: 1,
-      pipeline: "none",
-    };
+  it("maps only canonically eligible utterances to body activity", () => {
+    function utterance(
+      organ: TranscriptEntry["organ"],
+      register: TranscriptEntry["register"],
+      mode: "live" | "memory",
+    ): BodyCommand {
+      return {
+        id: `utterance:${mode}:${organ}:${register}`,
+        kind: "utterance",
+        entry: {
+          id: `${organ}:${register}`,
+          organ,
+          register,
+          text: "record only",
+          offering_id: null,
+          rite_id: organ === "DREAM" ? "2026-07-14" : null,
+          created_at: 1,
+        },
+        mode,
+        intensity: mode === "memory" ? 0.35 : 1,
+        pipeline: "none",
+      };
+    }
 
-    expect(signalForBodyCommand(command)).toBeNull();
+    const valid = [
+      utterance("EYE", "verse", "live"),
+      utterance("KEEP", "verdict", "live"),
+      utterance("TONGUE", "verse", "live"),
+      utterance("TONGUE", "sermon", "live"),
+      utterance("DREAM", "verse", "memory"),
+    ];
+    expect(valid.map((command) => signalForBodyCommand(command)?.organ)).toEqual([
+      "EYE",
+      "KEEP",
+      "TONGUE",
+      "TONGUE",
+      "DREAM",
+    ]);
+    expect(signalForBodyCommand(valid[3])?.rubric).toBe(true);
+
+    const invalid = [
+      utterance("PULSE", "telemetry", "live"),
+      utterance("EYE", "system", "live"),
+      utterance("KEEP", "verse", "live"),
+      utterance("TONGUE", "verdict", "live"),
+      utterance("DREAM", "verse", "live"),
+      utterance("DREAM", "system", "memory"),
+      utterance("PRIEST", "system", "live"),
+    ];
+    for (const command of invalid) expect(signalForBodyCommand(command)).toBeNull();
   });
 
   it("lets the settled adapter complete unsupported commands without inventing activity", () => {

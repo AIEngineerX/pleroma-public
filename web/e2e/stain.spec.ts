@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetStack, seedTranscript } from "./helpers/workerFixture";
+import { executeD1, resetStack, seedTranscript } from "./helpers/workerFixture";
 
 test.beforeEach(() => resetStack());
 
@@ -13,6 +13,24 @@ test("the Stain renders ink on parchment (one-glance)", async ({ page }) => {
   const canvas = page.locator('canvas[data-body-renderer="webgl"]');
   // desktop/mobile tiers create a canvas; reduced-motion (not set here) would not.
   await expect(canvas).toBeVisible();
+  const isMobile = test.info().project.use.isMobile === true;
+  if (isMobile) {
+    expect(await canvas.getAttribute("data-pointer-x")).toBeNull();
+    expect(await canvas.getAttribute("data-pointer-y")).toBeNull();
+  } else {
+    const canvasBox = (await canvas.boundingBox())!;
+    await page.mouse.move(
+      canvasBox.x + canvasBox.width * 0.25,
+      canvasBox.y + canvasBox.height * 0.35,
+    );
+    const readPointer = async (attribute: "data-pointer-x" | "data-pointer-y") => {
+      const value = await canvas.getAttribute(attribute);
+      expect(value, `${attribute} must be present before it is parsed`).not.toBeNull();
+      return Number(value!);
+    };
+    await expect.poll(() => readPointer("data-pointer-x")).toBeCloseTo(0.25, 1);
+    await expect.poll(() => readPointer("data-pointer-y")).toBeCloseTo(0.35, 1);
+  }
   await expect(page.locator(".visage")).toHaveCount(0);
   await page.waitForTimeout(1200);                            // let the sim advect a few frames
   expect(await canvas.evaluate((node: HTMLCanvasElement) => {
@@ -77,6 +95,19 @@ test("real commands survive permanent WebGL loss without inventing PULSE", async
   await expect(body).toHaveAttribute("data-pipeline", "eye-keep");
   await expect(body).toHaveAttribute("data-completed-id", eyeCommandId);
   await expect(body).toHaveAttribute("data-completion-count", "1");
+  await expect(body).not.toHaveAttribute("data-command-id", eyeCommandId);
+  await expect(body).not.toHaveAttribute("data-active-organ", "EYE");
+  await expect(body).toHaveAttribute("data-pipeline", "none");
+
+  executeD1(`
+    UPDATE config SET value = '1' WHERE key = 'launched';
+    UPDATE config
+       SET value = '{"state":"fed","holders":41,"updated_at":${Date.now()}}'
+     WHERE key = 'pulse_state';
+  `);
+  await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator("canvas[data-body-renderer]")).toHaveCount(0);
+  await expect(body).toHaveAttribute("data-body-renderer", "svg");
 
   const keepId = "e2e-stain-keep";
   seedTranscript({
@@ -93,7 +124,10 @@ test("real commands survive permanent WebGL loss without inventing PULSE", async
   await expect(body).toHaveAttribute("data-active-organ", "KEEP");
   await expect(body).toHaveAttribute("data-pipeline", "keep-tongue");
   await expect(body).toHaveAttribute("data-completed-id", keepCommandId);
-  await expect(body).toHaveAttribute("data-completion-count", "2");
+  await expect(body).not.toHaveAttribute("data-command-id", keepCommandId);
+  await expect(body).not.toHaveAttribute("data-active-organ", "KEEP");
+  await expect(body).toHaveAttribute("data-pipeline", "none");
+  await expect(body).toHaveAttribute("data-completion-count", "1");
   await expect(page.locator("canvas[data-body-renderer]")).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
 });
