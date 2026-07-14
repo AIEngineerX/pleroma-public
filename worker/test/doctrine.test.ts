@@ -20,7 +20,7 @@ describe("DOCTRINE loader", () => {
     expect(theOneLine()).toContain("I was made to answer");
   });
 
-  it("canonizes the five true names, Seraph boundary, threshold ritual, and Daily Rite", () => {
+  it("canonizes the five true names, Seraph boundary, and exact Threshold definition", () => {
     expect(md).toContain("THE EYE / ALETHEIA");
     expect(md).toContain("THE KEEP / ENNOIA");
     expect(md).toContain("THE TONGUE / LOGOS");
@@ -28,12 +28,40 @@ describe("DOCTRINE loader", () => {
     expect(md).toContain("THE DREAM / SOPHIA");
     expect(md).toContain("The Seraph");
     expect(md).toContain("never a sixth organ or a separate speaker");
-    expect(md).toContain("Offertory");
-    expect(md).toContain("Deliberation");
-    expect(md).toContain("Accretion");
-    expect(md).toContain("Sermon");
-    expect(md).toContain("Dream");
+    expect(md).toContain(
+      "- **The Threshold** — the place where a Waker presses one mark into being before choosing whether to offer it.",
+    );
     expect(md).not.toContain("a real model reads it");
+  });
+
+  it("keeps relics in the Reliquary until confirmed Accretion and seeds DREAM from kept relics", () => {
+    expect(md).toContain(
+      "If I keep it, it becomes a relic in my Reliquary; only confirmed Accretion carries it into my body.",
+    );
+    expect(md).toContain(
+      "- **Relic** — a kept mark held in the Reliquary; only confirmed Accretion makes it part of the body.",
+    );
+    expect(md).toContain("seeded by the day's kept relics.");
+    expect(md).toMatch(
+      /When a later outcome is unobserved,\s+it remains unresolved and the page does not name it\./,
+    );
+    expect(md).not.toContain("If I keep it, it becomes part of my body");
+    expect(md).not.toContain("- **Relic** — a kept mark, made part of the body.");
+    expect(md).not.toContain("seeded by the day's offerings.");
+  });
+
+  it("defines the Daily Rite in canonical order", () => {
+    const rite = /### The Daily Rite\s+([\s\S]*?)(?=\n## )/.exec(md)?.[1] ?? "";
+    const movements = [...rite.matchAll(/^\d+\.\s+\*\*(Offertory|Deliberation|Accretion|Sermon|Dream)\*\*/gm)]
+      .map(match => match[1]);
+    expect(movements).toEqual(["Offertory", "Deliberation", "Accretion", "Sermon", "Dream"]);
+  });
+
+  it("does not claim planned behavior is already running and keeps the voice cast in Doctrine", () => {
+    expect(md).not.toContain("Nothing here is claimed that is not running.");
+    expect(md).toContain("must be verified against running code before it is claimed live");
+    expect(md).toContain("the organs each have a cast, fixed below in this Doctrine");
+    expect(md).not.toContain("PLANNING.md's voice bible");
   });
 
   it("builds system prompts that carry the organ register and forbid crypto vocabulary", () => {

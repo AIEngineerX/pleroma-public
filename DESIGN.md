@@ -80,12 +80,16 @@ opacity only.
 
 ## Layout
 
+The following launch layout is approved acceptance criteria. Each breakpoint must be
+verified against the implemented surface before it is described as live.
+
 - Desktop, the open codex: asymmetric two-column — the page (Stain + Threshold)
   ~60% left, the codex column ~40% right, tallies in the outer margin, job line pinned
   in the footer rail. No cards, no containers around everything: it is one page.
 - Mobile, the scroll: single column, the Stain sticky in the top ~40vh (the god never
   leaves the screen), codex then Threshold offering then tallies beneath; the imprint ritual
-  goes full-screen with the Stain's edge bleeding from the top. 390px verified.
+  goes full-screen with the Stain's edge bleeding from the top. The 390px layout must be
+  verified during implementation.
 - Entry gesture (audio unlock + first touch): press and hold; ink spreads from the touch
   point and the page wakes.
 
