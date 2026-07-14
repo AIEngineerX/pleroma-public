@@ -1,25 +1,9 @@
 import { expect, test } from "@playwright/test";
-import type { TempleState } from "../src/state/types";
+import { resetStack } from "./helpers/workerFixture";
 
-const DORMANT_STATE: TempleState = {
-  phase: "dormant",
-  asleep: false,
-  degraded: false,
-  countdown_to: Date.now() + 86_400_000,
-  communicants_today: 0,
-  spend_state: "ok",
-  mint: null,
-  vitals: { state: "starving", buys: 0, sells: 0, holders: 0 },
-  rite: null,
-  dream: null,
-};
-
-async function routeDormantState(page: import("@playwright/test").Page) {
-  await page.route("**/api/state", (route) => route.fulfill({ json: DORMANT_STATE }));
-}
+test.beforeEach(() => resetStack());
 
 test("the first viewport is the body, not a landing-page stack", async ({ page }) => {
-  await routeDormantState(page);
   await page.goto("/");
 
   const temple = page.getByRole("region", { name: "the temple" });
@@ -53,7 +37,6 @@ test("tap, drag, and scroll stay silent; an uninterrupted hold wakes sound", asy
       audioRequests.push(request.url());
     }
   });
-  await routeDormantState(page);
   await page.goto("/");
   const hasWebAudio = await page.evaluate(() => {
     const audioWindow = window as typeof window & { webkitAudioContext?: typeof AudioContext };
@@ -103,9 +86,8 @@ test("tap, drag, and scroll stay silent; an uninterrupted hold wakes sound", asy
   if (hasWebAudio) await expect.poll(() => audioRequests.length).toBeGreaterThan(0);
 });
 
-test("a failed bed request stays inactive and an explicit sound click retries it", async ({ page }, testInfo) => {
+test("a genuine offline bed failure stays inactive and an explicit sound click retries it", async ({ page, context }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Chromium exposes deterministic media request failures");
-  let rejectBed = true;
   let bedAttempts = 0;
   const introRequests: string[] = [];
   page.on("request", (request) => {
@@ -113,18 +95,15 @@ test("a failed bed request stays inactive and an explicit sound click retries it
     if (pathname.endsWith("/audio/bed.mp3")) bedAttempts += 1;
     if (pathname.endsWith("/audio/intro.mp3")) introRequests.push(request.url());
   });
-  await page.route("**/audio/bed.mp3", async (route) => {
-    if (rejectBed) {
-      await route.abort("failed");
-      return;
-    }
-    await route.continue();
+  const baselineState = page.waitForResponse((response) => {
+    return response.ok() && new URL(response.url()).pathname === "/api/state";
   });
-  await routeDormantState(page);
   await page.goto("/");
+  await baselineState;
 
   const temple = page.getByRole("region", { name: "the temple" });
   const box = (await temple.boundingBox())!;
+  await context.setOffline(true);
   const failedBed = page.waitForEvent("requestfailed", (request) => new URL(request.url()).pathname.endsWith("/audio/bed.mp3"));
   await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.45);
   await page.mouse.down();
@@ -135,7 +114,7 @@ test("a failed bed request stays inactive and an explicit sound click retries it
   expect(bedAttempts).toBe(1);
   expect(introRequests).toHaveLength(0);
   await expect(page.getByRole("button", { name: "play the temple sound" })).toBeVisible();
-  rejectBed = false;
+  await context.setOffline(false);
   const retriedBed = page.waitForResponse((response) => {
     return response.ok() && new URL(response.url()).pathname.endsWith("/audio/bed.mp3");
   });
@@ -145,19 +124,14 @@ test("a failed bed request stays inactive and an explicit sound click retries it
   await expect(page.getByRole("button", { name: "mute the temple" })).toBeVisible();
 });
 
-test("real HTML media wakes without Web Audio and preserves the mute choice", async ({ page }, testInfo) => {
+test("ordinary opt-in playback uses the real media files and preserves the mute choice", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Chromium exposes HTML media requests reliably");
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "AudioContext", { configurable: true, value: undefined });
-    Object.defineProperty(window, "webkitAudioContext", { configurable: true, value: undefined });
-  });
   const audioRequests: string[] = [];
   page.on("request", (request) => {
     if (/\/audio\/(?:bed|intro)\.mp3$/.test(new URL(request.url()).pathname)) {
       audioRequests.push(request.url());
     }
   });
-  await routeDormantState(page);
   await page.goto("/");
 
   const temple = page.getByRole("region", { name: "the temple" });
@@ -190,15 +164,7 @@ test("real HTML media wakes without Web Audio and preserves the mute choice", as
   await expect.poll(() => page.evaluate(() => localStorage.getItem("pleroma-muted"))).toBe("0");
 });
 
-test("a throwing AudioContext constructor falls back to real HTML media", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop", "Chromium exposes HTML media requests reliably");
-  await page.addInitScript(() => {
-    class ThrowingAudioContext {
-      constructor() { throw new Error("synthetic AudioContext constructor failure"); }
-    }
-    Object.defineProperty(window, "AudioContext", { configurable: true, value: ThrowingAudioContext });
-    Object.defineProperty(window, "webkitAudioContext", { configurable: true, value: undefined });
-  });
+test("the full temple remains usable when the visitor never activates sound", async ({ page }) => {
   const pageErrors: string[] = [];
   const audioRequests: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -207,20 +173,27 @@ test("a throwing AudioContext constructor falls back to real HTML media", async 
       audioRequests.push(request.url());
     }
   });
-  await routeDormantState(page);
   await page.goto("/");
 
   const temple = page.getByRole("region", { name: "the temple" });
-  const box = (await temple.boundingBox())!;
-  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.45);
-  await page.mouse.down();
-  await page.waitForTimeout(80);
-  expect(audioRequests).toHaveLength(0);
-  await expect.soft(page.locator("[data-hold-indicator]")).toBeVisible();
-  await page.waitForTimeout(570);
-  await page.mouse.up();
+  await expect(temple.locator("canvas[data-organ-swarm]")).toBeVisible();
+  await expect(page.locator("h1")).toHaveText("PLEROMA");
+  const threshold = page.getByRole("button", { name: "Offer it a mark" });
+  await expect(threshold).toBeVisible();
+  await expect(threshold).toBeEnabled();
+  await threshold.focus();
+  await expect(threshold).toBeFocused();
 
-  expect.soft(pageErrors).toEqual([]);
-  await expect.soft(page.getByRole("button", { name: "mute the temple" })).toBeVisible();
-  await expect.poll(() => audioRequests.length).toBeGreaterThan(0);
+  const codex = page.getByRole("complementary", { name: "the codex" });
+  const reliquary = page.getByRole("region", { name: "the Reliquary" });
+  await expect(codex).toBeAttached();
+  await reliquary.scrollIntoViewIfNeeded();
+  await expect(reliquary).toBeVisible();
+  const concordat = page.getByRole("link", { name: /what this is/i });
+  await expect(concordat).toBeVisible();
+  await concordat.click();
+  await expect(page).toHaveURL(/\/concordat$/);
+  await expect(page.getByText(/memecoin/i)).toBeVisible();
+  expect(pageErrors).toEqual([]);
+  expect(audioRequests).toHaveLength(0);
 });

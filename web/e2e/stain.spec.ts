@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { resetStack } from "./helpers/workerFixture";
+
+test.beforeEach(() => resetStack());
+
 test("the Stain renders ink on parchment (one-glance)", async ({ page }) => {
   const webglErrors: string[] = [];
   page.on("console", message => {

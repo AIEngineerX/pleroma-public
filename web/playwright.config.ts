@@ -1,10 +1,28 @@
 import { defineConfig, devices } from "@playwright/test";
-// Screenshots run against the built site served by `vite preview` (port 4173). Specs that need live data
-// spin the local Worker separately (documented per-spec) — the day-6 rehearsal wires the full stack.
+
+const productionGate = process.env.PLEROMA_PRODUCTION_GATE === "1";
+const productionUrl = process.env.PLEROMA_PRODUCTION_URL;
+const productionApiUrl = process.env.PLEROMA_PRODUCTION_API_URL;
+
+if (productionGate && (!productionUrl || !productionApiUrl)) {
+  throw new Error(
+    "PLEROMA_PRODUCTION_URL and PLEROMA_PRODUCTION_API_URL are required when PLEROMA_PRODUCTION_GATE=1",
+  );
+}
+
 export default defineConfig({
   testDir: "./e2e",
-  webServer: { command: "vite preview --port 4173", port: 4173, reuseExistingServer: !process.env.CI },
-  use: { baseURL: "http://localhost:4173" },
+  globalTeardown: productionGate ? undefined : "./e2e/globalTeardown.ts",
+  testMatch: productionGate ? /(?:ignition\.live|launch\.checklist)\.spec\.ts/ : undefined,
+  testIgnore: productionGate ? undefined : ["**/ignition.live.spec.ts", "**/launch.checklist.spec.ts"],
+  webServer: productionGate ? undefined : {
+    command: "node scripts/e2e-stack.mjs",
+    url: "http://localhost:4173/",
+    reuseExistingServer: false,
+    timeout: 180_000,
+  },
+  workers: 1,
+  use: { baseURL: productionGate ? productionUrl : "http://localhost:4173" },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 } } },
     { name: "mobile-390", use: { ...devices["iPhone 13"], viewport: { width: 390, height: 844 } } },

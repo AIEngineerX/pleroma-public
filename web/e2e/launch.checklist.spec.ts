@@ -9,7 +9,8 @@ import AxeBuilder from "@axe-core/playwright";
 // the runbook's job, not this spec's; see docs/runbooks/launch-day7.md for the full checklist this covers.
 test("day-7 gate: live temple, pinned mint, disclaimer reachable, vitals, a11y", async ({ page }) => {
   await page.goto("/");
-  const state = await (await page.request.get("/api/state")).json();
+  const productionApiUrl = process.env.PLEROMA_PRODUCTION_API_URL!;
+  const state = await (await page.request.get(`${productionApiUrl.replace(/\/$/, "")}/api/state`)).json();
   expect(state.phase).toBe("live");                 // organs on schedule, launched
   expect(state.mint).toBeTruthy();                  // mint pinned (anti-decoy single source)
   expect(state.vitals).toBeTruthy();                // vitals live on the real mint

@@ -1,19 +1,23 @@
 import { expect, test } from "@playwright/test";
-import type { TempleState } from "../src/state/types";
+import { TEST_PULSE_MINT } from "../scripts/e2e-stack.mjs";
+import { executeD1, resetStack } from "./helpers/workerFixture";
 
-// No live Worker in this run (see stain.spec.ts/one-glance.spec.ts): a static state fixture served
-// by the preview itself (Step 4's documented alternative), so this runs in the standard commit gate
-// rather than needing a seeded live Worker like the *.live.spec.ts files.
-const MINT = "MintPubkey1111111111111111111111111111111";
-const LIVE_STATE: TempleState = {
-  phase: "live", asleep: false, degraded: false, countdown_to: null, communicants_today: 12,
-  spend_state: "ok", mint: MINT,
-  vitals: { state: "fed", buys: 9, sells: 3, holders: 41 },
-  rite: null, dream: null,
-};
+const MINT = TEST_PULSE_MINT;
+
+test.beforeEach(() => resetStack());
+
+function seedLiveMarket(): void {
+  const now = Date.now();
+  executeD1(`
+    UPDATE config SET value = '1' WHERE key = 'launched';
+    UPDATE config
+       SET value = '{"state":"fed","holders":41,"updated_at":${now}}'
+     WHERE key = 'pulse_state';
+  `);
+}
 
 test("the market rail renders once live: mint pin + copy, buy, ledger-plate chart, ticker, disclaimer", async ({ page }) => {
-  await page.route("**/api/state", (r) => r.fulfill({ json: LIVE_STATE }));
+  seedLiveMarket();
   await page.goto("/");
 
   const market = page.getByRole("region", { name: "the market" });
@@ -46,14 +50,14 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
 });
 
 test("the dormant page has no market rail, only the concordat link and socials", async ({ page }) => {
-  await page.goto("/"); // no route mock: state stays null, same as the other dormant specs
+  await page.goto("/");
   await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: /what this is/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /On X/ })).toBeVisible();
 });
 
 test("no price predictions or returns language appear anywhere on the page", async ({ page }) => {
-  await page.route("**/api/state", (r) => r.fulfill({ json: LIVE_STATE }));
+  seedLiveMarket();
   await page.goto("/");
   await expect(page.getByRole("region", { name: "the market" })).toBeVisible();
   const bodyText = await page.locator("body").innerText();
