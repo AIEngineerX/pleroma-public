@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { gsap } from "gsap";
 import { commonOrganName, formatTranscriptTime } from "../codex/organNames";
 import type { BodyCommand } from "./types";
@@ -8,6 +8,7 @@ const DEVELOP_MS = 450;
 const DWELL_MS = 1_500;
 const SETTLE_MS = 750;
 const REDUCED_DWELL_MS = 1_200;
+const usePresentationEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 export const BODY_UTTERANCE_TOTAL_MS = DEVELOP_MS + DWELL_MS + SETTLE_MS;
 export const BODY_UTTERANCE_DEADLINE_MS = 3_900;
@@ -75,7 +76,7 @@ export default function BodyUtterance({
   const completedId = useRef<string | null>(null);
   completeRef.current = onComplete;
 
-  useEffect(() => {
+  usePresentationEffect(() => {
     if (command === null) return;
     completedId.current = null;
     const node = inkRef.current;

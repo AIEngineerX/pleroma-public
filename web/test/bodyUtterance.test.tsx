@@ -1,5 +1,6 @@
 import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import BodyUtterance, * as bodyUtteranceModule from "../src/experience/BodyUtterance";
 import type { BodyCommand } from "../src/experience/types";
@@ -31,6 +32,11 @@ const RepairBodyUtterance = BodyUtterance as ComponentType<{
   settleDirection: "right" | "down";
   onComplete(id: string): void;
 }>;
+
+const bodyUtteranceSource = readFileSync(
+  new URL("../src/experience/BodyUtterance.tsx", import.meta.url),
+  "utf8",
+);
 
 function command(
   mode: "live" | "memory",
@@ -114,5 +120,12 @@ describe("body utterance", () => {
       .toContain('data-settle-direction="right"');
     expect(renderBody(command("live", "TONGUE", "sermon"), "down"))
       .toContain('data-settle-direction="down"');
+  });
+
+  it("seeks presentation state before browser paint while keeping server rendering passive", () => {
+    expect(bodyUtteranceSource).toContain(
+      'const usePresentationEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;',
+    );
+    expect(bodyUtteranceSource).toContain("usePresentationEffect(() => {");
   });
 });
