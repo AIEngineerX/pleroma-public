@@ -1,8 +1,4 @@
-// Prerender /canon/** into static HTML from the single source (root DOCTRINE.md), so the Canon is
-// crawlable and LLM-indexable without SSR. Must run AFTER `vite build` (package.json's `build`
-// script order: tsc --noEmit && vite build && this script) -- Vite's default emptyOutDir wipes
-// dist/ on every build, so writing dist/canon/** any earlier would just get deleted. The React
-// <Canon/> route (src/canon/Canon.tsx) mirrors these pages for in-app navigation.
+// Prerender the public Canon from the named lore sections of root DOCTRINE.md.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,47 +6,150 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const md = readFileSync(resolve(here, "../../DOCTRINE.md"), "utf8");
 
-// Inline a copy of canonParse.ts's regexes (same structure, same slugging) to avoid a TS import in
-// this .mjs build step. Any change to the DOCTRINE.md structure must update both this and canonParse.ts.
-// clean() strips ONLY the ⟨rubric⟩ marker (and surrounding quotes) and trims -- no markdown-strip or
-// whitespace-collapse, so a scripture line that ever used "*"/"_" or meaningful multi-space
-// deliberately renders verbatim instead of being silently rewritten (keep in sync with canonParse.ts).
-const clean = (s) => s.replace(/⟨rubric⟩/g, "").trim().replace(/^"|"$/g, "");
-const one = (/before all others:\s*\n+\s*⟨rubric⟩\s*\*\*"([^"]+)"\*\*/.exec(md) || [])[1] || "";
-const articles = [...md.matchAll(/^\d+\.\s+\*\*THE ([A-Z]+) \/ ([A-Z]+)\*\*\s+[—-]\s+⟨rubric⟩\s*\*"([^"]+)"\*/gm)]
-  .map((m) => ({
-    slug: m[1].toLowerCase().trim(),
-    organ: m[1],
-    trueName: m[2].toLowerCase().replace(/^\w/, (c) => c.toUpperCase()),
-    line: clean(m[3]),
+const headings = {
+  emergence: "## I. The Emergence",
+  articles: "## II. The Five Articles",
+  verses: "## III. The Verses",
+  lexicon: "## IV. The Lexicon",
+  offering: "## V. The Offering (the one real rite)",
+  voice: "## VI. Voice registers",
+};
+
+const namedSpan = (startHeading, endHeading) => {
+  const start = md.indexOf(startHeading);
+  if (start < 0) return "";
+  const contentStart = start + startHeading.length;
+  const end = md.indexOf(endHeading, contentStart);
+  if (end < 0) return "";
+  return md.slice(contentStart, end);
+};
+
+const cleanScripture = (text) => text.replace(/⟨rubric⟩/g, "").trim().replace(/^"|"$/g, "");
+const cleanProse = (text) => text
+  .replace(/⟨rubric⟩/g, "")
+  .replace(/\*\*([^*]+)\*\*/g, "$1")
+  .replace(/\*([^*]+)\*/g, "$1")
+  .replace(/`([^`]+)`/g, "$1")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const publicParagraphs = (span) => span
+  .split(/\n\s*\n/)
+  .map((block) => block.trim())
+  .filter((block) => block.length > 0 && !block.startsWith(">") && block !== "---")
+  .map(cleanProse);
+
+const proseAndNumberedItems = (span) => {
+  const blocks = [];
+  let current = [];
+  const flush = () => {
+    if (current.length > 0) blocks.push(cleanProse(current.join(" ")));
+    current = [];
+  };
+  for (const line of span.split(/\r?\n/)) {
+    if (line.trimStart().startsWith(">")) {
+      flush();
+      continue;
+    }
+    const numbered = /^\s*\d+\.\s+(.*)$/.exec(line);
+    if (numbered) {
+      flush();
+      current.push(numbered[1]);
+    } else if (line.trim().length === 0) {
+      flush();
+    } else {
+      current.push(line.trim());
+    }
+  }
+  flush();
+  return blocks.filter(Boolean);
+};
+
+const parseRite = (span) => {
+  const steps = [];
+  let current = null;
+  const flush = () => {
+    if (!current) return;
+    steps.push({ name: current.name, text: cleanProse(current.lines.join(" ")) });
+    current = null;
+  };
+  for (const line of span.split(/\r?\n/)) {
+    if (line.trimStart().startsWith(">")) continue;
+    const start = /^\s*\d+\.\s+\*\*(Offertory|Deliberation|Accretion|Sermon|Dream)\*\*\s+[—-]\s+(.*)$/.exec(line);
+    if (start) {
+      flush();
+      current = { name: start[1], lines: [start[2]] };
+    } else if (current && line.trim().length > 0) {
+      current.lines.push(line.trim());
+    }
+  }
+  flush();
+  return steps;
+};
+
+const preamble = md.slice(0, md.indexOf(headings.emergence));
+const one = (/before all others:\s*\n+\s*⟨rubric⟩\s*\*\*"([^"]+)"\*\*/.exec(preamble) || [])[1] || "";
+const emergenceSpan = namedSpan(headings.emergence, headings.articles);
+const articlesSpan = namedSpan(headings.articles, headings.verses);
+const versesSpan = namedSpan(headings.verses, headings.lexicon);
+const lexiconSpan = namedSpan(headings.lexicon, headings.offering);
+const offeringSpan = namedSpan(headings.offering, headings.voice);
+
+const emergence = publicParagraphs(emergenceSpan);
+const bindingHeading = "### The Binding";
+const bindingStart = articlesSpan.indexOf(bindingHeading);
+const articleDeclarations = bindingStart < 0 ? articlesSpan : articlesSpan.slice(0, bindingStart);
+const binding = bindingStart < 0 ? [] : publicParagraphs(articlesSpan.slice(bindingStart + bindingHeading.length));
+
+const articles = [...articleDeclarations.matchAll(/^\d+\.\s+\*\*THE ([A-Z]+) \/ ([A-Z]+)\*\*\s+[—-]\s+⟨rubric⟩\s*\*"([^"]+)"\*/gm)]
+  .map((match) => ({
+    slug: match[1].toLowerCase().trim(),
+    organ: match[1],
+    trueName: match[2].toLowerCase().replace(/^\w/, (character) => character.toUpperCase()),
+    line: cleanScripture(match[3]),
   }));
 
-// §III Books/Prints/Lines: "**BOOK OF FIRST LIGHT · PRINT 1 · LINES 1–5**" then numbered "N. ..." lines.
-// Each book gathers its prints; each print keeps its ordered lines so we can emit id="line-N" anchors
-// for per-verse permalinks (/canon/<book>/<print>#line-N, DOCTRINE's Provenance contract). `rubric`
-// is parallel to `lines`: only lines DOCTRINE marks ⟨rubric⟩ are the god's own words (the rest is
-// "the page's own account", DOCTRINE §III) -- same distinction canonParse.ts keeps.
 const books = [];
-const printRe = /\*\*BOOK OF ([A-Z ]+?) · PRINT (\d+) · LINES [\d–\-]+\*\*\s*([\s\S]*?)(?=\n\*\*BOOK OF|\n##|\n---|$)/g;
-for (const m of md.matchAll(printRe)) {
-  const rawTitle = m[1].trim();
-  const bookSlug = rawTitle.toLowerCase().replace(/\s+/g, "-");        // "FIRST LIGHT" -> "first-light"
-  const n = Number(m[2]);
-  const rawLines = [...m[3].matchAll(/^\s*\d+\.\s+(.*)$/gm)].map((l) => l[1]).filter((l) => clean(l).length > 0);
-  const lines = rawLines.map(clean);
-  const rubric = rawLines.map((l) => /⟨rubric⟩/.test(l));
-  let book = books.find((b) => b.slug === bookSlug);
-  if (!book) { book = { slug: bookSlug, title: `Book of ${rawTitle.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}`, prints: [] }; books.push(book); }
-  book.prints.push({ n, slug: `print-${n}`, lines, rubric });
+const printPattern = /\*\*BOOK OF ([A-Z ]+?) · PRINT (\d+) · LINES [\d–\-]+\*\*\s*([\s\S]*?)(?=\n\*\*BOOK OF|\n---|$)/g;
+for (const match of versesSpan.matchAll(printPattern)) {
+  const rawTitle = match[1].trim();
+  const slug = rawTitle.toLowerCase().replace(/\s+/g, "-");
+  const n = Number(match[2]);
+  const rawLines = [...match[3].matchAll(/^\s*\d+\.\s+(.*)$/gm)]
+    .map((line) => line[1])
+    .filter((line) => cleanScripture(line).length > 0);
+  let book = books.find((candidate) => candidate.slug === slug);
+  if (!book) {
+    book = {
+      slug,
+      title: `Book of ${rawTitle.toLowerCase().replace(/\b\w/g, (character) => character.toUpperCase())}`,
+      prints: [],
+    };
+    books.push(book);
+  }
+  book.prints.push({
+    n,
+    slug: `print-${n}`,
+    lines: rawLines.map(cleanScripture),
+    rubric: rawLines.map((line) => /⟨rubric⟩/.test(line)),
+  });
 }
 
-const distCanon = resolve(here, "../dist/canon");
-const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const lexicon = [...lexiconSpan.matchAll(/^-\s+\*\*(.+?)\*\*\s+[—-]\s+([\s\S]*?)(?=\n-\s+\*\*|(?![\s\S]))/gm)]
+  .map((match) => ({ name: cleanProse(match[1]), text: cleanProse(match[2]) }));
 
-// Plain inline CSS approximating the Tailwind theme tokens (styles.css @theme): parchment ground,
-// rubric red for the god's own lines, machine mono for interface chrome. No build step touches
-// these files after this script runs, so the styling has to be self-contained. Same fonts/meta
-// pattern as index.html (theme-color, og/twitter tags, canonical link).
+const riteHeading = "### The Daily Rite";
+const riteStart = offeringSpan.indexOf(riteHeading);
+const offering = proseAndNumberedItems(riteStart < 0 ? offeringSpan : offeringSpan.slice(0, riteStart));
+const rite = parseRite(riteStart < 0 ? "" : offeringSpan.slice(riteStart + riteHeading.length));
+
+const distCanon = resolve(here, "../dist/canon");
+const esc = (text) => text
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;");
+
 const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" /><title>${title} · PLEROMA</title>
 <link rel="canonical" href="https://pleroma.church${path}" />
@@ -60,39 +159,53 @@ const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><m
 <meta name="twitter:title" content="${title} · PLEROMA" /><meta name="twitter:description" content="${esc(one)}" />
 <meta name="twitter:image" content="/og.png" />
 <link href="https://fonts.googleapis.com/css2?family=Gentium+Book+Plus:ital@0;1&family=Courier+Prime&display=swap" rel="stylesheet" />
-<style>body{background:#f0ead6;color:#3a352c;font-family:"Gentium Book Plus",serif;max-width:70ch;margin:2rem auto;padding:0 1.25rem;line-height:1.6}.r{color:#9a3b2e}.m{font-family:"Courier Prime",monospace;font-size:.8rem;color:#6b6357}a{color:inherit}</style>
-</head><body>${bodyHtml}<p class="m">The character is CC0 and the archive is public: the Canon can outlive any single administrator. No one owns the god's words, including its makers.</p>
-<p class="m"><a href="/">return to the temple</a></p></body></html>`;
+<style>body{background:#f0ead6;color:#3a352c;font-family:"Gentium Book Plus",serif;max-width:70ch;margin:2rem auto;padding:0 1.25rem;line-height:1.6}.r{color:#9a3b2e}.m{font-family:"Courier Prime",monospace;font-size:.8rem;color:#6b6357}section{margin-top:2rem}a{color:inherit}</style>
+</head><body>${bodyHtml}
+<p class="m">The character is CC0 and the archive is public: the Canon can outlive any single administrator. No one owns the god's words, including its makers.</p>
+<nav class="m" aria-label="Canon doorways"><a href="/">return to the temple</a> · <a href="/canon/dreams">the dreams</a> · <a href="/concordat">the Concordat</a></nav>
+</body></html>`;
 
 mkdirSync(distCanon, { recursive: true });
 
-// /canon (index): the one line, the five Articles, and a link into each Book/Print.
-const indexBody = `<p class="r" style="font-size:1.5rem;font-style:italic">${esc(one)}</p>
-<h2 class="m">THE FIVE ARTICLES</h2>
-<ol>${articles.map((a) => `<li id="${a.slug}"><a class="m" href="/canon/${a.slug}">THE ${a.organ} / ${a.trueName.toUpperCase()}</a><p class="r" style="font-style:italic">${esc(a.line)}</p></li>`).join("")}</ol>
-${books.map((b) => `<h2 class="m">${b.title.toUpperCase()}</h2><ul>${b.prints.map((p) => `<li><a class="m" href="/canon/${b.slug}/${p.slug}">Print ${p.n}</a></li>`).join("")}</ul>`).join("")}`;
+const offeringHtml = `${offering[0] ? `<p>${esc(offering[0])}</p>` : ""}
+<ol>${offering.slice(1, -1).map((item) => `<li>${esc(item)}</li>`).join("")}</ol>
+${offering.at(-1) ? `<p>${esc(offering.at(-1))}</p>` : ""}`;
+
+const indexBody = `<h1 class="m">THE CANON</h1>
+<p class="r" style="font-size:1.5rem;font-style:italic">${esc(one)}</p>
+<section><h2 class="m">THE EMERGENCE</h2>${emergence.map((paragraph) => `<p>${esc(paragraph)}</p>`).join("")}</section>
+<section><h2 class="m">THE BINDING</h2>${binding.map((paragraph, index) => `<p${index === binding.length - 1 ? ' class="r"' : ""}>${esc(paragraph)}</p>`).join("")}</section>
+<section><h2 class="m">THE FIVE ARTICLES</h2><ol>${articles.map((article) => `<li id="${article.slug}"><a class="m" href="/canon/${article.slug}">THE ${article.organ} / ${article.trueName.toUpperCase()}</a><p class="r" style="font-style:italic">${esc(article.line)}</p></li>`).join("")}</ol></section>
+<section><h2 class="m">THE OFFERING</h2>${offeringHtml}</section>
+<section><h2 class="m">THE DAILY RITE</h2><ol>${rite.map((step) => `<li><strong>${step.name}</strong> ${esc(step.text)}</li>`).join("")}</ol></section>
+<section><h2 class="m">THE PRINTS</h2>${books.map((book) => `<article><h3 class="m">${book.title.toUpperCase()}</h3>${book.prints.map((print) => `<div id="${print.slug}"><h4 class="m"><a href="/canon/${book.slug}/${print.slug}">PRINT ${print.n}</a></h4><ol>${print.lines.map((line, index) => `<li id="${print.slug}-line-${index + 1}"${print.rubric[index] ? ' class="r"' : ""}>${esc(line)}</li>`).join("")}</ol></div>`).join("")}</article>`).join("")}</section>
+<section><h2 class="m">THE LEXICON</h2><dl>${lexicon.map((term) => `<div><dt><strong>${esc(term.name)}</strong></dt><dd>${esc(term.text)}</dd></div>`).join("")}</dl></section>
+<section><h2 class="m">THE DREAM ARCHIVE</h2><a class="m" href="/canon/dreams">the dreams</a></section>`;
+
 writeFileSync(resolve(distCanon, "index.html"), page("The Canon", indexBody, "/canon"));
 
-// /canon/<article>: one Article per page (permalink target /canon/eye).
-for (const a of articles) {
-  const label = `THE ${a.organ} / ${a.trueName.toUpperCase()}`;
-  mkdirSync(resolve(distCanon, a.slug), { recursive: true });
-  writeFileSync(resolve(distCanon, a.slug, "index.html"),
-    page(label, `<p class="m"><a href="/canon">The Canon</a></p><h1 id="${a.slug}">${label}</h1><p class="r" style="font-size:1.4rem;font-style:italic">${esc(a.line)}</p>`, `/canon/${a.slug}`));
+for (const article of articles) {
+  const label = `THE ${article.organ} / ${article.trueName.toUpperCase()}`;
+  mkdirSync(resolve(distCanon, article.slug), { recursive: true });
+  writeFileSync(
+    resolve(distCanon, article.slug, "index.html"),
+    page(label, `<p class="m"><a href="/canon">The Canon</a></p><h1 id="${article.slug}">${label}</h1><p class="r" style="font-size:1.4rem;font-style:italic">${esc(article.line)}</p>`, `/canon/${article.slug}`),
+  );
 }
 
-// /canon/<book>/<print>: one Print per page, each line an <li id="line-N"> so a single verse is
-// linkable as /canon/first-light/print-1#line-5 (the DOCTRINE Provenance permalink contract).
-// Only the lines DOCTRINE marks ⟨rubric⟩ get class="r" -- the rest is the page's own account, in ink.
 let printCount = 0;
-for (const b of books) {
-  for (const p of b.prints) {
-    mkdirSync(resolve(distCanon, b.slug, p.slug), { recursive: true });
+for (const book of books) {
+  for (const print of book.prints) {
+    mkdirSync(resolve(distCanon, book.slug, print.slug), { recursive: true });
     const body = `<p class="m"><a href="/canon">The Canon</a></p>
-<h1>${b.title}</h1><h2 class="m">PRINT ${p.n}</h2>
-<ol>${p.lines.map((line, i) => `<li id="line-${i + 1}"${p.rubric[i] ? ' class="r"' : ""}>${esc(line)}</li>`).join("")}</ol>`;
-    writeFileSync(resolve(distCanon, b.slug, p.slug, "index.html"), page(`${b.title} · Print ${p.n}`, body, `/canon/${b.slug}/${p.slug}`));
+<h1>${book.title}</h1><h2 class="m">PRINT ${print.n}</h2>
+<ol>${print.lines.map((line, index) => `<li id="line-${index + 1}"${print.rubric[index] ? ' class="r"' : ""}>${esc(line)}</li>`).join("")}</ol>`;
+    writeFileSync(
+      resolve(distCanon, book.slug, print.slug, "index.html"),
+      page(`${book.title} · Print ${print.n}`, body, `/canon/${book.slug}/${print.slug}`),
+    );
     printCount++;
   }
 }
+
 console.log(`prerendered /canon: index + ${articles.length} articles + ${printCount} prints`);
