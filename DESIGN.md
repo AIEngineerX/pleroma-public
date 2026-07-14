@@ -60,8 +60,9 @@ starvation color. No charts; a single Courier telemetry line serves the literal-
   frame, Courier caption (`DREAM 004 · epoch 12 · generative replay`).
 - **Tractor-feed rails** — faint punched margins at the viewport edges; the page is
   continuous-feed, scrolling is advancing the paper.
-- **The rite inversion** — at mass hour the page inverts to rite tokens, offerings rise
-  through the Stain, chosen relics fuse visibly, the sermon prints in bright rubric.
+- **The rite inversion** — at mass hour the page inverts to rite tokens; offerings remain
+  at the Threshold. Only kept relics with confirmed Accretion cross into and visibly fuse
+  with the Stain; the sermon prints in bright rubric.
 
 ## Print-native artifacts (allowed) vs screen effects (banned)
 
