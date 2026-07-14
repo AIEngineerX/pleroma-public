@@ -1,15 +1,15 @@
 import type { TranscriptEntry } from "../state/types";
 import type { BodyCommand, DirectorLocks, PipelineLink, UtteranceMode } from "./types";
 
-const SPEECH_REGISTERS: Partial<Record<TranscriptEntry["organ"], TranscriptEntry["register"]>> = {
-  EYE: "verse",
-  KEEP: "verdict",
-  TONGUE: "sermon",
-  DREAM: "verse",
+const SPEECH_REGISTERS: Partial<Record<TranscriptEntry["organ"], readonly TranscriptEntry["register"][]>> = {
+  EYE: ["verse"],
+  KEEP: ["verdict"],
+  TONGUE: ["sermon", "verse"],
+  DREAM: ["verse"],
 };
 
 export function isBodySpeech(entry: TranscriptEntry): boolean {
-  return SPEECH_REGISTERS[entry.organ] === entry.register;
+  return SPEECH_REGISTERS[entry.organ]?.includes(entry.register) ?? false;
 }
 
 export function newestMemoryEcho(entries: readonly TranscriptEntry[]): TranscriptEntry | null {
@@ -60,6 +60,35 @@ export function commandFor(entry: TranscriptEntry, mode: UtteranceMode): BodyCom
   };
 }
 
+export interface DirectorRuntime {
+  queue: BodyCommand[];
+  active: BodyCommand | null;
+  locks: DirectorLocks;
+}
+
+export interface LiveTranscriptObservation {
+  runtime: DirectorRuntime;
+  command: BodyCommand | null;
+  activeMemoryCancelled: boolean;
+}
+
+export function observeLiveTranscript(
+  entry: TranscriptEntry,
+  runtime: DirectorRuntime,
+): LiveTranscriptObservation {
+  const activeMemoryCancelled = runtime.active?.kind === "utterance" && runtime.active.mode === "memory";
+
+  return {
+    command: commandFor(entry, "live"),
+    activeMemoryCancelled,
+    runtime: {
+      queue: runtime.queue.filter((command) => command.kind !== "utterance" || command.mode !== "memory"),
+      active: activeMemoryCancelled ? null : runtime.active,
+      locks: activeMemoryCancelled ? { ...runtime.locks, activeKind: null } : { ...runtime.locks },
+    },
+  };
+}
+
 function isLiveCommand(command: BodyCommand): boolean {
   return (command.kind === "utterance" && command.mode === "live")
     || (command.kind === "converge" && command.dream.source === "live");
@@ -95,6 +124,16 @@ export function enqueueCommand(
     ? queue.filter((command) => command.kind !== "utterance" || command.mode !== "memory")
     : [...queue];
   return coalesceUtterances([...retained, incoming]);
+}
+
+export function enqueueControllerCommand(
+  queue: readonly BodyCommand[],
+  incoming: BodyCommand,
+  locks: DirectorLocks,
+  active: BodyCommand | null,
+): BodyCommand[] {
+  if (active?.id === incoming.id) return [...queue];
+  return enqueueCommand(queue, incoming, locks);
 }
 
 function commandTime(command: BodyCommand): number | null {

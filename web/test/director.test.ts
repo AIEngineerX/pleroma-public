@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   commandFor,
+  enqueueControllerCommand,
   enqueueCommand,
   isBodySpeech,
   newestMemoryEcho,
   nextCommand,
+  observeLiveTranscript,
 } from "../src/experience/director";
 import type {
   AccretedRelic,
@@ -19,11 +21,14 @@ import type {
 import {
   accretionAwaitsInkBeforeDream,
   commandRequiresRelicRefresh,
+  createTempleSourceReset,
   createVitalsFreshness,
   isAccretedRelic,
   pollResultIsCurrent,
   recordVitalsFailure,
   recordVitalsSuccess,
+  reduceRelicPageTruth,
+  relicRefreshBlocksDream,
   requiresFastRelicPoll,
   settlePoll,
   shouldPoll,
@@ -75,10 +80,11 @@ describe("experience director transcript truth", () => {
     expect(utterance(commandFor(e("eye", 1, "EYE", "verse"), "live")).pipeline).toBe("eye-keep");
     expect(utterance(commandFor(e("keep", 2, "KEEP", "verdict"), "memory")).pipeline).toBe("none");
     expect(utterance(commandFor(e("tongue", 3, "TONGUE", "sermon"), "live")).intensity).toBe(1);
-    expect(commandFor(e("pulse", 4, "PULSE", "telemetry"), "live")).toBeNull();
-    expect(commandFor(e("priest", 5, "PRIEST", "system"), "live")).toBeNull();
-    expect(commandFor(e("dream-memory", 6, "DREAM", "verse", "2030-01-01"), "memory")?.kind).toBe("utterance");
-    expect(commandFor(e("dream-live", 7, "DREAM", "verse", "2030-01-01"), "live")?.kind).toBe("converge");
+    expect(commandFor(e("tongue-verse", 4, "TONGUE", "verse"), "live")?.kind).toBe("utterance");
+    expect(commandFor(e("pulse", 5, "PULSE", "telemetry"), "live")).toBeNull();
+    expect(commandFor(e("priest", 6, "PRIEST", "system"), "live")).toBeNull();
+    expect(commandFor(e("dream-memory", 7, "DREAM", "verse", "2030-01-01"), "memory")?.kind).toBe("utterance");
+    expect(commandFor(e("dream-live", 8, "DREAM", "verse", "2030-01-01"), "live")?.kind).toBe("converge");
   });
 
   it("uses memory intensity and requires a rite for live DREAM convergence", () => {
@@ -160,6 +166,52 @@ describe("experience director queue", () => {
     expect(accretionAwaitsInkBeforeDream(relic, [dream], ink)).toBe(false);
     queue = enqueueCommand(queue, accrete, waiting);
     expect(nextCommand(queue, { ...waiting, arrival: false })).toBe(accrete);
+  });
+
+  it("keeps a pre-baseline DREAM blocked only while matching accreted ink is missing", () => {
+    const riteDate = "2030-01-01";
+    const dream = required(commandFor(e("dream", 20, "DREAM", "verse", riteDate), "live"));
+    const relic: AccretedRelic = {
+      id: "relic",
+      offering_id: "offering",
+      wallet: null,
+      summary: "same rite",
+      rite_id: riteDate,
+      kept_at: 10,
+      genesis: 0,
+      accreted_at: 21,
+    };
+    const ink: RelicInkSample = { offeringId: "offering", size: 64, alpha: new Uint8Array(64 * 64) };
+    expect(relicRefreshBlocksDream([dream], [relic], [])).toBe(true);
+    expect(relicRefreshBlocksDream([dream], [relic], [ink])).toBe(false);
+    expect(relicRefreshBlocksDream([dream], [{ ...relic, accreted_at: null }], [])).toBe(false);
+  });
+
+  it("cancels queued and active memory for every genuine live row before command mapping", () => {
+    const memory = utterance(commandFor(e("memory", 1, "EYE", "verse"), "memory"));
+    const runtime = {
+      queue: [memory],
+      active: memory,
+      locks: { ...unlocked, activeKind: "utterance" as const },
+    };
+    for (const row of [e("pulse", 2, "PULSE", "telemetry"), e("priest", 3, "PRIEST", "system")]) {
+      const observed = observeLiveTranscript(row, runtime);
+      expect(observed.command).toBeNull();
+      expect(observed.runtime.queue).toEqual([]);
+      expect(observed.runtime.active).toBeNull();
+      expect(observed.runtime.locks.activeKind).toBeNull();
+      expect(observed.activeMemoryCancelled).toBe(true);
+    }
+  });
+
+  it("does not queue an incoming command whose ID is already active", () => {
+    const replay: BodyCommand = {
+      id: "converge:replay:dream:100",
+      kind: "converge",
+      dream: { id: "dream", riteDate: "2030-01-01", narrative: "again", createdAt: 100, source: "replay" },
+    };
+    expect(enqueueControllerCommand([], replay, { ...unlocked, activeKind: "converge" }, replay)).toEqual([]);
+    expect(enqueueControllerCommand([], replay, unlocked, null)).toEqual([replay]);
   });
 
   it("coalesces more than five queued utterances to the newest one per organ", () => {
@@ -262,6 +314,52 @@ describe("controller polling truth", () => {
     };
     expect(isAccretedRelic(kept)).toBe(false);
     expect(isAccretedRelic({ ...kept, accreted_at: 200 })).toBe(true);
+  });
+
+  it("reduces Relic and receipt truth without waiting for ink sampling", () => {
+    const pending: OfferingReceipt = {
+      offeringId: "offering",
+      submittedAt: 100,
+      stage: "pending",
+      eyeTranscriptId: null,
+      keepTranscriptId: null,
+      relicId: null,
+      accretedAt: null,
+    };
+    const accreted: RelicEntry = {
+      id: "relic",
+      offering_id: "offering",
+      wallet: null,
+      summary: "truth first",
+      rite_id: "2030-01-01",
+      kept_at: 200,
+      genesis: 0,
+      accreted_at: 300,
+    };
+    const truth = reduceRelicPageTruth([], [accreted], [pending], []);
+    expect(truth.relics).toEqual([accreted]);
+    expect(truth.receipts[0]).toMatchObject({ stage: "accreted", relicId: "relic", accretedAt: 300 });
+  });
+
+  it("creates a complete source reset and advances every generation", () => {
+    const reset = createTempleSourceReset({ state: 4, codex: 7, relic: 11 });
+    expect(reset.generations).toEqual({ state: 5, codex: 8, relic: 12 });
+    expect(reset.state).toBeNull();
+    expect(reset.vitalsFreshness).toEqual({ feed: { kind: "unknown" }, consecutiveFailures: 0 });
+    expect(reset.codex).toEqual([]);
+    expect(reset.relics).toEqual([]);
+    expect(reset.relicMemory).toEqual([]);
+    expect(reset.activeCommand).toBeNull();
+    expect(reset.replayWitness).toBeNull();
+    expect(reset.riteActive).toBe(false);
+    expect(reset.codexBaseline).toBe(false);
+    expect(reset.relicBaseline).toBe(false);
+    expect(reset.seenCodexIds.size).toBe(0);
+    expect(reset.relicAccretions.size).toBe(0);
+    expect(reset.inkByOffering.size).toBe(0);
+    expect(reset.queue).toEqual([]);
+    expect(reset.locks).toEqual({ arrival: true, threshold: false, activeKind: null });
+    expect(reset.dreamRelicBarrier).toBe(false);
   });
 
   it("carries a complete DREAM cue shape for replay and convergence", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadReceipts, reconcileReceipt, saveReceipts } from "../src/experience/receipts";
+import { loadReceipts, loadReceiptsSafely, reconcileReceipt, saveReceipts } from "../src/experience/receipts";
 import type { OfferingReceipt } from "../src/experience/types";
 import type { RelicEntry, TranscriptEntry } from "../src/state/types";
 
@@ -87,6 +87,12 @@ describe("offering receipt persistence", () => {
     expect(loadReceipts(storage)).toEqual([]);
     storage.setItem(STORAGE_KEY, JSON.stringify({ offeringId: "not-an-array" }));
     expect(loadReceipts(storage)).toEqual([]);
+  });
+
+  it("falls back to memory when the localStorage getter is denied", () => {
+    expect(loadReceiptsSafely(() => {
+      throw new Error("storage denied");
+    })).toEqual([]);
   });
 
   it("saves only the newest twenty under the versioned storage key", () => {

@@ -45,6 +45,14 @@ export function loadReceipts(storage: Pick<Storage, "getItem">): OfferingReceipt
   }
 }
 
+export function loadReceiptsSafely(getStorage: () => Pick<Storage, "getItem">): OfferingReceipt[] {
+  try {
+    return loadReceipts(getStorage());
+  } catch {
+    return [];
+  }
+}
+
 export function saveReceipts(
   storage: Pick<Storage, "setItem">,
   receipts: readonly OfferingReceipt[],
