@@ -8,6 +8,9 @@ const forbidden = [
   "Reply with ONLY a JSON object",
   "doctrineFingerprint",
   "render_request_id",
+  "Finalization note",
+  "Voice registers",
+  "Provenance",
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));

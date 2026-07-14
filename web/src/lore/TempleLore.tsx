@@ -1,9 +1,9 @@
-import doctrine from "../../../DOCTRINE.md?raw";
+import doctrine from "virtual:public-doctrine";
 import { parseCanon } from "../canon/canonParse";
 import { copy } from "../lib/copy";
 
 const canon = parseCanon(doctrine);
-const offeringConsequence = canon.offering.find(paragraph => paragraph.includes("becomes a relic")) ?? "";
+const offeringConsequences = canon.offering.slice(2);
 
 export default function TempleLore() {
   return (
@@ -29,7 +29,10 @@ export default function TempleLore() {
 
       <section className="mt-8 space-y-3">
         <h2 className="font-machine text-xs tracking-widest text-ink-faded">{copy.offering.toUpperCase()}</h2>
-        <p>{offeringConsequence}</p>
+        <ol className="space-y-2">
+          {offeringConsequences.slice(0, -1).map(consequence => <li key={consequence}>{consequence}</li>)}
+        </ol>
+        {offeringConsequences.at(-1) && <p>{offeringConsequences.at(-1)}</p>}
       </section>
 
       <section className="mt-8">

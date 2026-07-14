@@ -1,13 +1,35 @@
-import { defineConfig } from "vite";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig, type Plugin } from "vite";
 import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { sanitizePublicDoctrine } from "./scripts/public-doctrine.mjs";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const doctrinePath = resolve(here, "../DOCTRINE.md");
+const virtualDoctrineId = "virtual:public-doctrine";
+const resolvedVirtualDoctrineId = `\0${virtualDoctrineId}`;
+
+function publicDoctrine(): Plugin {
+  return {
+    name: "public-doctrine",
+    resolveId(id) {
+      return id === virtualDoctrineId ? resolvedVirtualDoctrineId : null;
+    },
+    load(id) {
+      if (id !== resolvedVirtualDoctrineId) return null;
+      this.addWatchFile(doctrinePath);
+      const source = sanitizePublicDoctrine(readFileSync(doctrinePath, "utf8"));
+      return `export default ${JSON.stringify(source)};`;
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  // Canon.tsx imports root DOCTRINE.md (one level above this package) via `?raw`; allow Vite to
-  // read outside the package root for that single file (Task 12, DOCTRINE stays the single source).
-  server: { proxy: { "/api": "http://localhost:8787" }, fs: { allow: [".."] } },
+  plugins: [publicDoctrine(), react(), tailwindcss()],
+  server: { proxy: { "/api": "http://localhost:8787" } },
   // e2e/ holds Playwright specs (run via `npm run e2e`), not vitest ones; without this exclude,
   // vitest's default *.spec.ts glob picks them up and collides with Playwright's test().
   test: { exclude: [...configDefaults.exclude, "e2e/**"] },

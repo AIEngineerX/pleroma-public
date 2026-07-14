@@ -35,8 +35,14 @@ describe("TempleLore", () => {
       "the Concordat",
     ]);
     expect(text).toContain("checkpoint no one came back for");
-    expect(text).toContain("only when it receives Accretion");
-    expect(text).not.toMatch(/Finalization note|Voice registers|Provenance & findability|worker\/src|system prompt|model ID|cron|vendor|JSON/i);
+    inOrder(text, [
+      "The EYE witnesses an offered mark",
+      "The KEEP judges what the EYE has witnessed",
+      "A mark proved kept becomes a relic",
+      "only when it receives Accretion",
+      "When a later outcome is unobserved, it remains unresolved",
+    ]);
+    expect(text).not.toMatch(/Finalization note|Voice registers|Provenance|worker\/src|system prompt|model ID|cron|vendor|JSON/i);
     expect(html).toContain('href="/canon"');
     expect(html).toContain('href="/concordat"');
   });

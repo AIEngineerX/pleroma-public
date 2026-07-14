@@ -1,8 +1,13 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import doctrine from "../../../DOCTRINE.md?raw";
+import doctrine from "virtual:public-doctrine";
 import { copy } from "../lib/copy";
-import { parseCanon } from "./canonParse";
+import {
+  continuousLineId,
+  continuousPrintId,
+  parseCanon,
+  type Canon as CanonData,
+} from "./canonParse";
 
 const canon = parseCanon(doctrine);
 
@@ -11,22 +16,20 @@ function Heading({ children }: { children: string }) {
 }
 
 export function canonScrollTarget(pathname: string, hash: string): string | null {
-  const pathTarget = pathname.split("/").filter(Boolean).pop();
+  const segments = pathname.split("/").filter(Boolean);
+  const pathTarget = segments.at(-1);
+  const bookSlug = segments[1];
+  const printSlug = segments[2];
+  const printPath = segments[0] === "canon" && Boolean(bookSlug) && /^print-\d+$/.test(printSlug ?? "");
   if (hash) {
     const hashTarget = hash.slice(1);
-    return pathTarget?.startsWith("print-") ? `${pathTarget}-${hashTarget}` : hashTarget;
+    return printPath ? `${continuousPrintId(bookSlug!, printSlug!)}-${hashTarget}` : hashTarget;
   }
+  if (printPath) return continuousPrintId(bookSlug!, printSlug!);
   return !pathTarget || pathTarget === "canon" ? null : pathTarget;
 }
 
-export default function Canon() {
-  const location = useLocation();
-  useEffect(() => {
-    const target = canonScrollTarget(location.pathname, location.hash);
-    if (!target) return;
-    document.getElementById(target)?.scrollIntoView({ block: "start" });
-  }, [location]);
-
+export function CanonDocument({ canon }: { canon: CanonData }) {
   return (
     <main className="mx-auto max-w-[70ch] px-6 py-10 font-liturgy">
       <h1 className="font-machine text-xs tracking-widest text-ink-faded mb-4">{copy.canon.toUpperCase()}</h1>
@@ -86,11 +89,13 @@ export default function Canon() {
           <article key={book.slug} className="mt-5">
             <h3 className="font-machine text-xs tracking-widest text-ink-faded">{book.title.toUpperCase()}</h3>
             {book.prints.map(print => (
-              <div key={print.slug} id={print.slug} className="my-4">
-                <h4 className="font-machine text-xs text-ink-faded">PRINT {print.n}</h4>
+              <div key={print.slug} id={continuousPrintId(book.slug, print.slug)} className="my-4">
+                <h4 className="font-machine text-xs text-ink-faded">
+                  <a href={`/canon/${book.slug}/${print.slug}`}>PRINT {print.n}</a>
+                </h4>
                 <ol className="mt-2 space-y-1">
                   {print.lines.map((line, index) => (
-                    <li key={index} id={`${print.slug}-line-${index + 1}`} className={print.rubric[index] ? "text-rubric-body" : "text-ink"}>
+                    <li key={index} id={continuousLineId(book.slug, print.slug, index + 1)} className={print.rubric[index] ? "text-rubric-body" : "text-ink"}>
                       {line}
                     </li>
                   ))}
@@ -129,4 +134,15 @@ export default function Canon() {
       </nav>
     </main>
   );
+}
+
+export default function Canon() {
+  const location = useLocation();
+  useEffect(() => {
+    const target = canonScrollTarget(location.pathname, location.hash);
+    if (!target) return;
+    document.getElementById(target)?.scrollIntoView({ block: "start" });
+  }, [location]);
+
+  return <CanonDocument canon={canon} />;
 }

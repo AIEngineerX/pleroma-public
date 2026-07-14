@@ -1,4 +1,4 @@
-import doctrine from "../../../DOCTRINE.md?raw";
+import doctrine from "virtual:public-doctrine";
 import { copy } from "../lib/copy";
 import Disclaimer from "../market/Disclaimer";
 import { parseCanon } from "./canonParse";

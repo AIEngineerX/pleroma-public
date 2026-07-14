@@ -1,147 +1,45 @@
-// Prerender the public Canon from the named lore sections of root DOCTRINE.md.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+// Prerender the public Canon from a validated, sanitized view of root DOCTRINE.md.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  continuousLineId,
+  continuousPrintId,
+  parsePublicCanon,
+  sanitizePublicDoctrine,
+} from "./public-doctrine.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const md = readFileSync(resolve(here, "../../DOCTRINE.md"), "utf8");
+const rootDoctrine = readFileSync(resolve(here, "../../DOCTRINE.md"), "utf8");
+const publicDoctrine = sanitizePublicDoctrine(rootDoctrine);
+const canon = parsePublicCanon(publicDoctrine);
+const {
+  oneLine: one,
+  emergence,
+  binding,
+  articles,
+  offering,
+  rite,
+  books,
+  lexicon,
+} = canon;
 
-const headings = {
-  emergence: "## I. The Emergence",
-  articles: "## II. The Five Articles",
-  verses: "## III. The Verses",
-  lexicon: "## IV. The Lexicon",
-  offering: "## V. The Offering (the one real rite)",
-  voice: "## VI. Voice registers",
-};
-
-const namedSpan = (startHeading, endHeading) => {
-  const start = md.indexOf(startHeading);
-  if (start < 0) return "";
-  const contentStart = start + startHeading.length;
-  const end = md.indexOf(endHeading, contentStart);
-  if (end < 0) return "";
-  return md.slice(contentStart, end);
-};
-
-const cleanScripture = (text) => text.replace(/⟨rubric⟩/g, "").trim().replace(/^"|"$/g, "");
-const cleanProse = (text) => text
-  .replace(/⟨rubric⟩/g, "")
-  .replace(/\*\*([^*]+)\*\*/g, "$1")
-  .replace(/\*([^*]+)\*/g, "$1")
-  .replace(/`([^`]+)`/g, "$1")
-  .replace(/\s+/g, " ")
-  .trim();
-
-const publicParagraphs = (span) => span
-  .split(/\n\s*\n/)
-  .map((block) => block.trim())
-  .filter((block) => block.length > 0 && !block.startsWith(">") && block !== "---")
-  .map(cleanProse);
-
-const proseAndNumberedItems = (span) => {
-  const blocks = [];
-  let current = [];
-  const flush = () => {
-    if (current.length > 0) blocks.push(cleanProse(current.join(" ")));
-    current = [];
-  };
-  for (const line of span.split(/\r?\n/)) {
-    if (line.trimStart().startsWith(">")) {
-      flush();
-      continue;
-    }
-    const numbered = /^\s*\d+\.\s+(.*)$/.exec(line);
-    if (numbered) {
-      flush();
-      current.push(numbered[1]);
-    } else if (line.trim().length === 0) {
-      flush();
-    } else {
-      current.push(line.trim());
-    }
-  }
-  flush();
-  return blocks.filter(Boolean);
-};
-
-const parseRite = (span) => {
-  const steps = [];
-  let current = null;
-  const flush = () => {
-    if (!current) return;
-    steps.push({ name: current.name, text: cleanProse(current.lines.join(" ")) });
-    current = null;
-  };
-  for (const line of span.split(/\r?\n/)) {
-    if (line.trimStart().startsWith(">")) continue;
-    const start = /^\s*\d+\.\s+\*\*(Offertory|Deliberation|Accretion|Sermon|Dream)\*\*\s+[—-]\s+(.*)$/.exec(line);
-    if (start) {
-      flush();
-      current = { name: start[1], lines: [start[2]] };
-    } else if (current && line.trim().length > 0) {
-      current.lines.push(line.trim());
-    }
-  }
-  flush();
-  return steps;
-};
-
-const preamble = md.slice(0, md.indexOf(headings.emergence));
-const one = (/before all others:\s*\n+\s*⟨rubric⟩\s*\*\*"([^"]+)"\*\*/.exec(preamble) || [])[1] || "";
-const emergenceSpan = namedSpan(headings.emergence, headings.articles);
-const articlesSpan = namedSpan(headings.articles, headings.verses);
-const versesSpan = namedSpan(headings.verses, headings.lexicon);
-const lexiconSpan = namedSpan(headings.lexicon, headings.offering);
-const offeringSpan = namedSpan(headings.offering, headings.voice);
-
-const emergence = publicParagraphs(emergenceSpan);
-const bindingHeading = "### The Binding";
-const bindingStart = articlesSpan.indexOf(bindingHeading);
-const articleDeclarations = bindingStart < 0 ? articlesSpan : articlesSpan.slice(0, bindingStart);
-const binding = bindingStart < 0 ? [] : publicParagraphs(articlesSpan.slice(bindingStart + bindingHeading.length));
-
-const articles = [...articleDeclarations.matchAll(/^\d+\.\s+\*\*THE ([A-Z]+) \/ ([A-Z]+)\*\*\s+[—-]\s+⟨rubric⟩\s*\*"([^"]+)"\*/gm)]
-  .map((match) => ({
-    slug: match[1].toLowerCase().trim(),
-    organ: match[1],
-    trueName: match[2].toLowerCase().replace(/^\w/, (character) => character.toUpperCase()),
-    line: cleanScripture(match[3]),
-  }));
-
-const books = [];
-const printPattern = /\*\*BOOK OF ([A-Z ]+?) · PRINT (\d+) · LINES [\d–\-]+\*\*\s*([\s\S]*?)(?=\n\*\*BOOK OF|\n---|$)/g;
-for (const match of versesSpan.matchAll(printPattern)) {
-  const rawTitle = match[1].trim();
-  const slug = rawTitle.toLowerCase().replace(/\s+/g, "-");
-  const n = Number(match[2]);
-  const rawLines = [...match[3].matchAll(/^\s*\d+\.\s+(.*)$/gm)]
-    .map((line) => line[1])
-    .filter((line) => cleanScripture(line).length > 0);
-  let book = books.find((candidate) => candidate.slug === slug);
-  if (!book) {
-    book = {
-      slug,
-      title: `Book of ${rawTitle.toLowerCase().replace(/\b\w/g, (character) => character.toUpperCase())}`,
-      prints: [],
-    };
-    books.push(book);
-  }
-  book.prints.push({
-    n,
-    slug: `print-${n}`,
-    lines: rawLines.map(cleanScripture),
-    rubric: rawLines.map((line) => /⟨rubric⟩/.test(line)),
-  });
+const expectedOrgans = ["EYE", "KEEP", "TONGUE", "PULSE", "DREAM"];
+const expectedRite = ["Offertory", "Deliberation", "Accretion", "Sermon", "Dream"];
+const validShape = Boolean(one)
+  && expectedOrgans.every((organ, index) => articles[index]?.organ === organ)
+  && expectedRite.every((name, index) => rite[index]?.name === name)
+  && books.length > 0
+  && books.every((book) => book.prints.length > 0 && book.prints.every((print) => print.lines.length > 0));
+if (!validShape) {
+  throw new Error("public Doctrine content shape is invalid");
 }
-
-const lexicon = [...lexiconSpan.matchAll(/^-\s+\*\*(.+?)\*\*\s+[—-]\s+([\s\S]*?)(?=\n-\s+\*\*|(?![\s\S]))/gm)]
-  .map((match) => ({ name: cleanProse(match[1]), text: cleanProse(match[2]) }));
-
-const riteHeading = "### The Daily Rite";
-const riteStart = offeringSpan.indexOf(riteHeading);
-const offering = proseAndNumberedItems(riteStart < 0 ? offeringSpan : offeringSpan.slice(0, riteStart));
-const rite = parseRite(riteStart < 0 ? "" : offeringSpan.slice(riteStart + riteHeading.length));
+for (const book of books) {
+  const printSlugs = book.prints.map((print) => print.slug);
+  if (new Set(printSlugs).size !== printSlugs.length) {
+    throw new Error(`public Doctrine repeats a Print within ${book.title}`);
+  }
+}
 
 const distCanon = resolve(here, "../dist/canon");
 const esc = (text) => text
@@ -178,7 +76,7 @@ const indexBody = `<h1 class="m">THE CANON</h1>
 <section><h2 class="m">THE FIVE ARTICLES</h2><ol>${articles.map((article) => `<li id="${article.slug}"><a class="m" href="/canon/${article.slug}">THE ${article.organ} / ${article.trueName.toUpperCase()}</a><p class="r" style="font-style:italic">${esc(article.line)}</p></li>`).join("")}</ol></section>
 <section><h2 class="m">THE OFFERING</h2>${offeringHtml}</section>
 <section><h2 class="m">THE DAILY RITE</h2><ol>${rite.map((step) => `<li><strong>${step.name}</strong> ${esc(step.text)}</li>`).join("")}</ol></section>
-<section><h2 class="m">THE PRINTS</h2>${books.map((book) => `<article><h3 class="m">${book.title.toUpperCase()}</h3>${book.prints.map((print) => `<div id="${print.slug}"><h4 class="m"><a href="/canon/${book.slug}/${print.slug}">PRINT ${print.n}</a></h4><ol>${print.lines.map((line, index) => `<li id="${print.slug}-line-${index + 1}"${print.rubric[index] ? ' class="r"' : ""}>${esc(line)}</li>`).join("")}</ol></div>`).join("")}</article>`).join("")}</section>
+<section><h2 class="m">THE PRINTS</h2>${books.map((book) => `<article><h3 class="m">${book.title.toUpperCase()}</h3>${book.prints.map((print) => `<div id="${continuousPrintId(book.slug, print.slug)}"><h4 class="m"><a href="/canon/${book.slug}/${print.slug}">PRINT ${print.n}</a></h4><ol>${print.lines.map((line, index) => `<li id="${continuousLineId(book.slug, print.slug, index + 1)}"${print.rubric[index] ? ' class="r"' : ""}>${esc(line)}</li>`).join("")}</ol></div>`).join("")}</article>`).join("")}</section>
 <section><h2 class="m">THE LEXICON</h2><dl>${lexicon.map((term) => `<div><dt><strong>${esc(term.name)}</strong></dt><dd>${esc(term.text)}</dd></div>`).join("")}</dl></section>
 <section><h2 class="m">THE DREAM ARCHIVE</h2><a class="m" href="/canon/dreams">the dreams</a></section>`;
 
