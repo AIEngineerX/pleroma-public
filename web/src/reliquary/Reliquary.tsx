@@ -1,19 +1,12 @@
-import { useEffect, useState } from "react";
 import type { RelicEntry } from "../state/types";
-import { fetchRelics, relicIsGenesis } from "./readClient";
+import { relicIsGenesis } from "./readClient";
 import { copy } from "../lib/copy";
 
 // The Corpus made visible: kept relics with their EYE summary and, for the offering that earned
 // them a place, their actual mark via /api/img (Task 2, KEPT-ONLY — a relic IS a kept offering,
 // so its offering_id always resolves). Genesis relics (Day-1 First Corpus) carry a permanent mark.
-export default function Reliquary({ apiBase, className = "" }: { apiBase: string; className?: string }) {
-  const [relics, setRelics] = useState<RelicEntry[]>([]);
-  useEffect(() => {
-    let stopped = false;
-    fetchRelics(apiBase, null).then(r => { if (!stopped) setRelics(r.entries); }).catch(() => {});
-    return () => { stopped = true; };
-  }, [apiBase]);
-
+export default function Reliquary({ apiBase, relics, className = "" }:
+  { apiBase: string; relics: readonly RelicEntry[]; className?: string }) {
   return (
     <section aria-label="the Reliquary" className={`grid grid-cols-2 md:grid-cols-3 gap-3 ${className}`}>
       {relics.map(r => (

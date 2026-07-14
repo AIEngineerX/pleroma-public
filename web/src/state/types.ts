@@ -23,3 +23,71 @@ export interface RelicEntry {
   rite_id: string | null; kept_at: number; genesis: number; accreted_at: number | null;
 }
 export interface Tally { wallet: string; count: number; name: string | null }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+export function isVitals(value: unknown): value is Vitals {
+  if (!isRecord(value)) return false;
+  return ["starving", "calm", "fed", "feasting"].includes(String(value.state))
+    && isFiniteNumber(value.buys)
+    && isFiniteNumber(value.sells)
+    && isFiniteNumber(value.holders);
+}
+
+export function isTempleState(value: unknown): value is TempleState {
+  if (!isRecord(value)) return false;
+  const rite = value.rite;
+  const dream = value.dream;
+  const validRite = rite === null || (isRecord(rite)
+    && typeof rite.date === "string"
+    && ["scheduled", "offertory_close", "deliberation", "accretion", "sermon", "complete", "failed"].includes(String(rite.phase)));
+  const validDream = dream === null || (isRecord(dream)
+    && typeof dream.narrative === "string"
+    && isNullableString(dream.video_key)
+    && Array.isArray(dream.wakers)
+    && dream.wakers.every((waker) => typeof waker === "string")
+    && isFiniteNumber(dream.created_at));
+  return (value.phase === "dormant" || value.phase === "live")
+    && typeof value.asleep === "boolean"
+    && typeof value.degraded === "boolean"
+    && (value.countdown_to === null || isFiniteNumber(value.countdown_to))
+    && isFiniteNumber(value.communicants_today)
+    && (value.spend_state === "ok" || value.spend_state === "asleep")
+    && isNullableString(value.mint)
+    && isVitals(value.vitals)
+    && validRite
+    && validDream;
+}
+
+export function isTranscriptEntry(value: unknown): value is TranscriptEntry {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string"
+    && ["EYE", "KEEP", "TONGUE", "PULSE", "DREAM", "PRIEST"].includes(String(value.organ))
+    && ["verse", "verdict", "sermon", "telemetry", "system"].includes(String(value.register))
+    && typeof value.text === "string"
+    && isNullableString(value.offering_id)
+    && isNullableString(value.rite_id)
+    && isFiniteNumber(value.created_at);
+}
+
+export function isRelicEntry(value: unknown): value is RelicEntry {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string"
+    && typeof value.offering_id === "string"
+    && isNullableString(value.wallet)
+    && typeof value.summary === "string"
+    && isNullableString(value.rite_id)
+    && isFiniteNumber(value.kept_at)
+    && isFiniteNumber(value.genesis)
+    && (value.accreted_at === null || isFiniteNumber(value.accreted_at));
+}

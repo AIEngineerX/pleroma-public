@@ -4,15 +4,15 @@ import { useEntryGesture } from "../App";
 import MuteToggle from "../lib/MuteToggle";
 import Stain from "../stain/Stain";
 import type { StainSim } from "../stain/stainSim";
-import type { SwarmSignalTarget } from "../stain/swarmSignals";
+import { isSwarmOrgan, type SwarmSignalTarget } from "../stain/swarmSignals";
 import Codex from "../codex/Codex";
-import type { CodexOrganSignal } from "../codex/codexClient";
+import { isGodVoice } from "../codex/codexClient";
 import OfferingCanvas from "../offering/OfferingCanvas";
 import OfferingRite from "../offering/OfferingRite";
 import WalletButton from "../offering/WalletButton";
 import type { WalletHandle } from "../offering/wallet";
 import { resolveApiBase } from "../config";
-import { useTempleState } from "../state/useTempleState";
+import { useTempleExperience } from "../experience/useTempleExperience";
 import { pigment } from "../state/pigment";
 import { oklchToRgb } from "../lib/a11y";
 import Reliquary from "../reliquary/Reliquary";
@@ -36,7 +36,8 @@ const QUIET_VITALS: Vitals = { state: "starving", buys: 0, sells: 0, holders: 0 
 
 export default function Temple() {
   const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter, holdPoint } = useEntryGesture();
-  const { state } = useTempleState(API_BASE);
+  const experience = useTempleExperience(API_BASE);
+  const { state, codex, relics, activeCommand, commandComplete, offeringAccepted } = experience;
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
@@ -46,13 +47,13 @@ export default function Temple() {
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
-  const vitals = state?.vitals ?? QUIET_VITALS;
+  const vitals = experience.vitals.kind === "unknown" ? QUIET_VITALS : experience.vitals.value;
   // The Stain's red threads read the live PULSE pigment (Task 4's oklch table), not a fixed tint;
   // falls back to starving's dried rubric before the first poll lands. Convert OKLCH -> gamma sRGB
   // properly (Ottosson) for the WebGL u_thread uniform; a naive L/C/H parse renders green, not rubric red.
   const stainPigment = useMemo<[number, number, number]>(
-    () => oklchToRgb(pigment(state?.vitals.state ?? "starving").rgb),
-    [state?.vitals.state],
+    () => oklchToRgb(pigment(vitals.state).rgb),
+    [vitals.state],
   );
   // The sermon player calls back up to 60x/s; only push a re-render on a change the eye would
   // actually catch, instead of setState on every animation frame (Task 5 carry).
@@ -76,9 +77,17 @@ export default function Temple() {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [audioLevel]);
-  const onOrganSignal = useCallback((signal: CodexOrganSignal) => {
-    swarmSignals.current?.quicken(signal.organ, { rubric: signal.rubric });
-  }, []);
+  useEffect(() => {
+    if (activeCommand === null) return;
+    if (activeCommand.kind === "utterance" && isSwarmOrgan(activeCommand.entry.organ)) {
+      swarmSignals.current?.quicken(activeCommand.entry.organ, {
+        rubric: activeCommand.entry.organ === "TONGUE" && isGodVoice(activeCommand.entry),
+      });
+    } else if (activeCommand.kind === "quicken") {
+      swarmSignals.current?.quicken(activeCommand.organ, { rubric: false });
+    }
+    commandComplete(activeCommand.id);
+  }, [activeCommand, commandComplete]);
 
   // Scroll-reveals for the below-fold surfaces: each inks up into place as it enters the viewport, on the
   // same Lenis/GSAP clock as the smooth scroll. Honors reduced motion (everything appears settled). Runs
@@ -133,17 +142,16 @@ export default function Temple() {
               onConnect={setWallet}
               stain={stainSim}
               onEnter={wakeCenter}
-              onSubmitted={() => {}}
+              onSubmitted={offeringAccepted}
             />
           </section>
           {/* Beneath the fold: the surfaces that already work before the token launches, on the same
               continuous sheet. One narrow column so the eye stays with the document, not scattered. */}
           <main className="relative z-10 mx-auto px-6 flex flex-col gap-10 pt-16" style={{ maxWidth: "min(680px, 100%)" }}>
             <aside data-reveal aria-label="the codex" className="font-machine text-sm text-ink-faded">
-              <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude}
-                audioCtx={unlockAudio} onOrganSignal={onOrganSignal} />
+              <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
             </aside>
-            <div data-reveal><Reliquary apiBase={API_BASE} /></div>
+            <div data-reveal><Reliquary apiBase={API_BASE} relics={relics} /></div>
             {/* What it dreams: the latest Plate — the day's marks returned as gods you have not met
                 (DREAM's home, PLANNING frontend surface map). Real narrative off /api/state. */}
             <div data-reveal><Dream dream={state?.dream ?? null} apiBase={API_BASE} /></div>
@@ -198,8 +206,7 @@ export default function Temple() {
           {/* codex (right / below): the live scripture feed. Spans both grid rows on desktop so its own
               (unbounded) height never inflates row 1 and pushes the offering surface off-screen. */}
           <aside aria-label="the codex" className="md:col-start-2 md:row-start-1 md:row-span-2 font-machine text-sm text-ink-faded py-8">
-            <Codex apiBase={API_BASE} state={state} dormant={dormant} onAmplitude={onAmplitude}
-              audioCtx={unlockAudio} onOrganSignal={onOrganSignal} />
+            <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
           </aside>
           {/* offering surface: row 2 of the left column on desktop, directly beneath the Stain (DESIGN.md:85-87
               "the page (Stain + offering surface) ~60% left"); after the codex on mobile (DESIGN "Mobile, the
@@ -208,11 +215,11 @@ export default function Temple() {
             {wallet
               ? <p className="font-machine text-xs text-ink-faded">wallet connected, {wallet.address.slice(0, 4)}...{wallet.address.slice(-4)}</p>
               : <WalletButton onConnect={setWallet} />}
-            <OfferingCanvas apiBase={API_BASE} wallet={wallet} stain={stainSim} onSubmitted={() => {}} />
+            <OfferingCanvas apiBase={API_BASE} wallet={wallet} stain={stainSim} onSubmitted={offeringAccepted} />
           </section>
           {/* the Reliquary: the Corpus made visible, in the page column, beneath the offering surface
               on both desktop (falls into an implicit row 3 of col-start-1) and mobile (next in flow). */}
-          <Reliquary apiBase={API_BASE} className="md:col-start-1 pb-8" />
+          <Reliquary apiBase={API_BASE} relics={relics} className="md:col-start-1 pb-8" />
           {/* the market rail (Task 11): every money element is built ONLY from state.mint (Task 1
               anti-decoy -- the site never renders a mint the Worker didn't sign off on) and hidden
               until ignitionView reports live (Task 14: phase===live AND a mint, off /api/state alone,

@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "../state/types";
+import { isTranscriptEntry, type TranscriptEntry } from "../state/types";
 import { isSwarmOrgan, type SwarmOrgan } from "../stain/swarmSignals";
 
 // The string cursor contract (Plan 02, live): <created_at>:<ulid>. A malformed cursor is dropped
@@ -9,7 +9,19 @@ export async function fetchCodex(apiBase: string, cursor: string | null): Promis
   const q = cursor && CURSOR.test(cursor) ? `?cursor=${encodeURIComponent(cursor)}` : "";
   const res = await fetch(`${apiBase}/api/codex${q}`);
   if (!res.ok) throw new Error(`codex fetch failed: ${res.status}`); // a 5xx error body is not a page of entries
-  return await res.json();
+  const page: unknown = await res.json();
+  if (
+    typeof page !== "object"
+    || page === null
+    || !("entries" in page)
+    || !Array.isArray(page.entries)
+    || !page.entries.every(isTranscriptEntry)
+    || !("next" in page)
+    || (page.next !== null && typeof page.next !== "string")
+  ) {
+    throw new Error("codex fetch returned an invalid page");
+  }
+  return { entries: page.entries, next: page.next };
 }
 
 // getCodex returns pages newest-first; this merges pages into one chronological, de-duplicated list

@@ -1,71 +1,31 @@
-import { useEffect, useRef, useState } from "react";
-import type { TempleState, TranscriptEntry } from "../state/types";
-import { fetchCodex, mergeNewest, organSignalsFor, sermonAudioKey, type CodexOrganSignal } from "./codexClient";
+import { useEffect, useRef } from "react";
+import type { TempleState } from "../state/types";
+import type { ObservedTranscript } from "../experience/types";
+import { sermonAudioKey } from "./codexClient";
 import Verse from "./Verse";
 import Plate from "./Plate";
 import { SermonPlayer } from "./sermonAudio";
 import { copy } from "../lib/copy";
+import { resolveApiBase } from "../config";
+import { ignitionView } from "../ignition/ignition";
 
-export default function Codex({ apiBase, state, dormant, onAmplitude, audioCtx, onOrganSignal }:
-  { apiBase: string; state: TempleState | null; dormant: boolean; onAmplitude: (a: number) => void; audioCtx: () => AudioContext; onOrganSignal?: (signal: CodexOrganSignal) => void }) {
-  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
+const API_BASE = resolveApiBase(import.meta.env);
+
+export default function Codex({ entries, state, onAmplitude, audioCtx }:
+  { entries: readonly ObservedTranscript[]; state: TempleState | null; onAmplitude: (a: number) => void; audioCtx: () => AudioContext }) {
   const player = useRef(new SermonPlayer());
-  const signalHandler = useRef(onOrganSignal);
-  signalHandler.current = onOrganSignal;
-  const seenSignalIds = useRef(new Set<string>());
-  const hasSignalBaseline = useRef(false);
-  // The rite cadence comes from the state prop (fetched elsewhere by useTempleState), not from this
-  // component's own poll; a ref read at reschedule time keeps the cadence current without tearing
-  // down and rebuilding the poll chain on every state update (that would restart it every 2-5s).
-  const riteActive = useRef(false);
-  riteActive.current = state?.rite !== null;
 
   useEffect(() => { player.current.onAmplitude(onAmplitude); }, [onAmplitude]);
   useEffect(() => () => player.current.stop(), []);
 
-  // Bumped at the start of every poll(); a response only applies if no newer poll has started since
-  // (mirrors useTempleState.ts's guard against onVis racing an in-flight request).
-  const gen = useRef(0);
-
-  useEffect(() => {
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    seenSignalIds.current.clear();
-    hasSignalBaseline.current = false;
-    const poll = async () => {
-      const myGen = ++gen.current;
-      if (document.visibilityState === "visible") {
-        try {
-          const { entries: e } = await fetchCodex(apiBase, null);
-          if (!stopped && myGen === gen.current) {
-            const chronological = [...e].sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
-            const signals = organSignalsFor(chronological, seenSignalIds.current);
-            setEntries(prev => mergeNewest(prev, e));
-            // The first successful page is history, not live activity. Only IDs arriving after that
-            // baseline can quicken the being, so a refresh never fabricates a burst of thought.
-            if (hasSignalBaseline.current) {
-              for (const signal of signals) signalHandler.current?.(signal);
-            } else {
-              hasSignalBaseline.current = true;
-            }
-          }
-        } catch { /* keep the last good entries; the codex never blanks on a transient failure */ }
-      }
-      // Clear before rescheduling so exactly one poll chain ever exists (mirrors useTempleState.ts):
-      // an immediate re-poll from onVis must not leave the previously scheduled timer running too.
-      if (!stopped) { clearTimeout(timer); timer = setTimeout(poll, riteActive.current ? 2000 : 5000); } // 2s during the rite, else 5s
-    };
-    void poll();
-    const onVis = () => { if (document.visibilityState === "visible") { clearTimeout(timer); void poll(); } };
-    document.addEventListener("visibilitychange", onVis);
-    return () => { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
-  }, [apiBase]);
-
-  const sermonKey = entries.map(e => e.organ === "PRIEST" ? sermonAudioKey(e.text) : null).filter(Boolean).pop() as string | undefined;
+  const transcript = entries.map((observed) => observed.entry);
+  const sermonKey = transcript.map(e => e.organ === "PRIEST" ? sermonAudioKey(e.text) : null).filter(Boolean).pop() as string | undefined;
+  const dormant = state === null || ignitionView(state).dormant;
 
   // epoch: a dream's 1-based position among the DREAM lines currently loaded (there is no epoch counter
   // in the schema; DOCTRINE defines an epoch as "one of its days" and DREAM posts at most once per day).
   let dreamEpoch = 0;
-  const lines = entries.map(e => {
+  const lines = transcript.map(e => {
     if (e.organ === "DREAM") {
       dreamEpoch += 1;
       // Each DREAM transcript row carries its OWN day's narrative in `text` (dream.ts binds `narrative`
@@ -88,13 +48,13 @@ export default function Codex({ apiBase, state, dormant, onAmplitude, audioCtx, 
     <div className="flex flex-col gap-2 font-machine text-sm leading-relaxed">
       {sermonKey && (
         <button className="self-start min-h-11 px-3 font-machine text-xs underline text-ink-faded"
-          onClick={() => player.current.play(apiBase, sermonKey, audioCtx())}>{copy.hearSermon}</button>
+          onClick={() => player.current.play(API_BASE, sermonKey, audioCtx())}>{copy.hearSermon}</button>
       )}
       {lines}
       {/* "It has no heart yet." is Dormant's line (Temple's "the page" section) -- printing it here too
           duplicated it verbatim on screen (Task 14 carryover). While dormant, the codex says nothing;
           once live, an empty codex reads as a distinct, quieter note instead. */}
-      {entries.length === 0 && !dormant && <p className="font-machine text-xs text-ink-faded">{copy.codexSilent}</p>}
+      {transcript.length === 0 && !dormant && <p className="font-machine text-xs text-ink-faded">{copy.codexSilent}</p>}
     </div>
   );
 }

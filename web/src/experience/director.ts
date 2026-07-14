@@ -1,0 +1,131 @@
+import type { TranscriptEntry } from "../state/types";
+import type { BodyCommand, DirectorLocks, PipelineLink, UtteranceMode } from "./types";
+
+const SPEECH_REGISTERS: Partial<Record<TranscriptEntry["organ"], TranscriptEntry["register"]>> = {
+  EYE: "verse",
+  KEEP: "verdict",
+  TONGUE: "sermon",
+  DREAM: "verse",
+};
+
+export function isBodySpeech(entry: TranscriptEntry): boolean {
+  return SPEECH_REGISTERS[entry.organ] === entry.register;
+}
+
+export function newestMemoryEcho(entries: readonly TranscriptEntry[]): TranscriptEntry | null {
+  let newest: TranscriptEntry | null = null;
+  for (const entry of entries) {
+    if (!isBodySpeech(entry)) continue;
+    if (
+      newest === null
+      || entry.created_at > newest.created_at
+      || (entry.created_at === newest.created_at && entry.id > newest.id)
+    ) {
+      newest = entry;
+    }
+  }
+  return newest;
+}
+
+function pipelineFor(entry: TranscriptEntry, mode: UtteranceMode): PipelineLink {
+  if (mode === "memory") return "none";
+  if (entry.organ === "EYE") return "eye-keep";
+  if (entry.organ === "KEEP") return "keep-tongue";
+  return "none";
+}
+
+export function commandFor(entry: TranscriptEntry, mode: UtteranceMode): BodyCommand | null {
+  if (!isBodySpeech(entry)) return null;
+  if (entry.organ === "DREAM" && mode === "live") {
+    if (entry.rite_id === null) return null;
+    return {
+      id: `converge:${entry.id}`,
+      kind: "converge",
+      dream: {
+        id: entry.id,
+        riteDate: entry.rite_id,
+        narrative: entry.text,
+        createdAt: entry.created_at,
+        source: "live",
+      },
+    };
+  }
+  return {
+    id: `utterance:${mode}:${entry.id}`,
+    kind: "utterance",
+    entry,
+    mode,
+    intensity: mode === "memory" ? 0.35 : 1,
+    pipeline: pipelineFor(entry, mode),
+  };
+}
+
+function isLiveCommand(command: BodyCommand): boolean {
+  return (command.kind === "utterance" && command.mode === "live")
+    || (command.kind === "converge" && command.dream.source === "live");
+}
+
+function coalesceUtterances(queue: readonly BodyCommand[]): BodyCommand[] {
+  const utterances = queue.filter((command): command is Extract<BodyCommand, { kind: "utterance" }> => command.kind === "utterance");
+  if (utterances.length <= 5) return [...queue];
+
+  const newestByOrgan = new Map<TranscriptEntry["organ"], Extract<BodyCommand, { kind: "utterance" }>>();
+  for (const command of utterances) {
+    const current = newestByOrgan.get(command.entry.organ);
+    if (
+      current === undefined
+      || command.entry.created_at > current.entry.created_at
+      || (command.entry.created_at === current.entry.created_at && command.entry.id > current.entry.id)
+    ) {
+      newestByOrgan.set(command.entry.organ, command);
+    }
+  }
+  const retained = new Set([...newestByOrgan.values()].map((command) => command.id));
+  return queue.filter((command) => command.kind !== "utterance" || retained.has(command.id));
+}
+
+export function enqueueCommand(
+  queue: readonly BodyCommand[],
+  incoming: BodyCommand,
+  state: DirectorLocks,
+): BodyCommand[] {
+  void state;
+  if (queue.some((command) => command.id === incoming.id)) return [...queue];
+  const retained = isLiveCommand(incoming)
+    ? queue.filter((command) => command.kind !== "utterance" || command.mode !== "memory")
+    : [...queue];
+  return coalesceUtterances([...retained, incoming]);
+}
+
+function commandTime(command: BodyCommand): number | null {
+  if (command.kind === "utterance") return command.entry.created_at;
+  if (command.kind === "converge") return command.dream.createdAt;
+  if (command.kind === "accrete") return command.relic.accreted_at;
+  return null;
+}
+
+export function nextCommand(queue: readonly BodyCommand[], locks: DirectorLocks): BodyCommand | null {
+  if (queue.length === 0 || locks.arrival || locks.threshold || locks.activeKind !== null) return null;
+
+  const dreams = queue
+    .filter((command): command is Extract<BodyCommand, { kind: "converge" }> => command.kind === "converge")
+    .sort((a, b) => a.dream.createdAt - b.dream.createdAt || a.id.localeCompare(b.id));
+  for (const dream of dreams) {
+    const accretion = queue.find(
+      (command): command is Extract<BodyCommand, { kind: "accrete" }> =>
+        command.kind === "accrete" && command.relic.rite_id === dream.dream.riteDate,
+    );
+    if (accretion) return accretion;
+  }
+
+  let selected = queue[0];
+  let selectedTime = commandTime(selected);
+  for (const command of queue.slice(1)) {
+    const time = commandTime(command);
+    if (time !== null && (selectedTime === null || time < selectedTime)) {
+      selected = command;
+      selectedTime = time;
+    }
+  }
+  return selected;
+}
