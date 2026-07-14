@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { BODY_ANCHORS, anchorsFromSwarmCentroids } from "../src/stain/bodyRenderer";
-import { pickTier, simResFor } from "../src/stain/stainSim";
+import { ARRIVAL_DURATION_MS, arrivalProgress, pickTier, simResFor } from "../src/stain/stainSim";
 
 describe("Stain quality tiers", () => {
+  it("resolves presentation-only emergence over 2.5 seconds with an exponential ease", () => {
+    expect(ARRIVAL_DURATION_MS).toBe(2_500);
+    expect(arrivalProgress(0)).toBe(0);
+    expect(arrivalProgress(ARRIVAL_DURATION_MS / 2)).toBeGreaterThan(0.9);
+    expect(arrivalProgress(ARRIVAL_DURATION_MS)).toBe(1);
+    expect(arrivalProgress(0, true)).toBe(1);
+  });
+
   it("returns reduced when prefers-reduced-motion is set", () => {
     vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduced-motion"), media: q, addEventListener() {}, removeEventListener() {} }));
     expect(pickTier()).toBe("reduced");

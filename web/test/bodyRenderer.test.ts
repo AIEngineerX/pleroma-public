@@ -6,6 +6,7 @@ import type { TranscriptEntry } from "../src/state/types";
 import {
   BODY_ANCHORS,
   SettledBodyRendererAdapter,
+  anchorForSlice,
   dedupeRelicSamples,
   signalForBodyCommand,
 } from "../src/stain/bodyRenderer";
@@ -17,6 +18,12 @@ function relic(offeringId: string): RelicInkSample {
 }
 
 describe("shared body renderer semantics", () => {
+  it("maps SVG slice anchors into the visible overlay coordinates", () => {
+    expect(anchorForSlice(BODY_ANCHORS.EYE, 200, 100)).toEqual({ x: 0.5, y: 0.06 });
+    expect(anchorForSlice(BODY_ANCHORS.KEEP, 100, 200)).toEqual({ x: 0.9, y: 0.43 });
+    expect(anchorForSlice(BODY_ANCHORS.TONGUE, 100, 100)).toEqual(BODY_ANCHORS.TONGUE);
+  });
+
   it("exposes the same active organ and explicit pipeline in the reducer and settled body", () => {
     const command: BodyCommand = {
       id: "quicken:eye",

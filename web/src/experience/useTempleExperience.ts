@@ -15,6 +15,7 @@ import {
   newestMemoryEcho,
   nextCommand,
   observeLiveTranscript,
+  releaseArrival,
 } from "./director";
 import { loadReceiptsSafely, reconcileReceipt, saveReceipts } from "./receipts";
 import type {
@@ -94,7 +95,7 @@ function chronological(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
   return [...entries].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
 }
 
-function mergeObserved(
+export function mergeObservedTranscripts(
   existing: readonly ObservedTranscript[],
   incoming: readonly TranscriptEntry[],
   liveIds: ReadonlySet<string>,
@@ -234,6 +235,7 @@ export function createTempleSourceReset(generations: TempleSourceGenerations) {
       activeKind: null,
     } satisfies DirectorLocks,
     dreamRelicBarrier: false,
+    arrivalSettled: false,
   };
 }
 
@@ -286,6 +288,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
   const seenCodexIds = useRef(new Set<string>());
   const relicAccretions = useRef(new Map<string, number | null>());
   const dreamRelicBarrier = useRef(false);
+  const arrivalSettled = useRef(false);
 
   const codexWake = useRef<() => void>(() => undefined);
   const relicWake = useRef<() => void>(() => undefined);
@@ -322,9 +325,11 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     return observation.command;
   }, []);
 
-  const releaseArrival = useCallback(() => {
-    if (!codexBaseline.current || !relicBaseline.current || !locks.current.arrival) return;
-    locks.current = { ...locks.current, arrival: false };
+  const arrivalDone = useCallback(() => {
+    if (arrivalSettled.current) return;
+    arrivalSettled.current = true;
+    if (dreamRelicBarrier.current) return;
+    locks.current = releaseArrival(locks.current);
     dispatchNext();
   }, [dispatchNext]);
 
@@ -407,6 +412,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     active.current = reset.activeCommand;
     locks.current = reset.locks;
     dreamRelicBarrier.current = reset.dreamRelicBarrier;
+    arrivalSettled.current = reset.arrivalSettled;
     codexWake.current = () => undefined;
     relicWake.current = () => undefined;
 
@@ -519,7 +525,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
           }
         }
 
-        const merged = mergeObserved(codexRef.current, entries, liveIds);
+        const merged = mergeObservedTranscripts(codexRef.current, entries, liveIds);
         codexRef.current = merged;
         setCodex(merged);
         reconcileReceipts(merged.map((observed) => observed.entry), relicsRef.current);
@@ -531,7 +537,6 @@ export function useTempleExperience(apiBase: string): TempleExperience {
             const command = commandFor(echo, "memory");
             if (command !== null) enqueue(command);
           }
-          releaseArrival();
         } else {
           let refreshRelics = false;
           for (const entry of entries) {
@@ -574,7 +579,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
       codexWake.current = () => undefined;
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [apiBase, dispatchNext, enqueue, observeLiveEntry, reconcileReceipts, releaseArrival]);
+  }, [apiBase, dispatchNext, enqueue, observeLiveEntry, reconcileReceipts]);
 
   useEffect(() => {
     let disposed = false;
@@ -624,7 +629,6 @@ export function useTempleExperience(apiBase: string): TempleExperience {
         if (isBaseline) {
           for (const relic of page.entries) relicAccretions.current.set(relic.id, relic.accreted_at);
           relicBaseline.current = true;
-          if (!dreamRelicBarrier.current) releaseArrival();
         }
 
         const memoryRelics = merged.filter(isAccretedRelic);
@@ -678,7 +682,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
         );
         if (dreamRelicBarrier.current && !dreamBlocked) {
           dreamRelicBarrier.current = false;
-          locks.current = { ...locks.current, arrival: false };
+          locks.current = { ...locks.current, arrival: !arrivalSettled.current };
           dispatchNext();
         }
       });
@@ -705,7 +709,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
       relicWake.current = () => undefined;
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [apiBase, dispatchNext, enqueue, persistReceipts, releaseArrival]);
+  }, [apiBase, dispatchNext, enqueue, persistReceipts]);
 
   return {
     state,
@@ -716,6 +720,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     receipts,
     activeCommand,
     replayWitness,
+    arrivalDone,
     commandComplete,
     offeringAccepted,
     setThresholdActive,

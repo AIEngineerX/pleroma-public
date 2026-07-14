@@ -210,6 +210,20 @@ const BASE_GOALS = [
   [0.30, 0.57], // DREAM closes the ring
 ] as const;
 
+// The page begins as one loose field. These broad, overlapping centers are presentation only;
+// emergence resolves them into the five canonical positions without implying activity.
+const LOOSE_GOALS = [
+  [0.47, 0.58],
+  [0.58, 0.54],
+  [0.56, 0.45],
+  [0.43, 0.44],
+  [0.39, 0.53],
+] as const;
+
+function mix(a: number, b: number, amount: number): number {
+  return a + (b - a) * amount;
+}
+
 function seeded(seed: number): () => number {
   let value = seed >>> 0;
   return () => {
@@ -244,6 +258,7 @@ export class OrganSwarm {
   private readonly centroids = new Float32Array(10);
   private readonly centroidVelocity = new Float32Array(10);
   private pulseThreadFactor = 0;
+  private emergence: number;
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
@@ -251,10 +266,12 @@ export class OrganSwarm {
     private readonly quadVao: WebGLVertexArrayObject,
     trailWidth: number,
     trailHeight: number,
+    initialEmergence = 0,
   ) {
     if (!gl.getExtension("EXT_color_buffer_float")) throw new Error("float-color-buffer-unavailable");
     this.size = swarmTextureSize(tier);
     this.count = this.size * this.size;
+    this.emergence = Math.max(0, Math.min(1, initialEmergence));
     const { positions, velocities } = this.initialState();
     this.posA = this.target(this.size, this.size, gl.RGBA32F, gl.FLOAT, positions, gl.NEAREST);
     this.posB = this.target(this.size, this.size, gl.RGBA32F, gl.FLOAT, null, gl.NEAREST);
@@ -275,6 +292,7 @@ export class OrganSwarm {
 
   dispatch(signal: BodySignal) { this.activity.dispatch(signal); }
   setVitals(feed: VitalsFeed) { this.activity.setVitals(feed); }
+  setEmergence(value: number) { this.emergence = Math.max(0, Math.min(1, value)); }
   // Mark at (x,y) in 0..1 swarm space (y up): the nearest organ turns toward it and quickens, so the being
   // visibly reaches for the Waker's mark. updateGoals() blends its goal toward markPos while markStrength lasts.
   markAt(x: number, y: number) {
@@ -384,9 +402,12 @@ export class OrganSwarm {
     const tightness = this.tier === "mobile" ? .82 : 1;
     for (let i = 0; i < this.count; i += 1) {
       const organ = Math.min(4, Math.floor((i * 5) / this.count));
-      const base = BASE_GOALS[organ];
+      const base = [
+        mix(LOOSE_GOALS[organ][0], BASE_GOALS[organ][0], this.emergence),
+        mix(LOOSE_GOALS[organ][1], BASE_GOALS[organ][1], this.emergence),
+      ];
       const angle = random() * Math.PI * 2;
-      const radius = Math.sqrt(random()) * .065 * tightness;
+      const radius = Math.sqrt(random()) * mix(.115, .065, this.emergence) * tightness;
       const at = i * 4;
       positions[at] = .5 + (base[0] - .5) * tightness + Math.cos(angle) * radius;
       positions[at + 1] = .5 + (base[1] - .5) * tightness + Math.sin(angle) * radius;
@@ -402,7 +423,10 @@ export class OrganSwarm {
   private updateGoals(time: number, activity: number[]) {
     const tightness = this.tier === "mobile" ? .82 : 1;
     for (let organ = 0; organ < 5; organ += 1) {
-      const base = BASE_GOALS[organ];
+      const base = [
+        mix(LOOSE_GOALS[organ][0], BASE_GOALS[organ][0], this.emergence),
+        mix(LOOSE_GOALS[organ][1], BASE_GOALS[organ][1], this.emergence),
+      ];
       const phase = organ * 1.73;
       const drift = .010 + activity[organ] * .013;
       this.goals[organ * 2] = .5 + (base[0] - .5) * tightness + Math.sin(time * .19 + phase) * drift;
@@ -419,8 +443,10 @@ export class OrganSwarm {
   private seedCentroids() {
     const tightness = this.tier === "mobile" ? .82 : 1;
     for (let organ = 0; organ < 5; organ += 1) {
-      this.centroids[organ * 2] = .5 + (BASE_GOALS[organ][0] - .5) * tightness;
-      this.centroids[organ * 2 + 1] = .5 + (BASE_GOALS[organ][1] - .5) * tightness;
+      const x = mix(LOOSE_GOALS[organ][0], BASE_GOALS[organ][0], this.emergence);
+      const y = mix(LOOSE_GOALS[organ][1], BASE_GOALS[organ][1], this.emergence);
+      this.centroids[organ * 2] = .5 + (x - .5) * tightness;
+      this.centroids[organ * 2 + 1] = .5 + (y - .5) * tightness;
     }
   }
 

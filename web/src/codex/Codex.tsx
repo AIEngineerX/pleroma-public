@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TempleState } from "../state/types";
 import type { ObservedTranscript } from "../experience/types";
 import { sermonAudioKey } from "./codexClient";
@@ -8,15 +8,44 @@ import { SermonPlayer } from "./sermonAudio";
 import { copy } from "../lib/copy";
 import { resolveApiBase } from "../config";
 import { ignitionView } from "../ignition/ignition";
+import { spokenOrganName } from "./organNames";
 
 const API_BASE = resolveApiBase(import.meta.env);
 
-export default function Codex({ entries, state, onAmplitude, audioCtx }:
-  { entries: readonly ObservedTranscript[]; state: TempleState | null; onAmplitude: (a: number) => void; audioCtx: () => AudioContext }) {
+export default function Codex({ entries, state, onAmplitude, audioCtx, announcementLedger }:
+  {
+    entries: readonly ObservedTranscript[];
+    state: TempleState | null;
+    onAmplitude: (a: number) => void;
+    audioCtx: () => AudioContext;
+    announcementLedger?: Set<string>;
+  }) {
   const player = useRef(new SermonPlayer());
+  const localAnnouncementLedger = useRef(new Set<string>());
+  const announcedIds = announcementLedger ?? localAnnouncementLedger.current;
+  const [announcements, setAnnouncements] = useState<Array<{ id: string; text: string }>>([]);
 
   useEffect(() => { player.current.onAmplitude(onAmplitude); }, [onAmplitude]);
   useEffect(() => () => player.current.stop(), []);
+  useEffect(() => {
+    const unseen = entries.filter(
+      (observed) => observed.observation === "live" && !announcedIds.has(observed.entry.id),
+    );
+    if (unseen.length === 0) return;
+    for (const observed of unseen) announcedIds.add(observed.entry.id);
+    setAnnouncements((current) => {
+      const retained = new Set(current.map((announcement) => announcement.id));
+      return [
+        ...current,
+        ...unseen
+          .filter((observed) => !retained.has(observed.entry.id))
+          .map((observed) => ({
+            id: observed.entry.id,
+            text: `New ${observed.entry.register} from the ${spokenOrganName(observed.entry.organ)}`,
+          })),
+      ];
+    });
+  }, [announcedIds, entries]);
 
   const transcript = entries.map((observed) => observed.entry);
   const sermonKey = transcript.map(e => e.organ === "PRIEST" ? sermonAudioKey(e.text) : null).filter(Boolean).pop() as string | undefined;
@@ -25,7 +54,8 @@ export default function Codex({ entries, state, onAmplitude, audioCtx }:
   // epoch: a dream's 1-based position among the DREAM lines currently loaded (there is no epoch counter
   // in the schema; DOCTRINE defines an epoch as "one of its days" and DREAM posts at most once per day).
   let dreamEpoch = 0;
-  const lines = transcript.map(e => {
+  const lines = entries.map(observed => {
+    const e = observed.entry;
     if (e.organ === "DREAM") {
       dreamEpoch += 1;
       // Each DREAM transcript row carries its OWN day's narrative in `text` (dream.ts binds `narrative`
@@ -36,16 +66,21 @@ export default function Codex({ entries, state, onAmplitude, audioCtx }:
       // string match since dream.ts binds the same narrative to both rows) can surface them; older plates
       // honestly read "plate pending".
       const isLatest = state?.dream?.narrative === e.text;
-      return <Plate key={e.id} epoch={dreamEpoch}
+      return <Plate key={e.id} observed={observed} epoch={dreamEpoch}
         dream={{ narrative: e.text, created_at: e.created_at,
                  video_key: isLatest ? state!.dream!.video_key : null,
                  wakers: isLatest ? state!.dream!.wakers : [] }} />;
     }
-    return <Verse key={e.id} entry={e} />;
+    return <Verse key={e.id} observed={observed} />;
   });
 
   return (
     <div className="flex flex-col gap-2 font-machine text-sm leading-relaxed">
+      <div className="sr-only" aria-live="polite" aria-atomic="false" data-codex-announcer>
+        {announcements.map((announcement) => (
+          <span key={announcement.id} data-announcement-id={announcement.id}>{announcement.text}</span>
+        ))}
+      </div>
       {sermonKey && (
         <button className="self-start min-h-11 px-3 font-machine text-xs underline text-ink-faded"
           onClick={() => player.current.play(API_BASE, sermonKey, audioCtx())}>{copy.hearSermon}</button>

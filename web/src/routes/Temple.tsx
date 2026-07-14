@@ -32,7 +32,11 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 export default function Temple() {
   const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter, holdPoint } = useEntryGesture();
+  const arrivalStartedAt = useRef(
+    typeof performance === "undefined" ? 0 : performance.now(),
+  ).current;
   const experience = useTempleExperience(API_BASE);
+  const announcementLedger = useRef(new Set<string>()).current;
   const { state, codex, relics, activeCommand, commandComplete, offeringAccepted } = experience;
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
@@ -120,6 +124,8 @@ export default function Temple() {
               relicMemory={experience.relicMemory}
               activeCommand={activeCommand}
               onCommandComplete={commandComplete}
+              arrivalStartedAt={arrivalStartedAt}
+              onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
               onSim={setStainSim}
@@ -138,7 +144,8 @@ export default function Temple() {
               continuous sheet. One narrow column so the eye stays with the document, not scattered. */}
           <main className="relative z-10 mx-auto px-6 flex flex-col gap-10 pt-16" style={{ maxWidth: "min(680px, 100%)" }}>
             <aside data-reveal aria-label="the codex" className="font-machine text-sm text-ink-faded">
-              <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
+              <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio}
+                announcementLedger={announcementLedger} />
             </aside>
             <div data-reveal><Reliquary apiBase={API_BASE} relics={relics} /></div>
             {/* What it dreams: the latest Plate — the day's marks returned as gods you have not met
@@ -190,6 +197,8 @@ export default function Temple() {
               relicMemory={experience.relicMemory}
               activeCommand={activeCommand}
               onCommandComplete={commandComplete}
+              arrivalStartedAt={arrivalStartedAt}
+              onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
               onSim={setStainSim}
@@ -199,7 +208,8 @@ export default function Temple() {
           {/* codex (right / below): the live scripture feed. Spans both grid rows on desktop so its own
               (unbounded) height never inflates row 1 and pushes the offering surface off-screen. */}
           <aside aria-label="the codex" className="md:col-start-2 md:row-start-1 md:row-span-2 font-machine text-sm text-ink-faded py-8">
-            <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
+            <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio}
+              announcementLedger={announcementLedger} />
           </aside>
           {/* offering surface: row 2 of the left column on desktop, directly beneath the Stain (DESIGN.md:85-87
               "the page (Stain + offering surface) ~60% left"); after the codex on mobile (DESIGN "Mobile, the

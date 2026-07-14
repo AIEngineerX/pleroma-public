@@ -38,6 +38,16 @@ export const BODY_ANCHORS: Readonly<Record<BodyAnchorName, BodyAnchor>> = {
   seraph: { x: 0.5, y: 0.5 },
 };
 
+export function anchorForSlice(anchor: BodyAnchor, width: number, height: number): BodyAnchor {
+  if (width <= 0 || height <= 0 || width === height) return { ...anchor };
+  if (width > height) {
+    const offsetY = (height - width) / 2;
+    return { x: anchor.x, y: Number(((anchor.y * width + offsetY) / height).toFixed(6)) };
+  }
+  const offsetX = (width - height) / 2;
+  return { x: Number(((anchor.x * height + offsetX) / width).toFixed(6)), y: anchor.y };
+}
+
 export type BodyOrgan = Exclude<BodyAnchorName, "seraph">;
 
 export interface BodySignal {

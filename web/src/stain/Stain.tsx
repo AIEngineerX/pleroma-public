@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
 import {
+  BODY_ANCHORS,
   SettledBodyRendererAdapter,
+  anchorForSlice,
   signalForBodyCommand,
+  type BodyAnchor,
+  type BodyAnchorName,
   type BodyRendererAdapter,
   type SettledBodyRendererState,
 } from "./bodyRenderer";
 import { SettledBody } from "./SettledBody";
-import { pickTier, StainSim, type Tier } from "./stainSim";
+import BodyUtterance from "../experience/BodyUtterance";
+import { arrivalProgress, pickTier, StainSim, type Tier } from "./stainSim";
 
 interface Props {
   state: "dormant" | "live" | "rite";
@@ -17,6 +22,8 @@ interface Props {
   relicMemory: readonly RelicInkSample[];
   activeCommand: BodyCommand | null;
   onCommandComplete(id: string): void;
+  arrivalStartedAt: number;
+  onArrivalDone(): void;
   forceSettledRenderer: boolean;
   onRendererFallback(): void;
   onSim?: (sim: StainSim | null) => void;
@@ -39,11 +46,14 @@ export default function Stain({
   relicMemory,
   activeCommand,
   onCommandComplete,
+  arrivalStartedAt,
+  onArrivalDone,
   forceSettledRenderer,
   onRendererFallback,
   onSim,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const utteranceLayerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<BodyRendererAdapter | null>(null);
   const simRef = useRef<StainSim | null>(null);
   const lostContext = useRef(false);
@@ -51,11 +61,14 @@ export default function Stain({
   const completedCommandId = useRef<string | null>(null);
   const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presentedCommandRef = useRef<BodyCommand | null>(null);
+  const anchorsRef = useRef<Readonly<Record<BodyAnchorName, BodyAnchor>>>(BODY_ANCHORS);
+  const bodySizeRef = useRef({ width: 1, height: 1 });
   const latest = useRef({
     vitals,
     relicMemory,
     activeCommand,
     onCommandComplete,
+    onArrivalDone,
     onRendererFallback,
     onSim,
   });
@@ -64,6 +77,7 @@ export default function Stain({
     relicMemory,
     activeCommand,
     onCommandComplete,
+    onArrivalDone,
     onRendererFallback,
     onSim,
   };
@@ -72,6 +86,8 @@ export default function Stain({
   const [renderer, setRenderer] = useState<"webgl" | "svg">(
     tier === "reduced" || forceSettledRenderer ? "svg" : "webgl",
   );
+  const rendererRef = useRef(renderer);
+  rendererRef.current = renderer;
   const [fallbackBreath, setFallbackBreath] = useState(false);
   const [presentedCommand, setPresentedCommand] = useState<BodyCommand | null>(null);
   const [completion, setCompletion] = useState<{ id: string | null; count: number }>({
@@ -105,6 +121,9 @@ export default function Stain({
   ) => void>(() => undefined);
   acknowledgeCommand.current = (command, id, generation) => {
     if (id !== command.id || generation !== commandGeneration.current) return;
+    // The renderer establishes truthful organ state immediately. An utterance's decorative ink owns
+    // its own bounded completion so the director cannot advance while the words are still visible.
+    if (command.kind === "utterance") return;
     if (signalForBodyCommand(command) === null) {
       finishCommand.current(id, generation);
       return;
@@ -116,6 +135,30 @@ export default function Stain({
     }, SEMANTIC_DWELL_MS);
   };
 
+  const positionUtterance = (anchor: BodyAnchor, organ: BodyAnchorName) => {
+    const { width, height } = bodySizeRef.current;
+    const visibleAnchor = rendererRef.current === "svg"
+      ? anchorForSlice(anchor, width, height)
+      : anchor;
+    const fixedAnchor = BODY_ANCHORS[organ];
+    const node = utteranceLayerRef.current?.querySelector<HTMLElement>("[data-body-utterance]");
+    if (node === null || node === undefined) return;
+    const translateX = (visibleAnchor.x - fixedAnchor.x) * width;
+    const translateY = (visibleAnchor.y - fixedAnchor.y) * height;
+    node.style.transform = `translate(-50%, -50%) translate3d(${translateX.toFixed(3)}px, ${translateY.toFixed(3)}px, 0)`;
+    node.dataset.anchorX = visibleAnchor.x.toFixed(3);
+    node.dataset.anchorY = visibleAnchor.y.toFixed(3);
+  };
+
+  const receiveAnchors = (anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => {
+    anchorsRef.current = anchors;
+    const command = presentedCommandRef.current;
+    if (command?.kind !== "utterance") return;
+    const commandSignal = signalForBodyCommand(command);
+    if (commandSignal === null) return;
+    positionUtterance(anchors[commandSignal.organ], commandSignal.organ);
+  };
+
   useEffect(() => {
     let disposed = false;
     const canvas = canvasRef.current;
@@ -124,6 +167,7 @@ export default function Stain({
       if (disposed) return;
       const adapter = new SettledBodyRendererAdapter(setSettled);
       adapterRef.current = adapter;
+      adapter.setAnchorSink(receiveAnchors);
       adapter.setVitals(latest.current.vitals);
       adapter.hydrateRelics(latest.current.relicMemory);
       const replay = replayActive ? latest.current.activeCommand : null;
@@ -135,6 +179,7 @@ export default function Stain({
       }
       setFallbackBreath(tier !== "reduced");
       setRenderer("svg");
+      latest.current.onArrivalDone();
     };
 
     if (tier === "reduced" || forceSettledRenderer) {
@@ -143,6 +188,7 @@ export default function Stain({
         disposed = true;
         clearDwell();
         commandGeneration.current += 1;
+        adapterRef.current?.setAnchorSink(null);
         adapterRef.current?.dispose();
         adapterRef.current = null;
         latest.current.onSim?.(null);
@@ -196,12 +242,15 @@ export default function Stain({
         tier,
         ground: [0.94, 0.90, 0.80],
         ink: [0.74, 0.71, 0.64],
+        arrivalStartedAt,
+        onArrivalDone: () => latest.current.onArrivalDone(),
       });
       sim.setPigment(pigment);
       sim.setAmplitude(amplitude);
       sim.setState(state);
       sim.setVitals(latest.current.vitals);
       sim.hydrateRelics(latest.current.relicMemory);
+      sim.setAnchorSink(receiveAnchors);
       simRef.current = sim;
       adapterRef.current = sim;
       sim.start();
@@ -225,6 +274,7 @@ export default function Stain({
       removePointerListener();
       const sim = simRef.current;
       const adapter = adapterRef.current;
+      adapter?.setAnchorSink(null);
       if (adapter !== null && adapter !== sim) adapter.dispose();
       if (sim !== null && !lostContext.current) sim.dispose();
       simRef.current = null;
@@ -232,6 +282,31 @@ export default function Stain({
       latest.current.onSim?.(null);
     };
   }, []);
+
+  useEffect(() => {
+    const body = utteranceLayerRef.current?.parentElement
+      ?.querySelector<HTMLElement>("[data-body-renderer]");
+    if (body === null || body === undefined) return;
+
+    const updateBodySize = (width: number, height: number) => {
+      if (width <= 0 || height <= 0) return;
+      bodySizeRef.current = { width, height };
+      const command = presentedCommandRef.current;
+      if (command?.kind !== "utterance") return;
+      const commandSignal = signalForBodyCommand(command);
+      if (commandSignal === null) return;
+      positionUtterance(anchorsRef.current[commandSignal.organ], commandSignal.organ);
+    };
+
+    const rect = body.getBoundingClientRect();
+    updateBodySize(rect.width, rect.height);
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry === undefined) return;
+      updateBodySize(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [renderer]);
 
   useEffect(() => { simRef.current?.setPigment(pigment); }, [pigment]);
   useEffect(() => { simRef.current?.setAmplitude(amplitude); }, [amplitude]);
@@ -262,11 +337,23 @@ export default function Stain({
     );
   }, [activeCommand]);
 
+  useEffect(() => {
+    if (presentedCommand?.kind !== "utterance") return;
+    const commandSignal = signalForBodyCommand(presentedCommand);
+    if (commandSignal === null) return;
+    positionUtterance(anchorsRef.current[commandSignal.organ], commandSignal.organ);
+  }, [presentedCommand, renderer]);
+
   const signal = presentedCommand === null ? null : signalForBodyCommand(presentedCommand);
   const initialPulseDebug = initialPulseKind === "unknown" ? 0 : undefined;
+  const utterance = presentedCommand?.kind === "utterance" && signal !== null ? presentedCommand : null;
+  const utteranceAnchor = utterance === null || signal === null
+    ? BODY_ANCHORS.EYE
+    : BODY_ANCHORS[signal.organ];
+  const now = typeof performance === "undefined" ? arrivalStartedAt : performance.now();
+  const initialArrival = arrivalProgress(now - arrivalStartedAt);
 
-  if (renderer === "svg") {
-    return (
+  const renderedBody = renderer === "svg" ? (
       <SettledBody
         pigment={pigment}
         command={settled.command}
@@ -278,10 +365,7 @@ export default function Stain({
         initialPulseKind={initialPulseKind}
         ambientBreath={fallbackBreath}
       />
-    );
-  }
-
-  return (
+    ) : (
     <canvas
       ref={canvasRef}
       data-organ-swarm={tier}
@@ -296,8 +380,23 @@ export default function Stain({
       data-initial-pulse-beat={initialPulseDebug}
       data-initial-pulse-bpm={initialPulseDebug}
       data-initial-pulse-pressure={initialPulseDebug}
+      data-arrival={initialArrival >= 1 ? "settled" : "emerging"}
+      data-arrival-progress={initialArrival.toFixed(3)}
       aria-hidden
       className="absolute inset-0 z-0 h-full w-full pointer-events-none"
     />
+  );
+
+  return (
+    <>
+      {renderedBody}
+      <div ref={utteranceLayerRef} className="contents" aria-hidden="true">
+        <BodyUtterance
+          command={utterance}
+          anchor={utteranceAnchor}
+          onComplete={(id) => finishCommand.current(id, commandGeneration.current)}
+        />
+      </div>
+    </>
   );
 }

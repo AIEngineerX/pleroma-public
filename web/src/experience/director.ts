@@ -72,6 +72,10 @@ export interface LiveTranscriptObservation {
   activeMemoryCancelled: boolean;
 }
 
+export function releaseArrival(locks: DirectorLocks): DirectorLocks {
+  return locks.arrival ? { ...locks, arrival: false } : locks;
+}
+
 export function observeLiveTranscript(
   entry: TranscriptEntry,
   runtime: DirectorRuntime,

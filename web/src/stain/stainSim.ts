@@ -10,6 +10,15 @@ import {
 } from "./bodyRenderer";
 
 export type Tier = "desktop" | "mobile" | "reduced";
+export const ARRIVAL_DURATION_MS = 2_500;
+
+export function arrivalProgress(elapsedMs: number, startsSettled = false): number {
+  if (startsSettled || elapsedMs >= ARRIVAL_DURATION_MS) return 1;
+  if (elapsedMs <= 0) return 0;
+  const normalized = elapsedMs / ARRIVAL_DURATION_MS;
+  return 1 - 2 ** (-10 * normalized);
+}
+
 export function pickTier(): Tier {
   if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return "reduced";
   const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
@@ -106,7 +115,13 @@ void main(){
 
 interface FBO { fbo: WebGLFramebuffer; tex: WebGLTexture; w: number; h: number }
 
-export interface StainOpts { tier: Tier; ground: [number, number, number]; ink: [number, number, number]; }
+export interface StainOpts {
+  tier: Tier;
+  ground: [number, number, number];
+  ink: [number, number, number];
+  arrivalStartedAt: number;
+  onArrivalDone(): void;
+}
 
 function initialAnchors(): Record<BodyAnchorName, BodyAnchor> {
   return {
@@ -134,6 +149,7 @@ export class StainSim implements BodyRendererAdapter {
   private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
   private readonly anchorBuffer = new Float32Array(10);
   private readonly anchors = initialAnchors();
+  private arrivalComplete = false;
   constructor(private canvas: HTMLCanvasElement, private opts: StainOpts) {
     const gl = canvas.getContext("webgl2", { alpha: true, antialias: false, preserveDrawingBuffer: false });
     if (!gl) throw new Error("no-webgl2");
@@ -142,7 +158,10 @@ export class StainSim implements BodyRendererAdapter {
     this.vao = this.quad(); this.simRes = simResFor(opts.tier) || 256;
     this.resize(); this.a = this.fbo(); this.b = this.fbo();
     if (opts.tier === "reduced") throw new Error("reduced-motion-has-no-simulation");
-    this.swarm = new OrganSwarm(gl, opts.tier, this.vao, this.a.w, this.a.h);
+    const initialArrival = arrivalProgress(performance.now() - opts.arrivalStartedAt);
+    this.swarm = new OrganSwarm(gl, opts.tier, this.vao, this.a.w, this.a.h, initialArrival);
+    this.canvas.dataset.arrival = initialArrival >= 1 ? "settled" : "emerging";
+    this.canvas.dataset.arrivalProgress = initialArrival.toFixed(3);
   }
   private link(vs: string, fs: string): WebGLProgram {
     const g = this.gl, p = g.createProgram()!, shaders: WebGLShader[] = [];
@@ -218,6 +237,14 @@ export class StainSim implements BodyRendererAdapter {
     const dtSeconds = Math.min((now - this.last) / 1000, 0.033);
     const dt = dtSeconds * 60;
     this.last = now; this.t += dtSeconds;
+    const emergence = arrivalProgress(now - this.opts.arrivalStartedAt);
+    this.swarm.setEmergence(emergence);
+    this.canvas.dataset.arrival = emergence >= 1 ? "settled" : "emerging";
+    this.canvas.dataset.arrivalProgress = emergence.toFixed(3);
+    if (emergence >= 1 && !this.arrivalComplete) {
+      this.arrivalComplete = true;
+      this.opts.onArrivalDone();
+    }
     // Per-mode mood. Dormant keeps a real (breathing) body with dried threads and only a whisper of stillness;
     // live wakes it; rite lets the candle rake carry the mood. The old dormant path crushed it 85% to gray.
     const m = this.mode;

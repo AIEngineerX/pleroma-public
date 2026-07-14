@@ -62,6 +62,7 @@ export interface TempleExperience {
   receipts: OfferingReceipt[];
   activeCommand: BodyCommand | null;
   replayWitness: DreamCue | null;
+  arrivalDone(): void;
   commandComplete(id: string): void;
   offeringAccepted(offeringId: string): void;
   setThresholdActive(active: boolean): void;

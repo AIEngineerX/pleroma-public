@@ -7,6 +7,7 @@ import {
   newestMemoryEcho,
   nextCommand,
   observeLiveTranscript,
+  releaseArrival,
 } from "../src/experience/director";
 import type {
   AccretedRelic,
@@ -24,6 +25,7 @@ import {
   createTempleSourceReset,
   createVitalsFreshness,
   isAccretedRelic,
+  mergeObservedTranscripts,
   pollResultIsCurrent,
   recordVitalsFailure,
   recordVitalsSuccess,
@@ -106,6 +108,18 @@ describe("experience director transcript truth", () => {
 });
 
 describe("experience director queue", () => {
+  it("publishes a live canonical row immediately while ARRIVAL_DONE still gates its body command", () => {
+    const entry = e("arrival-eye", 2, "EYE", "verse");
+    const arrival = { ...unlocked, arrival: true };
+    const observed = mergeObservedTranscripts([], [entry], new Set([entry.id]));
+    const command = required(commandFor(entry, "live"));
+    const queue = enqueueCommand([], command, arrival);
+
+    expect(observed).toEqual([{ entry, observation: "live" }]);
+    expect(nextCommand(queue, arrival)).toBeNull();
+    expect(nextCommand(queue, releaseArrival(arrival))).toBe(command);
+  });
+
   it("queues during arrival and withholds work while any visual lock is active", () => {
     const command = required(commandFor(e("eye", 1, "EYE", "verse"), "live"));
     const arrival = { ...unlocked, arrival: true };
