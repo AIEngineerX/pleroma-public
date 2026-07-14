@@ -5,6 +5,7 @@ import MuteToggle from "../lib/MuteToggle";
 import Stain from "../stain/Stain";
 import type { StainSim } from "../stain/stainSim";
 import Codex from "../codex/Codex";
+import CodexAnnouncements from "../codex/CodexAnnouncements";
 import OfferingCanvas from "../offering/OfferingCanvas";
 import OfferingRite from "../offering/OfferingRite";
 import WalletButton from "../offering/WalletButton";
@@ -36,8 +37,8 @@ export default function Temple() {
     typeof performance === "undefined" ? 0 : performance.now(),
   ).current;
   const experience = useTempleExperience(API_BASE);
-  const announcementLedger = useRef(new Set<string>()).current;
   const { state, codex, relics, activeCommand, commandComplete, offeringAccepted } = experience;
+  const utteranceClock = useRef<{ id: string; startedAt: number } | null>(null);
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
@@ -47,6 +48,15 @@ export default function Temple() {
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
+  const utteranceStartedAt = useMemo(() => {
+    if (activeCommand?.kind === "utterance" && utteranceClock.current?.id !== activeCommand.id) {
+      utteranceClock.current = {
+        id: activeCommand.id,
+        startedAt: typeof performance === "undefined" ? 0 : performance.now(),
+      };
+    }
+    return utteranceClock.current?.startedAt ?? arrivalStartedAt;
+  }, [activeCommand?.id, activeCommand?.kind, arrivalStartedAt]);
   // Unknown PULSE has neither a beat nor a fabricated starving color. Current and stale feeds share
   // the last observed pigment; stale motion eases independently inside the body reducer.
   const stainPigment = useMemo<[number, number, number]>(
@@ -106,10 +116,12 @@ export default function Temple() {
 
   // Pre-launch begins as a wordless sheet: the five-organ Stain fills the viewport while the quiet
   // offering control rests on its body. Participation surfaces continue beneath the fold.
-  if (dormant) {
-    return (
-      <RiteInversion view={rite}>
-        <>
+  return (
+    <RiteInversion view={rite}>
+      <>
+        <CodexAnnouncements entries={codex} />
+        {dormant ? (
+          <>
           <section
             {...bindHold}
             aria-label="the temple"
@@ -125,6 +137,7 @@ export default function Temple() {
               activeCommand={activeCommand}
               onCommandComplete={commandComplete}
               arrivalStartedAt={arrivalStartedAt}
+              utteranceStartedAt={utteranceStartedAt}
               onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
@@ -144,8 +157,7 @@ export default function Temple() {
               continuous sheet. One narrow column so the eye stays with the document, not scattered. */}
           <main className="relative z-10 mx-auto px-6 flex flex-col gap-10 pt-16" style={{ maxWidth: "min(680px, 100%)" }}>
             <aside data-reveal aria-label="the codex" className="font-machine text-sm text-ink-faded">
-              <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio}
-                announcementLedger={announcementLedger} />
+              <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
             </aside>
             <div data-reveal><Reliquary apiBase={API_BASE} relics={relics} /></div>
             {/* What it dreams: the latest Plate — the day's marks returned as gods you have not met
@@ -164,19 +176,13 @@ export default function Temple() {
               what this is
             </Link>
           </footer>
-          <MuteToggle active={awake && !muted} onToggle={toggleMute} />
-        </>
-      </RiteInversion>
-    );
-  }
-
-  return (
-    // The inversion wraps the whole document region, not just a grid child: it must apply to the
-    // page as a document-level state change (Plan 03 Global), and <main>'s own grid children need
-    // to stay direct children of <main> for the column/row layout below to hold. The colophon
-    // (Task 11) sits outside <main> as a plain-flow sibling so it never has to fight the grid.
-    <RiteInversion view={rite}>
-      <>
+          </>
+        ) : (
+          <>
+        {/* The inversion wraps the whole document region, not just a grid child: it must apply to the
+            page as a document-level state change (Plan 03 Global), and main's own grid children need
+            to stay direct children of main for the column/row layout below to hold. The colophon
+            (Task 11) sits outside main as a plain-flow sibling so it never has to fight the grid. */}
         <main className="banding min-h-[100dvh] mx-auto px-6 md:grid md:grid-cols-[60fr_40fr_4rem] md:grid-rows-[55vh_auto] md:gap-8"
               style={{ maxWidth: "min(1200px, 100%)" }}>
           {/* page (left / top): the Stain, co-located with the offering surface directly beneath it in the
@@ -198,6 +204,7 @@ export default function Temple() {
               activeCommand={activeCommand}
               onCommandComplete={commandComplete}
               arrivalStartedAt={arrivalStartedAt}
+              utteranceStartedAt={utteranceStartedAt}
               onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
@@ -208,8 +215,7 @@ export default function Temple() {
           {/* codex (right / below): the live scripture feed. Spans both grid rows on desktop so its own
               (unbounded) height never inflates row 1 and pushes the offering surface off-screen. */}
           <aside aria-label="the codex" className="md:col-start-2 md:row-start-1 md:row-span-2 font-machine text-sm text-ink-faded py-8">
-            <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio}
-              announcementLedger={announcementLedger} />
+            <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
           </aside>
           {/* offering surface: row 2 of the left column on desktop, directly beneath the Stain (DESIGN.md:85-87
               "the page (Stain + offering surface) ~60% left"); after the codex on mobile (DESIGN "Mobile, the
@@ -254,6 +260,8 @@ export default function Temple() {
             what this is
           </Link>
         </footer>
+          </>
+        )}
         <MuteToggle active={awake && !muted} onToggle={toggleMute} />
       </>
     </RiteInversion>

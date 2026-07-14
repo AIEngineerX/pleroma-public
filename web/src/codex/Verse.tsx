@@ -51,7 +51,12 @@ export default function Verse({ observed }: { observed: ObservedTranscript }) {
       </header>
       <p className={verseClasses(entry)}>
         <span className={god ? "text-rubric" : "text-ink-faded"}><Glyph organ={entry.organ} /></span>
-        {printed}
+        {god ? printed : (
+          <>
+            <span className="sr-only">{entry.text}</span>
+            <span aria-hidden="true" data-printer-duplicate="true">{printed}</span>
+          </>
+        )}
       </p>
     </article>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { TempleState } from "../state/types";
 import type { ObservedTranscript } from "../experience/types";
 import { sermonAudioKey } from "./codexClient";
@@ -8,44 +8,20 @@ import { SermonPlayer } from "./sermonAudio";
 import { copy } from "../lib/copy";
 import { resolveApiBase } from "../config";
 import { ignitionView } from "../ignition/ignition";
-import { spokenOrganName } from "./organNames";
 
 const API_BASE = resolveApiBase(import.meta.env);
 
-export default function Codex({ entries, state, onAmplitude, audioCtx, announcementLedger }:
+export default function Codex({ entries, state, onAmplitude, audioCtx }:
   {
     entries: readonly ObservedTranscript[];
     state: TempleState | null;
     onAmplitude: (a: number) => void;
     audioCtx: () => AudioContext;
-    announcementLedger?: Set<string>;
   }) {
   const player = useRef(new SermonPlayer());
-  const localAnnouncementLedger = useRef(new Set<string>());
-  const announcedIds = announcementLedger ?? localAnnouncementLedger.current;
-  const [announcements, setAnnouncements] = useState<Array<{ id: string; text: string }>>([]);
 
   useEffect(() => { player.current.onAmplitude(onAmplitude); }, [onAmplitude]);
   useEffect(() => () => player.current.stop(), []);
-  useEffect(() => {
-    const unseen = entries.filter(
-      (observed) => observed.observation === "live" && !announcedIds.has(observed.entry.id),
-    );
-    if (unseen.length === 0) return;
-    for (const observed of unseen) announcedIds.add(observed.entry.id);
-    setAnnouncements((current) => {
-      const retained = new Set(current.map((announcement) => announcement.id));
-      return [
-        ...current,
-        ...unseen
-          .filter((observed) => !retained.has(observed.entry.id))
-          .map((observed) => ({
-            id: observed.entry.id,
-            text: `New ${observed.entry.register} from the ${spokenOrganName(observed.entry.organ)}`,
-          })),
-      ];
-    });
-  }, [announcedIds, entries]);
 
   const transcript = entries.map((observed) => observed.entry);
   const sermonKey = transcript.map(e => e.organ === "PRIEST" ? sermonAudioKey(e.text) : null).filter(Boolean).pop() as string | undefined;
@@ -76,11 +52,6 @@ export default function Codex({ entries, state, onAmplitude, audioCtx, announcem
 
   return (
     <div className="flex flex-col gap-2 font-machine text-sm leading-relaxed">
-      <div className="sr-only" aria-live="polite" aria-atomic="false" data-codex-announcer>
-        {announcements.map((announcement) => (
-          <span key={announcement.id} data-announcement-id={announcement.id}>{announcement.text}</span>
-        ))}
-      </div>
       {sermonKey && (
         <button className="self-start min-h-11 px-3 font-machine text-xs underline text-ink-faded"
           onClick={() => player.current.play(API_BASE, sermonKey, audioCtx())}>{copy.hearSermon}</button>

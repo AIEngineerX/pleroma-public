@@ -23,6 +23,7 @@ interface Props {
   activeCommand: BodyCommand | null;
   onCommandComplete(id: string): void;
   arrivalStartedAt: number;
+  utteranceStartedAt: number;
   onArrivalDone(): void;
   forceSettledRenderer: boolean;
   onRendererFallback(): void;
@@ -47,6 +48,7 @@ export default function Stain({
   activeCommand,
   onCommandComplete,
   arrivalStartedAt,
+  utteranceStartedAt,
   onArrivalDone,
   forceSettledRenderer,
   onRendererFallback,
@@ -350,6 +352,7 @@ export default function Stain({
   const utteranceAnchor = utterance === null || signal === null
     ? BODY_ANCHORS.EYE
     : BODY_ANCHORS[signal.organ];
+  const settleDirection = tier === "desktop" && state !== "dormant" ? "right" : "down";
   const now = typeof performance === "undefined" ? arrivalStartedAt : performance.now();
   const initialArrival = arrivalProgress(now - arrivalStartedAt);
 
@@ -394,6 +397,8 @@ export default function Stain({
         <BodyUtterance
           command={utterance}
           anchor={utteranceAnchor}
+          presentationStartedAt={utteranceStartedAt}
+          settleDirection={settleDirection}
           onComplete={(id) => finishCommand.current(id, commandGeneration.current)}
         />
       </div>

@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import Codex from "../src/codex/Codex";
+import CodexAnnouncements from "../src/codex/CodexAnnouncements";
 import { mergeNewest, isGodVoice, organSignalsFor, sermonAudioKey } from "../src/codex/codexClient";
 
 const e = (id: string, ts: number, organ: any, register: any, text = "x") =>
@@ -10,17 +11,22 @@ const e = (id: string, ts: number, organ: any, register: any, text = "x") =>
 describe("codex client", () => {
   it("renders canonical observed rows immediately with one polite announcement surface", () => {
     const entry = e("eye-live", 1_784_067_600_000, "EYE", "verse", "The Eye received a new line.");
-    const html = renderToStaticMarkup(createElement(Codex, {
-      entries: [{ entry, observation: "live" }],
-      state: null,
-      onAmplitude: () => undefined,
-      audioCtx: () => { throw new Error("audio stays opt-in during rendering"); },
-    }));
+    const entries = [{ entry, observation: "recorded" as const }];
+    const html = renderToStaticMarkup(createElement("div", null,
+      createElement(CodexAnnouncements, { entries }),
+      createElement(Codex, {
+        entries,
+        state: null,
+        onAmplitude: () => undefined,
+        audioCtx: () => { throw new Error("audio stays opt-in during rendering"); },
+      }),
+    ));
 
     expect(html).toContain("THE EYE");
     expect(html).toContain(entry.text);
     expect(html).toContain(`dateTime="${new Date(entry.created_at).toISOString()}"`);
     expect(html.match(/aria-live="polite"/g)).toHaveLength(1);
+    expect(html).not.toContain("data-announcement-id");
   });
 
   it("merges newest-first pages into one chronological, de-duplicated list", () => {

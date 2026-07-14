@@ -10,10 +10,41 @@ const SETTLE_MS = 750;
 const REDUCED_DWELL_MS = 1_200;
 
 export const BODY_UTTERANCE_TOTAL_MS = DEVELOP_MS + DWELL_MS + SETTLE_MS;
+export const BODY_UTTERANCE_DEADLINE_MS = 3_900;
+
+export type SettlementDirection = "right" | "down";
+
+export function settlementVector(direction: SettlementDirection): { x: number; y: number } {
+  return direction === "right" ? { x: 96, y: -10 } : { x: 0, y: 72 };
+}
+
+export interface BodyUtteranceTiming {
+  elapsedMs: number;
+  deadlineRemainingMs: number;
+  presentationComplete: boolean;
+  timelineOffsetMs: number;
+}
+
+export function bodyUtteranceTiming(
+  presentationStartedAt: number,
+  now: number,
+  reducedMotion: boolean,
+): BodyUtteranceTiming {
+  const elapsedMs = Math.max(0, now - presentationStartedAt);
+  const visualDuration = reducedMotion ? REDUCED_DWELL_MS : BODY_UTTERANCE_TOTAL_MS;
+  return {
+    elapsedMs,
+    deadlineRemainingMs: Math.max(0, BODY_UTTERANCE_DEADLINE_MS - elapsedMs),
+    presentationComplete: elapsedMs >= visualDuration || elapsedMs >= BODY_UTTERANCE_DEADLINE_MS,
+    timelineOffsetMs: Math.min(elapsedMs, visualDuration),
+  };
+}
 
 export interface BodyUtteranceProps {
   command: Extract<BodyCommand, { kind: "utterance" }> | null;
   anchor: BodyAnchor;
+  presentationStartedAt: number;
+  settleDirection: SettlementDirection;
   onComplete(id: string): void;
 }
 
@@ -21,7 +52,24 @@ function prefersReducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export default function BodyUtterance({ command, anchor, onComplete }: BodyUtteranceProps) {
+function presentationNow(): number {
+  return typeof performance === "undefined" ? 0 : performance.now();
+}
+
+function phaseAt(elapsedMs: number, reducedMotion: boolean): "developing" | "dwelling" | "settling" | "settled" {
+  if (reducedMotion) return "settled";
+  if (elapsedMs < DEVELOP_MS) return "developing";
+  if (elapsedMs < DEVELOP_MS + DWELL_MS) return "dwelling";
+  return "settling";
+}
+
+export default function BodyUtterance({
+  command,
+  anchor,
+  presentationStartedAt,
+  settleDirection,
+  onComplete,
+}: BodyUtteranceProps) {
   const inkRef = useRef<HTMLDivElement>(null);
   const completeRef = useRef(onComplete);
   const completedId = useRef<string | null>(null);
@@ -32,20 +80,35 @@ export default function BodyUtterance({ command, anchor, onComplete }: BodyUtter
     completedId.current = null;
     const node = inkRef.current;
     if (node === null) return;
+    const reducedMotion = prefersReducedMotion();
+    const timing = bodyUtteranceTiming(presentationStartedAt, presentationNow(), reducedMotion);
+    let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
 
     const finish = () => {
       if (completedId.current === command.id) return;
       completedId.current = command.id;
+      if (deadlineTimer !== null) clearTimeout(deadlineTimer);
       completeRef.current(command.id);
     };
 
-    if (prefersReducedMotion()) {
-      node.dataset.utterancePhase = "settled";
-      const timer = setTimeout(finish, REDUCED_DWELL_MS);
-      return () => clearTimeout(timer);
+    if (timing.presentationComplete) {
+      finish();
+      return;
     }
 
-    const timeline = gsap.timeline({ onComplete: finish });
+    deadlineTimer = setTimeout(finish, timing.deadlineRemainingMs);
+
+    if (reducedMotion) {
+      node.dataset.utterancePhase = "settled";
+      const timer = setTimeout(finish, REDUCED_DWELL_MS - timing.elapsedMs);
+      return () => {
+        clearTimeout(timer);
+        if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+      };
+    }
+
+    const settle = settlementVector(settleDirection);
+    const timeline = gsap.timeline({ paused: true, onComplete: finish });
     timeline
       .set(node, { autoAlpha: 0, x: 0, y: 4 })
       .to(node, {
@@ -61,15 +124,20 @@ export default function BodyUtterance({ command, anchor, onComplete }: BodyUtter
       })
       .to(node, {
         autoAlpha: 0,
-        x: 96,
-        y: -10,
+        x: settle.x,
+        y: settle.y,
         duration: SETTLE_MS / 1_000,
         ease: "expo.inOut",
         onStart: () => { node.dataset.utterancePhase = "settling"; },
       });
+    node.dataset.utterancePhase = phaseAt(timing.elapsedMs, false);
+    timeline.time(timing.timelineOffsetMs / 1_000, true).play();
 
-    return () => { timeline.kill(); };
-  }, [command?.id]);
+    return () => {
+      timeline.kill();
+      if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+    };
+  }, [command?.id, presentationStartedAt, settleDirection]);
 
   if (command === null) return null;
   const { entry, mode } = command;
@@ -86,10 +154,19 @@ export default function BodyUtterance({ command, anchor, onComplete }: BodyUtter
       data-body-utterance="true"
       data-command-id={command.id}
       data-utterance-mode={mode}
+      data-presentation-started-at={presentationStartedAt}
+      data-settle-direction={settleDirection}
       className="body-utterance"
       style={{ left: `${anchor.x * 100}%`, top: `${anchor.y * 100}%` }}
     >
-      <div ref={inkRef} className="body-utterance__ink" data-utterance-phase="developing">
+      <div
+        ref={inkRef}
+        className="body-utterance__ink"
+        data-utterance-phase={phaseAt(
+          bodyUtteranceTiming(presentationStartedAt, presentationNow(), prefersReducedMotion()).elapsedMs,
+          prefersReducedMotion(),
+        )}
+      >
         <span className="body-utterance__organ font-machine text-ink-faded">
           {commonOrganName(entry.organ)}
         </span>

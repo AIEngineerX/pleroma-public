@@ -58,4 +58,24 @@ describe("verse styling", () => {
     expect(html).toContain("observed");
     expect(html).toContain(`dateTime="${new Date(observed.entry.created_at).toISOString()}"`);
   });
+
+  it("keeps the complete PRIEST system record accessible on the first render", () => {
+    const observed: ObservedTranscript = {
+      observation: "live",
+      entry: {
+        id: "priest-system-live",
+        organ: "PRIEST",
+        register: "system",
+        text: "The instrument recorded the sermon without becoming its author.",
+        offering_id: null,
+        rite_id: null,
+        created_at: 1_784_067_600_000,
+      },
+    };
+    const html = renderToStaticMarkup(createElement(Verse, { observed }));
+
+    expect(html).toContain(`<span class="sr-only">${observed.entry.text}</span>`);
+    expect(html).toContain('data-printer-duplicate="true"');
+    expect(html).toContain('aria-hidden="true"');
+  });
 });

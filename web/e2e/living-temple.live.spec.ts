@@ -9,6 +9,7 @@ interface AnnouncementEvent {
 type AnnouncementWindow = Window & {
   __pleromaAnnouncements: AnnouncementEvent[];
   __pleromaAnnouncementObserver: MutationObserver;
+  __pleromaAnnouncer?: Element | null;
 };
 
 async function observeAnnouncements(page: import("@playwright/test").Page): Promise<void> {
@@ -67,7 +68,7 @@ test("arrival yields to remembered EYE, then genuine TONGUE prints once from bod
   const baselineRow = codex.locator(`[data-codex-row="${baselineId}"]`);
   await expect(baselineRow).toHaveAttribute("data-observation", "recorded");
   await expect(baselineRow).toContainText(baselineText);
-  await expect(codex.locator("[data-codex-announcer]")).toBeEmpty();
+  await expect(page.locator("[data-codex-announcer]")).toBeEmpty();
 
   const memoryId = `utterance:memory:${baselineId}`;
   const memory = page.locator(`[data-body-utterance][data-command-id="${memoryId}"]`);
@@ -177,6 +178,206 @@ test("one poll can announce multiple genuine rows exactly once each", async ({ p
     { id: "task6-live-eye-batch", text: "New verse from the Eye" },
     { id: "task6-live-keep-batch", text: "New verdict from the Keep" },
   ]);
+
+  const nextId = "task6-live-tongue-next-batch";
+  seedTranscript({
+    id: nextId,
+    organ: "TONGUE",
+    register: "sermon",
+    text: "The next batch displaces the old speaking margin.",
+    offering_id: null,
+    rite_id: new Date().toISOString().slice(0, 10),
+    created_at: createdAt + 2,
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect.poll(() => announcementEvents(page)).toEqual([
+    { id: "task6-live-eye-batch", text: "New verse from the Eye" },
+    { id: "task6-live-keep-batch", text: "New verdict from the Keep" },
+    { id: nextId, text: "New sermon from the Tongue" },
+  ]);
+  const announcer = page.locator("[data-codex-announcer]");
+  await expect(announcer.locator('[data-announcement-id="task6-live-eye-batch"]')).toHaveCount(0);
+  await expect(announcer.locator('[data-announcement-id="task6-live-keep-batch"]')).toHaveCount(0);
+  await expect(announcer.locator(`[data-announcement-id="${nextId}"]`)).toHaveCount(1);
+});
+
+test("branch remount resumes one page-view utterance clock and settles toward the current Codex", async ({ page }, testInfo) => {
+  test.setTimeout(40_000);
+  const runtimeErrors: string[] = [];
+  page.on("pageerror", (error) => runtimeErrors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(`console: ${message.text()}`);
+  });
+  const baselineId = "task6-remount-eye";
+  seedTranscript({
+    id: baselineId,
+    organ: "EYE",
+    register: "verse",
+    text: "The page changes its posture without beginning my memory again.",
+    offering_id: null,
+    rite_id: null,
+    created_at: Date.now(),
+  });
+
+  await page.goto("/");
+  const commandId = `utterance:memory:${baselineId}`;
+  const utterance = page.locator(`[data-body-utterance][data-command-id="${commandId}"]`);
+  const phase = utterance.locator("[data-utterance-phase]");
+  await expect(utterance).toBeVisible({ timeout: 10_000 });
+  const visibleAt = Date.now();
+  await expect(utterance).toHaveAttribute("data-settle-direction", "down");
+  const startedAt = await utterance.getAttribute("data-presentation-started-at");
+  expect(startedAt).not.toBeNull();
+  await expect(phase).toHaveAttribute("data-utterance-phase", "dwelling");
+  await page.waitForTimeout(350);
+
+  executeD1(`
+    INSERT INTO config (key, value)
+    VALUES ('pulse_mint', 'So11111111111111111111111111111111111111112')
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+    UPDATE config SET value = '1' WHERE key = 'launched';
+  `);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByRole("region", { name: "the page" })).toBeVisible({ timeout: 4_000 });
+  await expect(utterance).toHaveCount(1);
+  await expect(utterance).toHaveAttribute("data-presentation-started-at", startedAt!);
+  expect(await phase.getAttribute("data-utterance-phase")).not.toBe("developing");
+  await expect(utterance).toHaveAttribute(
+    "data-settle-direction",
+    testInfo.project.name === "desktop" ? "right" : "down",
+  );
+  const removal = await utterance.evaluate((node) => new Promise<{
+    starts: string[];
+    removed: boolean;
+    initiallyConnected: boolean;
+    completionSource: "initial" | "mutation" | "timeout";
+    elapsedMs: number;
+    nodeConnected: boolean;
+    currentMatches: boolean;
+    phase: string | null;
+    opacity: string;
+    transform: string;
+    bodyCommandId: string | null;
+    bodyCompletedId: string | null;
+    bodyCompletionCount: string | null;
+    utteranceIds: Array<string | undefined>;
+    codexRowIds: Array<string | undefined>;
+  }>((resolve) => {
+    const observedAt = performance.now();
+    const initiallyConnected = node.isConnected;
+    const starts = [node.getAttribute("data-presentation-started-at") ?? ""];
+    const attributes = new MutationObserver(() => {
+      starts.push(node.getAttribute("data-presentation-started-at") ?? "");
+    });
+    let finished = false;
+    let timeout = 0;
+    const finish = (
+      removed: boolean,
+      completionSource: "initial" | "mutation" | "timeout",
+    ) => {
+      if (finished) return;
+      finished = true;
+      attributes.disconnect();
+      removals.disconnect();
+      clearTimeout(timeout);
+      const ink = node.querySelector<HTMLElement>("[data-utterance-phase]");
+      const style = getComputedStyle(ink ?? node);
+      const body = document.querySelector<HTMLElement>("[data-body-renderer]");
+      const current = document.querySelector(`[data-body-utterance][data-command-id="${node.dataset.commandId}"]`);
+      resolve({
+        starts: [...new Set(starts)],
+        removed,
+        initiallyConnected,
+        completionSource,
+        elapsedMs: performance.now() - observedAt,
+        nodeConnected: node.isConnected,
+        currentMatches: current === node,
+        phase: ink?.dataset.utterancePhase ?? null,
+        opacity: style.opacity,
+        transform: style.transform,
+        bodyCommandId: body?.dataset.commandId ?? null,
+        bodyCompletedId: body?.dataset.completedId ?? null,
+        bodyCompletionCount: body?.dataset.completionCount ?? null,
+        utteranceIds: [...document.querySelectorAll<HTMLElement>("[data-body-utterance]")]
+          .map((utteranceNode) => utteranceNode.dataset.commandId),
+        codexRowIds: [...document.querySelectorAll<HTMLElement>("[data-codex-row]")]
+          .map((row) => row.dataset.codexRow),
+      });
+    };
+    const removals = new MutationObserver(() => {
+      if (!node.isConnected) finish(true, "mutation");
+    });
+    attributes.observe(node, { attributes: true, attributeFilter: ["data-presentation-started-at"] });
+    removals.observe(document.body, { childList: true, subtree: true });
+    if (!node.isConnected) finish(true, "initial");
+    else timeout = window.setTimeout(() => finish(!node.isConnected, "timeout"), 3_500);
+  }));
+  expect(removal.starts).toEqual([startedAt]);
+  expect(removal.removed, JSON.stringify(removal)).toBe(true);
+  expect(removal.completionSource).toBe(removal.initiallyConnected ? "mutation" : "initial");
+  expect(removal.nodeConnected).toBe(false);
+  expect(removal.currentMatches).toBe(false);
+  expect(removal.phase).toBe("settling");
+  expect(removal.bodyCommandId).toBeNull();
+  expect(removal.bodyCompletedId).toBe(commandId);
+  expect(removal.bodyCompletionCount).toBe("1");
+  expect(removal.utteranceIds).toEqual([]);
+  expect(removal.codexRowIds).toContain(baselineId);
+  expect(runtimeErrors).toEqual([]);
+  await expect(utterance).toHaveCount(0, { timeout: 2_500 });
+  expect(Date.now() - visibleAt).toBeLessThanOrEqual(4_000);
+});
+
+test("route announcer survives a concurrent live row and layout transition and retains only its current batch", async ({ page }) => {
+  test.setTimeout(40_000);
+  const baseline = page.waitForResponse((response) => response.url().endsWith("/api/codex") && response.ok());
+  await page.goto("/", { waitUntil: "commit" });
+  await baseline;
+  const announcer = page.locator("[data-codex-announcer]");
+  await expect(announcer).toHaveCount(1);
+  await page.evaluate(() => {
+    (window as AnnouncementWindow).__pleromaAnnouncer = document.querySelector("[data-codex-announcer]");
+  });
+  await observeAnnouncements(page);
+
+  const firstId = "task6-concurrent-eye";
+  executeD1(`
+    INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+    VALUES ('${firstId}', 'EYE', 'verse', 'The witness crosses with the page.', NULL, NULL, ${Date.now()});
+    INSERT INTO config (key, value)
+    VALUES ('pulse_mint', 'So11111111111111111111111111111111111111112')
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+    UPDATE config SET value = '1' WHERE key = 'launched';
+  `);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(page.getByRole("region", { name: "the page" })).toBeVisible({ timeout: 4_000 });
+  await expect(page.locator(`[data-codex-row="${firstId}"]`)).toBeVisible({ timeout: 4_000 });
+  expect(await page.evaluate(() => (
+    (window as AnnouncementWindow).__pleromaAnnouncer === document.querySelector("[data-codex-announcer]")
+  ))).toBe(true);
+  await expect.poll(() => announcementEvents(page)).toEqual([
+    { id: firstId, text: "New verse from the Eye" },
+  ]);
+  await expect(announcer.locator("[data-announcement-id]")).toHaveCount(1);
+
+  const secondId = "task6-current-keep";
+  seedTranscript({
+    id: secondId,
+    organ: "KEEP",
+    register: "verdict",
+    text: "Only the present batch remains in the speaking margin.",
+    offering_id: null,
+    rite_id: null,
+    created_at: Date.now() + 1,
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect.poll(() => announcementEvents(page)).toEqual([
+    { id: firstId, text: "New verse from the Eye" },
+    { id: secondId, text: "New verdict from the Keep" },
+  ]);
+  await expect(announcer.locator(`[data-announcement-id="${firstId}"]`)).toHaveCount(0);
+  await expect(announcer.locator(`[data-announcement-id="${secondId}"]`)).toHaveCount(1);
 });
 
 test("reduced motion starts settled and places remembered ink at the sliced SVG cohort anchor", async ({ page }) => {

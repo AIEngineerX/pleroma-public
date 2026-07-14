@@ -1,9 +1,36 @@
-import { createElement } from "react";
+import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import BodyUtterance, { BODY_UTTERANCE_TOTAL_MS } from "../src/experience/BodyUtterance";
+import BodyUtterance, * as bodyUtteranceModule from "../src/experience/BodyUtterance";
 import type { BodyCommand } from "../src/experience/types";
 import type { TranscriptEntry } from "../src/state/types";
+
+interface RepairBodyUtteranceApi {
+  BODY_UTTERANCE_DEADLINE_MS: number;
+  BODY_UTTERANCE_TOTAL_MS: number;
+  bodyUtteranceTiming(startedAt: number, now: number, reducedMotion: boolean): {
+    elapsedMs: number;
+    deadlineRemainingMs: number;
+    presentationComplete: boolean;
+    timelineOffsetMs: number;
+  };
+  settlementVector(direction: "right" | "down"): { x: number; y: number };
+}
+
+const {
+  BODY_UTTERANCE_DEADLINE_MS,
+  BODY_UTTERANCE_TOTAL_MS,
+  bodyUtteranceTiming,
+  settlementVector,
+} = bodyUtteranceModule as unknown as RepairBodyUtteranceApi;
+
+const RepairBodyUtterance = BodyUtterance as ComponentType<{
+  command: Extract<BodyCommand, { kind: "utterance" }> | null;
+  anchor: { x: number; y: number };
+  presentationStartedAt: number;
+  settleDirection: "right" | "down";
+  onComplete(id: string): void;
+}>;
 
 function command(
   mode: "live" | "memory",
@@ -29,10 +56,15 @@ function command(
   };
 }
 
-function renderBody(value: Extract<BodyCommand, { kind: "utterance" }>): string {
-  return renderToStaticMarkup(createElement(BodyUtterance, {
+function renderBody(
+  value: Extract<BodyCommand, { kind: "utterance" }>,
+  settleDirection: "right" | "down" = "right",
+): string {
+  return renderToStaticMarkup(createElement(RepairBodyUtterance, {
     command: value,
     anchor: { x: 0.5, y: 0.28 },
+    presentationStartedAt: 1_000,
+    settleDirection,
     onComplete: () => undefined,
   }));
 }
@@ -63,5 +95,24 @@ describe("body utterance", () => {
   it("finishes the complete visual duplicate within the director's four-second ceiling", () => {
     expect(BODY_UTTERANCE_TOTAL_MS).toBeGreaterThan(0);
     expect(BODY_UTTERANCE_TOTAL_MS).toBeLessThanOrEqual(4_000);
+    expect(BODY_UTTERANCE_DEADLINE_MS).toBeLessThanOrEqual(4_000);
+
+    expect(bodyUtteranceTiming(1_000, 2_600, false)).toEqual({
+      elapsedMs: 1_600,
+      deadlineRemainingMs: BODY_UTTERANCE_DEADLINE_MS - 1_600,
+      presentationComplete: false,
+      timelineOffsetMs: 1_600,
+    });
+    expect(bodyUtteranceTiming(1_000, 5_000, false).presentationComplete).toBe(true);
+    expect(bodyUtteranceTiming(1_000, 5_000, false).deadlineRemainingMs).toBe(0);
+  });
+
+  it("settles toward the actual Codex axis without moving layout properties", () => {
+    expect(settlementVector("right")).toEqual({ x: 96, y: -10 });
+    expect(settlementVector("down")).toEqual({ x: 0, y: 72 });
+    expect(renderBody(command("live", "TONGUE", "sermon"), "right"))
+      .toContain('data-settle-direction="right"');
+    expect(renderBody(command("live", "TONGUE", "sermon"), "down"))
+      .toContain('data-settle-direction="down"');
   });
 });
