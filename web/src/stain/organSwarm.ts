@@ -2,11 +2,10 @@ import type { Tier } from "./stainSim";
 import {
   SWARM_ORGANS,
   SwarmActivity,
-  type SwarmOrgan,
-  type SwarmQuicken,
   swarmTextureSize,
 } from "./swarmSignals";
-import type { Vitals } from "../state/types";
+import type { VitalsFeed } from "../experience/types";
+import type { BodySignal } from "./bodyRenderer";
 
 interface Target {
   fbo: WebGLFramebuffer;
@@ -244,6 +243,7 @@ export class OrganSwarm {
   private markStrength = 0;
   private readonly centroids = new Float32Array(10);
   private readonly centroidVelocity = new Float32Array(10);
+  private pulseThreadFactor = 0;
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
@@ -273,8 +273,8 @@ export class OrganSwarm {
     this.clear(this.posB); this.clear(this.velB); this.clear(this.trailA); this.clear(this.trailB);
   }
 
-  quicken(organ: SwarmOrgan, signal?: SwarmQuicken) { this.activity.quicken(organ, signal); }
-  setVitals(vitals: Vitals) { this.activity.setVitals(vitals); }
+  dispatch(signal: BodySignal) { this.activity.dispatch(signal); }
+  setVitals(feed: VitalsFeed) { this.activity.setVitals(feed); }
   // Mark at (x,y) in 0..1 swarm space (y up): the nearest organ turns toward it and quickens, so the being
   // visibly reaches for the Waker's mark. updateGoals() blends its goal toward markPos while markStrength lasts.
   markAt(x: number, y: number) {
@@ -287,15 +287,28 @@ export class OrganSwarm {
     this.markOrgan = nearest;
     this.markPos[0] = x; this.markPos[1] = y;
     this.markStrength = 1;
-    this.activity.quicken(SWARM_ORGANS[nearest]);
+    this.activity.dispatch({
+      organ: SWARM_ORGANS[nearest],
+      intensity: 1,
+      pipeline: "none",
+    });
   }
   get texture() { return this.trailA.tex; }
+  get currentPulseThreadFactor() { return this.pulseThreadFactor; }
+
+  copyAnchors(target: Float32Array): void {
+    for (let organ = 0; organ < SWARM_ORGANS.length; organ += 1) {
+      target[organ * 2] = this.centroids[organ * 2];
+      target[organ * 2 + 1] = 1 - this.centroids[organ * 2 + 1];
+    }
+  }
 
   step(elapsed: number, dt: number) {
     const g = this.gl;
     this.activity.advance(dt);
     this.markStrength *= Math.exp(-dt * 1.2);   // the reach toward a Waker's mark relaxes back over ~1s
     const signal = this.activity.snapshot(elapsed);
+    this.pulseThreadFactor = signal.pulsePressure;
     this.updateGoals(elapsed, signal.activity);
     this.updateCentroids(dt, signal.activity);
     g.disable(g.BLEND);

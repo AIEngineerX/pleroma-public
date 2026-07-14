@@ -1,0 +1,186 @@
+import type {
+  BodyCommand,
+  PipelineLink,
+  RelicInkSample,
+  VitalsFeed,
+} from "../experience/types";
+
+export type BodyAnchorName = "EYE" | "KEEP" | "TONGUE" | "PULSE" | "DREAM" | "seraph";
+
+export interface BodyAnchor {
+  x: number;
+  y: number;
+}
+
+export interface BodyRendererAdapter {
+  dispatch(command: BodyCommand, onComplete: (id: string) => void): void;
+  hydrateRelics(samples: readonly RelicInkSample[]): void;
+  getAnchor(name: BodyAnchorName): BodyAnchor;
+  setVitals(feed: VitalsFeed): void;
+  setAnchorSink(sink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null): void;
+  stop(): void;
+  dispose(): void;
+}
+
+export interface SettledBodyRendererState {
+  command: BodyCommand | null;
+  relicMemory: readonly RelicInkSample[];
+  vitals: VitalsFeed;
+  seraph: "five" | "converged";
+}
+
+export const BODY_ANCHORS: Readonly<Record<BodyAnchorName, BodyAnchor>> = {
+  EYE: { x: 0.5, y: 0.28 },
+  KEEP: { x: 0.7, y: 0.43 },
+  TONGUE: { x: 0.64, y: 0.66 },
+  PULSE: { x: 0.36, y: 0.66 },
+  DREAM: { x: 0.3, y: 0.43 },
+  seraph: { x: 0.5, y: 0.5 },
+};
+
+export type BodyOrgan = Exclude<BodyAnchorName, "seraph">;
+
+export interface BodySignal {
+  organ: BodyOrgan;
+  intensity: number;
+  pipeline: PipelineLink;
+  rubric?: boolean;
+}
+
+function isBodyOrgan(organ: string): organ is BodyOrgan {
+  return organ === "EYE"
+    || organ === "KEEP"
+    || organ === "TONGUE"
+    || organ === "PULSE"
+    || organ === "DREAM";
+}
+
+export function signalForBodyCommand(command: BodyCommand): BodySignal | null {
+  switch (command.kind) {
+    case "quicken":
+      return {
+        organ: command.organ,
+        intensity: command.intensity,
+        pipeline: command.pipeline,
+      };
+    case "utterance":
+      if (!isBodyOrgan(command.entry.organ)) return null;
+      return {
+        organ: command.entry.organ,
+        intensity: command.intensity,
+        pipeline: command.pipeline,
+        rubric: command.entry.organ === "TONGUE" && command.entry.register === "sermon",
+      };
+    case "accrete":
+    case "converge":
+    case "dissolve":
+      return null;
+    default: {
+      const exhaustive: never = command;
+      return exhaustive;
+    }
+  }
+}
+
+export function dedupeRelicSamples(samples: readonly RelicInkSample[]): RelicInkSample[] {
+  const seen = new Set<string>();
+  const unique: RelicInkSample[] = [];
+  for (const sample of samples) {
+    if (seen.has(sample.offeringId)) continue;
+    seen.add(sample.offeringId);
+    unique.push(sample);
+  }
+  return unique;
+}
+
+export function anchorsFromSwarmCentroids(
+  centroids: ArrayLike<number>,
+): Readonly<Record<BodyAnchorName, BodyAnchor>> {
+  return {
+    EYE: { x: centroids[0], y: 1 - centroids[1] },
+    KEEP: { x: centroids[2], y: 1 - centroids[3] },
+    TONGUE: { x: centroids[4], y: 1 - centroids[5] },
+    PULSE: { x: centroids[6], y: 1 - centroids[7] },
+    DREAM: { x: centroids[8], y: 1 - centroids[9] },
+    seraph: { ...BODY_ANCHORS.seraph },
+  };
+}
+
+function cloneVitalsFeed(feed: VitalsFeed): VitalsFeed {
+  if (feed.kind === "unknown") return feed;
+  return { ...feed, value: { ...feed.value } };
+}
+
+export class SettledBodyRendererAdapter implements BodyRendererAdapter {
+  private command: BodyCommand | null = null;
+  private relicMemory: RelicInkSample[] = [];
+  private vitals: VitalsFeed = { kind: "unknown" };
+  private seraph: "five" | "converged" = "five";
+  private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
+  private disposed = false;
+
+  constructor(private onChange: (state: SettledBodyRendererState) => void) {}
+
+  dispatch(command: BodyCommand, onComplete: (id: string) => void): void {
+    if (this.disposed) {
+      onComplete(command.id);
+      return;
+    }
+    this.command = command;
+    if (command.kind === "accrete") {
+      this.relicMemory = dedupeRelicSamples([...this.relicMemory, command.ink]);
+    } else if (command.kind === "converge") {
+      this.seraph = "converged";
+    } else if (command.kind === "dissolve") {
+      this.seraph = "five";
+    }
+    this.emit();
+    onComplete(command.id);
+  }
+
+  hydrateRelics(samples: readonly RelicInkSample[]): void {
+    if (this.disposed) return;
+    const next = dedupeRelicSamples(samples);
+    const unchanged = next.length === this.relicMemory.length
+      && next.every((sample, index) => sample.offeringId === this.relicMemory[index]?.offeringId);
+    if (unchanged) return;
+    this.relicMemory = next;
+    this.emit();
+  }
+
+  getAnchor(name: BodyAnchorName): BodyAnchor {
+    return { ...BODY_ANCHORS[name] };
+  }
+
+  setVitals(feed: VitalsFeed): void {
+    if (this.disposed) return;
+    this.vitals = cloneVitalsFeed(feed);
+    this.emit();
+  }
+
+  setAnchorSink(
+    sink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null,
+  ): void {
+    this.anchorSink = sink;
+    sink?.(BODY_ANCHORS);
+  }
+
+  stop(): void {
+    // A settled body has no animation loop to stop.
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.anchorSink = null;
+    this.onChange = () => undefined;
+  }
+
+  private emit(): void {
+    this.onChange({
+      command: this.command,
+      relicMemory: this.relicMemory,
+      vitals: this.vitals,
+      seraph: this.seraph,
+    });
+  }
+}

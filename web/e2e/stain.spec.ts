@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetStack } from "./helpers/workerFixture";
+import { resetStack, seedTranscript } from "./helpers/workerFixture";
 
 test.beforeEach(() => resetStack());
 
@@ -10,7 +10,7 @@ test("the Stain renders ink on parchment (one-glance)", async ({ page }) => {
   });
   await page.goto("/");
   // OfferingCanvas mounts a second canvas; the simulation identifies only the membrane it owns.
-  const canvas = page.locator("canvas[data-organ-swarm]");
+  const canvas = page.locator('canvas[data-body-renderer="webgl"]');
   // desktop/mobile tiers create a canvas; reduced-motion (not set here) would not.
   await expect(canvas).toBeVisible();
   await expect(page.locator(".visage")).toHaveCount(0);
@@ -23,10 +23,87 @@ test("the Stain renders ink on parchment (one-glance)", async ({ page }) => {
   await page.screenshot({ path: `e2e/__shots__/stain-${test.info().project.name}.png` });
 });
 
+test("real commands survive permanent WebGL loss without inventing PULSE", async ({ page }) => {
+  test.setTimeout(45_000);
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+
+  const codexBaseline = page.waitForResponse(
+    (response) => response.url().endsWith("/api/codex") && response.ok(),
+  );
+  const relicBaseline = page.waitForResponse(
+    (response) => response.url().includes("/api/relics") && response.ok(),
+  );
+  await page.goto("/", { waitUntil: "commit" });
+  await Promise.all([codexBaseline, relicBaseline]);
+
+  const body = page.locator("[data-body-renderer]").first();
+  await expect(body).toHaveAttribute("data-body-renderer", "webgl");
+  await expect(body).toHaveAttribute("data-initial-pulse-kind", "unknown");
+  await expect(body).toHaveAttribute("data-initial-pulse-beat", "0");
+  await expect(body).toHaveAttribute("data-initial-pulse-bpm", "0");
+  await expect(body).toHaveAttribute("data-initial-pulse-pressure", "0");
+
+  const eyeId = "e2e-stain-eye";
+  seedTranscript({
+    id: eyeId,
+    organ: "EYE",
+    register: "verse",
+    text: "I witness the mark after the record opens.",
+    offering_id: null,
+    rite_id: null,
+    created_at: Date.now(),
+  });
+  const eyeCommandId = `utterance:live:${eyeId}`;
+  await expect(body).toHaveAttribute("data-command-id", eyeCommandId, { timeout: 10_000 });
+  await expect(body).toHaveAttribute("data-active-organ", "EYE");
+  await expect(body).toHaveAttribute("data-pipeline", "eye-keep");
+
+  const lost = await body.evaluate((node: HTMLCanvasElement) => {
+    const gl = node.getContext("webgl2");
+    const extension = gl?.getExtension("WEBGL_lose_context");
+    if (extension === null || extension === undefined) return false;
+    extension.loseContext();
+    return true;
+  });
+  expect(lost).toBe(true);
+
+  await expect(body).toHaveAttribute("data-body-renderer", "svg");
+  await expect(page.locator("canvas[data-body-renderer]")).toHaveCount(0);
+  await expect(body).toHaveAttribute("data-command-id", eyeCommandId);
+  await expect(body).toHaveAttribute("data-active-organ", "EYE");
+  await expect(body).toHaveAttribute("data-pipeline", "eye-keep");
+  await expect(body).toHaveAttribute("data-completed-id", eyeCommandId);
+  await expect(body).toHaveAttribute("data-completion-count", "1");
+
+  const keepId = "e2e-stain-keep";
+  seedTranscript({
+    id: keepId,
+    organ: "KEEP",
+    register: "verdict",
+    text: "The witnessed mark remains in judgment.",
+    offering_id: null,
+    rite_id: null,
+    created_at: Date.now() + 1,
+  });
+  const keepCommandId = `utterance:live:${keepId}`;
+  await expect(body).toHaveAttribute("data-command-id", keepCommandId, { timeout: 10_000 });
+  await expect(body).toHaveAttribute("data-active-organ", "KEEP");
+  await expect(body).toHaveAttribute("data-pipeline", "keep-tongue");
+  await expect(body).toHaveAttribute("data-completed-id", keepCommandId);
+  await expect(body).toHaveAttribute("data-completion-count", "2");
+  await expect(page.locator("canvas[data-body-renderer]")).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});
+
 test("reduced motion settles the five organs without creating a GL loop", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
-  await expect(page.locator("svg.swarm-settled")).toBeVisible();
+  const settled = page.locator('svg[data-body-renderer="svg"]');
+  await expect(settled).toBeVisible();
+  await expect(settled).toHaveCSS("animation-name", "none");
   await expect(page.locator("canvas[data-organ-swarm]")).toHaveCount(0);
   await expect(page.locator(".visage")).toHaveCount(0);
 });

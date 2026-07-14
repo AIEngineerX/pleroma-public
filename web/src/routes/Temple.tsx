@@ -4,16 +4,14 @@ import { useEntryGesture } from "../App";
 import MuteToggle from "../lib/MuteToggle";
 import Stain from "../stain/Stain";
 import type { StainSim } from "../stain/stainSim";
-import { isSwarmOrgan, type SwarmSignalTarget } from "../stain/swarmSignals";
 import Codex from "../codex/Codex";
-import { isGodVoice } from "../codex/codexClient";
 import OfferingCanvas from "../offering/OfferingCanvas";
 import OfferingRite from "../offering/OfferingRite";
 import WalletButton from "../offering/WalletButton";
 import type { WalletHandle } from "../offering/wallet";
 import { resolveApiBase } from "../config";
 import { useTempleExperience } from "../experience/useTempleExperience";
-import { pigment } from "../state/pigment";
+import { pigmentForVitals } from "../state/pigment";
 import { oklchToRgb } from "../lib/a11y";
 import Reliquary from "../reliquary/Reliquary";
 import Tallies from "../reliquary/Tallies";
@@ -28,11 +26,9 @@ import HowToBuy from "../market/HowToBuy";
 import Ticker from "../market/Ticker";
 import Socials from "../market/Socials";
 import { Link } from "react-router-dom";
-import type { Vitals } from "../state/types";
 
 const API_BASE = resolveApiBase(import.meta.env);
 const today = () => new Date().toISOString().slice(0, 10);
-const QUIET_VITALS: Vitals = { state: "starving", buys: 0, sells: 0, holders: 0 };
 
 export default function Temple() {
   const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter, holdPoint } = useEntryGesture();
@@ -42,25 +38,24 @@ export default function Temple() {
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
   const [stainSim, setStainSim] = useState<StainSim | null>(null);
-  const swarmSignals = useRef<SwarmSignalTarget | null>(null);
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
-  const vitals = experience.vitals.kind === "unknown" ? QUIET_VITALS : experience.vitals.value;
-  // The Stain's red threads read the live PULSE pigment (Task 4's oklch table), not a fixed tint;
-  // falls back to starving's dried rubric before the first poll lands. Convert OKLCH -> gamma sRGB
-  // properly (Ottosson) for the WebGL u_thread uniform; a naive L/C/H parse renders green, not rubric red.
+  // Unknown PULSE has neither a beat nor a fabricated starving color. Current and stale feeds share
+  // the last observed pigment; stale motion eases independently inside the body reducer.
   const stainPigment = useMemo<[number, number, number]>(
-    () => oklchToRgb(pigment(vitals.state).rgb),
-    [vitals.state],
+    () => {
+      const current = pigmentForVitals(experience.vitals);
+      return current === null ? [0, 0, 0] : oklchToRgb(current.rgb);
+    },
+    [experience.vitals],
   );
   // The sermon player calls back up to 60x/s; only push a re-render on a change the eye would
   // actually catch, instead of setState on every animation frame (Task 5 carry).
   // The sermon voice reports its RMS here; the rAF below fuses it with the music bed so the Stain reflects
   // whichever is louder (the god's speech overrides its resting breath).
   const onAmplitude = useCallback((a: number) => { sermonAmp.current = a; }, []);
-  const onSwarm = useCallback((target: SwarmSignalTarget | null) => { swarmSignals.current = target; }, []);
   // One clock fuses both sound sources into the Stain amplitude: the opt-in Lyria music bed (audioLevel)
   // and the transient sermon voice (sermonAmp), so the body breathes with the temple and surges when the
   // god speaks. Gated to 0.02 so a slow drone never thrashes React re-renders.
@@ -77,18 +72,6 @@ export default function Temple() {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [audioLevel]);
-  useEffect(() => {
-    if (activeCommand === null) return;
-    if (activeCommand.kind === "utterance" && isSwarmOrgan(activeCommand.entry.organ)) {
-      swarmSignals.current?.quicken(activeCommand.entry.organ, {
-        rubric: activeCommand.entry.organ === "TONGUE" && isGodVoice(activeCommand.entry),
-      });
-    } else if (activeCommand.kind === "quicken") {
-      swarmSignals.current?.quicken(activeCommand.organ, { rubric: false });
-    }
-    commandComplete(activeCommand.id);
-  }, [activeCommand, commandComplete]);
-
   // Scroll-reveals for the below-fold surfaces: each inks up into place as it enters the viewport, on the
   // same Lenis/GSAP clock as the smooth scroll. Honors reduced motion (everything appears settled). Runs
   // only in the dormant first-sheet layout, where the participation surfaces live beneath the fold.
@@ -131,9 +114,11 @@ export default function Temple() {
               state={view ? view.stainState : "dormant"}
               pigment={stainPigment}
               amplitude={amplitude}
-              vitals={vitals}
+              vitals={experience.vitals}
+              relicMemory={experience.relicMemory}
+              activeCommand={activeCommand}
+              onCommandComplete={commandComplete}
               onSim={setStainSim}
-              onSwarm={onSwarm}
             />
             {holdIndicator}
             <OfferingRite
@@ -197,9 +182,11 @@ export default function Temple() {
               state={view ? view.stainState : "dormant"}
               pigment={stainPigment}
               amplitude={amplitude}
-              vitals={vitals}
+              vitals={experience.vitals}
+              relicMemory={experience.relicMemory}
+              activeCommand={activeCommand}
+              onCommandComplete={commandComplete}
               onSim={setStainSim}
-              onSwarm={onSwarm}
             />
             {holdIndicator}
           </section>

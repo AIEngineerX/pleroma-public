@@ -1,6 +1,14 @@
 import { OrganSwarm } from "./organSwarm";
-import type { SwarmOrgan, SwarmQuicken, SwarmSignalTarget } from "./swarmSignals";
 import type { Vitals } from "../state/types";
+import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
+import {
+  BODY_ANCHORS,
+  dedupeRelicSamples,
+  signalForBodyCommand,
+  type BodyAnchor,
+  type BodyAnchorName,
+  type BodyRendererAdapter,
+} from "./bodyRenderer";
 
 export type Tier = "desktop" | "mobile" | "reduced";
 export function pickTier(): Tier {
@@ -101,7 +109,22 @@ interface FBO { fbo: WebGLFramebuffer; tex: WebGLTexture; w: number; h: number }
 
 export interface StainOpts { tier: Tier; ground: [number, number, number]; ink: [number, number, number]; }
 
-export class StainSim implements SwarmSignalTarget {
+function isVitalsFeed(value: VitalsFeed | Vitals): value is VitalsFeed {
+  return "kind" in value;
+}
+
+function initialAnchors(): Record<BodyAnchorName, BodyAnchor> {
+  return {
+    EYE: { ...BODY_ANCHORS.EYE },
+    KEEP: { ...BODY_ANCHORS.KEEP },
+    TONGUE: { ...BODY_ANCHORS.TONGUE },
+    PULSE: { ...BODY_ANCHORS.PULSE },
+    DREAM: { ...BODY_ANCHORS.DREAM },
+    seraph: { ...BODY_ANCHORS.seraph },
+  };
+}
+
+export class StainSim implements BodyRendererAdapter {
   private gl: WebGL2RenderingContext; private advect: WebGLProgram; private comp: WebGLProgram;
   private a!: FBO; private b!: FBO; private vao: WebGLVertexArrayObject; private buf!: WebGLBuffer;
   private raf = 0; private last = 0; private t = 0;
@@ -111,6 +134,11 @@ export class StainSim implements SwarmSignalTarget {
   private point: [number, number] = [0.5, 0.5]; private pointAmt = 0;   // pointer wick, decays when the pointer stills
   private simRes: number;
   private swarm: OrganSwarm;
+  private vitalsFeed: VitalsFeed = { kind: "unknown" };
+  private relicMemory: RelicInkSample[] = [];
+  private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
+  private readonly anchorBuffer = new Float32Array(10);
+  private readonly anchors = initialAnchors();
   constructor(private canvas: HTMLCanvasElement, private opts: StainOpts) {
     const gl = canvas.getContext("webgl2", { alpha: true, antialias: false, preserveDrawingBuffer: false });
     if (!gl) throw new Error("no-webgl2");
@@ -158,8 +186,25 @@ export class StainSim implements SwarmSignalTarget {
   setPigment(rgb: [number, number, number]) { this.pigment = rgb; }
   setAmplitude(a: number) { this.amp = Math.max(0, Math.min(1, a)); }
   setState(m: "dormant" | "live" | "rite") { this.mode = m; }
-  quicken(organ: SwarmOrgan, signal?: SwarmQuicken) { this.swarm.quicken(organ, signal); }
-  setVitals(vitals: Vitals) { this.swarm.setVitals(vitals); }
+  dispatch(command: BodyCommand, onComplete: (id: string) => void) {
+    const signal = signalForBodyCommand(command);
+    if (signal !== null) this.swarm.dispatch(signal);
+    if (command.kind === "accrete") this.hydrateRelics([...this.relicMemory, command.ink]);
+    onComplete(command.id);
+  }
+  hydrateRelics(samples: readonly RelicInkSample[]) {
+    this.relicMemory = dedupeRelicSamples(samples);
+  }
+  getAnchor(name: BodyAnchorName): BodyAnchor { return { ...this.anchors[name] }; }
+  setAnchorSink(sink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null) {
+    this.anchorSink = sink;
+  }
+  setVitals(feed: VitalsFeed | Vitals) {
+    this.vitalsFeed = isVitalsFeed(feed)
+      ? feed
+      : { kind: "current", value: feed, receivedAt: Date.now() };
+    this.swarm.setVitals(this.vitalsFeed);
+  }
   splatAt(x: number, y: number, strength: number, thread = 0) { this.splat = [x, 1 - y, strength, thread]; }
   // The body leans toward the pointer: feed normalized (x,y in 0..1); the wick decays each frame when still.
   setPointer(x: number, y: number) { this.point = [x, 1 - y]; this.pointAmt = 1; }
@@ -184,11 +229,19 @@ export class StainSim implements SwarmSignalTarget {
     // live wakes it; rite lets the candle rake carry the mood. The old dormant path crushed it 85% to gray.
     const m = this.mode;
     const ambient = m === "dormant" ? 0.62 : m === "live" ? 0.82 : 1.0;
-    const threadAmb = m === "dormant" ? 0.22 : m === "live" ? 0.5 : 0.6;
+    const knownThreadAmb = m === "dormant" ? 0.22 : m === "live" ? 0.5 : 0.6;
+    const threadAmb = this.vitalsFeed.kind === "unknown" ? 0 : knownThreadAmb;
     const gray = m === "dormant" ? 0.22 : 0.0;
     const vignette = m === "dormant" ? 1.0 : m === "live" ? 0.85 : 0.6;
     this.pointAmt *= 0.95;                                      // the pointer wick fades as the pointer stills
     this.swarm.step(this.t, dtSeconds);
+    this.swarm.copyAnchors(this.anchorBuffer);
+    for (let organ = 0; organ < 5; organ += 1) {
+      const name = (["EYE", "KEEP", "TONGUE", "PULSE", "DREAM"] as const)[organ];
+      this.anchors[name].x = this.anchorBuffer[organ * 2];
+      this.anchors[name].y = this.anchorBuffer[organ * 2 + 1];
+    }
+    this.anchorSink?.(this.anchors);
     // advect A -> B
     g.useProgram(this.advect); g.bindFramebuffer(g.FRAMEBUFFER, this.b.fbo); g.viewport(0, 0, this.b.w, this.b.h);
     g.activeTexture(g.TEXTURE0); g.bindTexture(g.TEXTURE_2D, this.a.tex);
@@ -230,6 +283,7 @@ export class StainSim implements SwarmSignalTarget {
   stop() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } }
   dispose() {
     this.stop(); const g = this.gl;
+    this.anchorSink = null;
     this.swarm.dispose();
     g.deleteProgram(this.advect); g.deleteProgram(this.comp);
     g.deleteFramebuffer(this.a.fbo); g.deleteTexture(this.a.tex);

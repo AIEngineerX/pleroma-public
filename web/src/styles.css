@@ -39,8 +39,10 @@ body::before {
     radial-gradient(120% 90% at 50% 32%, transparent 42%, oklch(0.90 0.02 80 / 0.18) 78%, oklch(0.86 0.025 75 / 0.28) 100%);
 }
 
-/* Reduced-motion/WebGL fallback: all five organs are settled ink and only the sheet-level opacity breathes. */
-.swarm-settled { color: var(--color-ink); opacity: 0.46; animation: swarm-breath 6200ms var(--ease-breath) infinite alternate; }
+/* The semantic fallback is still by default. A failed WebGL context may opt into one slow sheet-level
+   breath; reduced motion always suppresses it. */
+.swarm-settled { color: var(--color-ink); opacity: 0.46; animation: none; }
+.swarm-settled--breathing { animation: swarm-breath 6200ms var(--ease-breath) infinite alternate; }
 @keyframes swarm-breath { from { opacity: 0.40; } to { opacity: 0.52; } }
 
 .entry-hold-ring {
@@ -67,7 +69,8 @@ body::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .swarm-settled { animation-duration: 9000ms; }
+  .swarm-settled,
+  .swarm-settled--breathing { animation: none; }
 }
 
 /* Tractor-feed rails: faint punched margins at the viewport edges. Advancing the paper = scrolling. */

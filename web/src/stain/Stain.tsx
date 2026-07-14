@@ -1,81 +1,216 @@
 import { useEffect, useRef, useState } from "react";
+import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
+import {
+  SettledBodyRendererAdapter,
+  signalForBodyCommand,
+  type BodyRendererAdapter,
+  type SettledBodyRendererState,
+} from "./bodyRenderer";
+import { SettledBody } from "./SettledBody";
 import { pickTier, StainSim, type Tier } from "./stainSim";
-import type { SwarmSignalTarget } from "./swarmSignals";
-import type { Vitals } from "../state/types";
 
 interface Props {
   state: "dormant" | "live" | "rite";
   pigment: [number, number, number];
   amplitude: number;
-  vitals: Vitals;
+  vitals: VitalsFeed;
+  relicMemory: readonly RelicInkSample[];
+  activeCommand: BodyCommand | null;
+  onCommandComplete(id: string): void;
   onSim?: (sim: StainSim | null) => void;
-  onSwarm?: (swarm: SwarmSignalTarget | null) => void;
 }
 
-function SettledSwarm({ pigment }: { pigment: [number, number, number] }) {
-  const rubric = `rgb(${pigment.map(channel => Math.round(channel * 255)).join(" ")})`;
-  return (
-    <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice"
-      className="swarm-settled absolute inset-0 z-0 h-full w-full pointer-events-none">
-      <g fill="none" stroke="currentColor" strokeWidth="0.18" opacity="0.28">
-        <path d="M50 28 C61 31 69 39 70 50" />
-        <path d="M70 50 C68 60 60 68 50 72" />
-        <path d="M50 72 C39 69 31 61 30 50" />
-        <path d="M30 50 C32 40 40 31 50 28" />
-        <path d="M50 28 C55 43 57 56 50 72" opacity="0.5" />
-      </g>
-      <g fill="currentColor" opacity="0.7">
-        <path d="M41 28 C45 23 55 23 60 28 C55 33 45 33 41 28 Z M47 28 A3 3 0 1 0 53 28 A3 3 0 1 0 47 28" />
-        <path d="M65 43 C70 39 76 43 74 49 C78 54 72 59 67 56 C62 59 60 51 63 48 C61 46 62 44 65 43 Z" />
-        <path d="M61 69 C64 61 68 58 72 62 C75 66 70 75 65 79 C65 74 64 71 61 69 Z" />
-        <path d="M27 45 C31 40 38 43 37 49 C40 54 35 58 30 55 C25 58 22 51 25 48 C23 47 24 45 27 45 Z" />
-        <path d="M29 63 C33 58 40 59 42 65 C39 72 33 76 27 74 C31 71 31 67 29 63 Z" />
-      </g>
-      <path d="M27 45 C31 40 38 43 37 49 C40 54 35 58 30 55 C25 58 22 51 25 48 C23 47 24 45 27 45 Z"
-        fill={rubric} opacity="0.62" transform="translate(0.35 0)" />
-    </svg>
+function initialSettledState(
+  vitals: VitalsFeed,
+  relicMemory: readonly RelicInkSample[],
+): SettledBodyRendererState {
+  return { command: null, relicMemory, vitals, seraph: "five" };
+}
+
+export default function Stain({
+  state,
+  pigment,
+  amplitude,
+  vitals,
+  relicMemory,
+  activeCommand,
+  onCommandComplete,
+  onSim,
+}: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const adapterRef = useRef<BodyRendererAdapter | null>(null);
+  const simRef = useRef<StainSim | null>(null);
+  const lostContext = useRef(false);
+  const commandGeneration = useRef(0);
+  const completedCommands = useRef(new Set<string>());
+  const presentedCommandRef = useRef<BodyCommand | null>(null);
+  const hasPresentedCommand = useRef(false);
+  const latest = useRef({ vitals, relicMemory, activeCommand, onCommandComplete, onSim });
+  latest.current = { vitals, relicMemory, activeCommand, onCommandComplete, onSim };
+
+  const [tier] = useState<Tier>(pickTier);
+  const [renderer, setRenderer] = useState<"webgl" | "svg">(
+    tier === "reduced" ? "svg" : "webgl",
   );
-}
+  const [fallbackBreath, setFallbackBreath] = useState(false);
+  const [presentedCommand, setPresentedCommand] = useState<BodyCommand | null>(null);
+  const [completion, setCompletion] = useState<{ id: string | null; count: number }>({
+    id: null,
+    count: 0,
+  });
+  const [settled, setSettled] = useState<SettledBodyRendererState>(() =>
+    initialSettledState(vitals, relicMemory));
+  const initialPulseKind = useRef(vitals.kind).current;
 
-export default function Stain({ state, pigment, amplitude, vitals, onSim, onSwarm }: Props) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const sim = useRef<StainSim | null>(null);
-  const [tier] = useState<Tier>(pickTier); // lazy: pickTier runs ONCE, not on every (per-amplitude-frame) re-render
-  const [failed, setFailed] = useState(false);
+  const finishCommand = useRef<(id: string, generation: number) => void>(() => undefined);
+  finishCommand.current = (id, generation) => {
+    if (completedCommands.current.has(id)) return;
+    if (generation !== commandGeneration.current) return;
+    if (latest.current.activeCommand?.id !== id) return;
+    completedCommands.current.add(id);
+    setCompletion((current) => ({ id, count: current.count + 1 }));
+    latest.current.onCommandComplete(id);
+  };
 
   useEffect(() => {
-    if (tier === "reduced" || !ref.current) return;   // reduced-motion: no GL context at all
-    const canvas = ref.current;
+    let disposed = false;
+    const canvas = canvasRef.current;
+
+    const installSettledRenderer = (replayPresented: boolean) => {
+      if (disposed) return;
+      const adapter = new SettledBodyRendererAdapter(setSettled);
+      adapterRef.current = adapter;
+      adapter.setVitals(latest.current.vitals);
+      adapter.hydrateRelics(latest.current.relicMemory);
+      if (replayPresented && hasPresentedCommand.current && presentedCommandRef.current !== null) {
+        const replay = presentedCommandRef.current;
+        const generation = ++commandGeneration.current;
+        adapter.dispatch(replay, (id) => finishCommand.current(id, generation));
+      }
+      setFallbackBreath(tier !== "reduced");
+      setRenderer("svg");
+    };
+
+    if (tier === "reduced") {
+      installSettledRenderer(false);
+      return () => {
+        disposed = true;
+        commandGeneration.current += 1;
+        adapterRef.current?.dispose();
+        adapterRef.current = null;
+        latest.current.onSim?.(null);
+      };
+    }
+
+    if (canvas === null) return;
+
+    const onContextLost = (event: Event) => {
+      event.preventDefault();
+      if (lostContext.current || disposed) return;
+      lostContext.current = true;
+      commandGeneration.current += 1;
+      const failed = simRef.current;
+      failed?.stop();
+      failed?.setAnchorSink(null);
+      simRef.current = null;
+      adapterRef.current = null;
+      latest.current.onSim?.(null);
+      installSettledRenderer(true);
+    };
+
+    canvas.addEventListener("webglcontextlost", onContextLost, false);
     try {
-      // ground = warm parchment; ink = iron-gall (dark warm brown-black) so the body reads as INK darkening
-      // the page, not a gray wash. u_ink is subtracted from ground, so a large value = a deep stain.
-      sim.current = new StainSim(canvas, { tier, ground: [0.94, 0.90, 0.80], ink: [0.74, 0.71, 0.64] });
-      sim.current.start();
-      onSim?.(sim.current);          // hand the instance up so an offering can wick into it (Task 8)
-      onSwarm?.(sim.current);        // typed signal-only seam for Codex now, sound/intro later
-    } catch { sim.current = null; setFailed(true); }           // WebGL2 unavailable -> settled ink fallback below
-    // The body leans toward the pointer (desktop only; coarse pointers get ambient breath alone). Mapped to
-    // the canvas rect so it tracks wherever the Stain sits in the layout, and passive so it never blocks scroll.
-    const onMove = (e: PointerEvent) => {
-      const s = sim.current; if (!s) return;
-      const r = canvas.getBoundingClientRect(); if (r.width === 0) return;
-      s.setPointer((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
-    };
-    if (tier === "desktop") window.addEventListener("pointermove", onMove, { passive: true });
+      const sim = new StainSim(canvas, {
+        tier,
+        ground: [0.94, 0.90, 0.80],
+        ink: [0.74, 0.71, 0.64],
+      });
+      sim.setPigment(pigment);
+      sim.setAmplitude(amplitude);
+      sim.setState(state);
+      sim.setVitals(latest.current.vitals);
+      sim.hydrateRelics(latest.current.relicMemory);
+      simRef.current = sim;
+      adapterRef.current = sim;
+      sim.start();
+      latest.current.onSim?.(sim);
+    } catch {
+      simRef.current = null;
+      adapterRef.current = null;
+      latest.current.onSim?.(null);
+      if (!lostContext.current) installSettledRenderer(false);
+    }
+
     return () => {
-      window.removeEventListener("pointermove", onMove);
-      sim.current?.dispose(); sim.current = null; onSim?.(null); onSwarm?.(null);
+      disposed = true;
+      commandGeneration.current += 1;
+      canvas.removeEventListener("webglcontextlost", onContextLost, false);
+      const sim = simRef.current;
+      const adapter = adapterRef.current;
+      if (adapter !== null && adapter !== sim) adapter.dispose();
+      if (sim !== null && !lostContext.current) sim.dispose();
+      simRef.current = null;
+      adapterRef.current = null;
+      latest.current.onSim?.(null);
     };
-  }, []); // mount-once by design, same as the lazy tier pick above; onSim is a stable setState from the caller
+  }, []);
 
-  useEffect(() => { sim.current?.setPigment(pigment); }, [pigment]);
-  useEffect(() => { sim.current?.setAmplitude(amplitude); }, [amplitude]);
-  useEffect(() => { sim.current?.setState(state); }, [state]);
-  useEffect(() => { sim.current?.setVitals(vitals); }, [vitals]);
+  useEffect(() => { simRef.current?.setPigment(pigment); }, [pigment]);
+  useEffect(() => { simRef.current?.setAmplitude(amplitude); }, [amplitude]);
+  useEffect(() => { simRef.current?.setState(state); }, [state]);
+  useEffect(() => { adapterRef.current?.setVitals(vitals); }, [vitals]);
+  useEffect(() => { adapterRef.current?.hydrateRelics(relicMemory); }, [relicMemory]);
 
-  if (tier === "reduced" || failed) {
-    // Settled ink that breathes by opacity only (DESIGN reduced-motion rule). No printing, no sim.
-    return <SettledSwarm pigment={pigment} />;
+  useEffect(() => {
+    if (activeCommand === null) {
+      commandGeneration.current += 1;
+      return;
+    }
+    const adapter = adapterRef.current;
+    if (adapter === null) return;
+    presentedCommandRef.current = activeCommand;
+    hasPresentedCommand.current = true;
+    setPresentedCommand(activeCommand);
+    const generation = ++commandGeneration.current;
+    adapter.dispatch(activeCommand, (id) => finishCommand.current(id, generation));
+  }, [activeCommand]);
+
+  const signal = presentedCommand === null ? null : signalForBodyCommand(presentedCommand);
+  const initialPulseDebug = initialPulseKind === "unknown" ? 0 : undefined;
+
+  if (renderer === "svg") {
+    return (
+      <SettledBody
+        pigment={pigment}
+        command={settled.command}
+        relicMemory={settled.relicMemory}
+        vitals={settled.vitals}
+        seraph={settled.seraph}
+        completedId={completion.id}
+        completionCount={completion.count}
+        initialPulseKind={initialPulseKind}
+        ambientBreath={fallbackBreath}
+      />
+    );
   }
-  return <canvas ref={ref} data-organ-swarm={tier} aria-hidden className="absolute inset-0 z-0 h-full w-full pointer-events-none" />;
+
+  return (
+    <canvas
+      ref={canvasRef}
+      data-organ-swarm={tier}
+      data-body-renderer="webgl"
+      data-active-organ={signal?.organ}
+      data-pipeline={signal?.pipeline ?? "none"}
+      data-command-id={presentedCommand?.id}
+      data-completed-id={completion.id ?? undefined}
+      data-completion-count={completion.count}
+      data-pulse-kind={vitals.kind}
+      data-initial-pulse-kind={initialPulseKind}
+      data-initial-pulse-beat={initialPulseDebug}
+      data-initial-pulse-bpm={initialPulseDebug}
+      data-initial-pulse-pressure={initialPulseDebug}
+      aria-hidden
+      className="absolute inset-0 z-0 h-full w-full pointer-events-none"
+    />
+  );
 }

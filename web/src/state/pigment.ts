@@ -1,4 +1,5 @@
 import type { PulseState } from "./types";
+import type { VitalsFeed } from "../experience/types";
 // PULSE drives the rubric between wet vermilion (fed/feasting) and dried, oxidized blood (starving).
 // Values are the DESIGN OKLCH rubric tokens, interpolated across the four states. The Stain reads .rgb
 // for its red threads; the Ticker reads .label. This is the "vitals ARE pigment" law made literal.
@@ -9,3 +10,7 @@ const MAP: Record<PulseState, { rgb: string; label: string }> = {
   feasting: { rgb: "oklch(0.55 0.20 32)", label: "feasting" },   // rubric, wet vermilion
 };
 export function pigment(state: PulseState) { return MAP[state]; }
+
+export function pigmentForVitals(feed: VitalsFeed) {
+  return feed.kind === "unknown" ? null : pigment(feed.value.state);
+}
