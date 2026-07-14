@@ -1,9 +1,13 @@
 import { expect, test } from "@playwright/test";
+import { resetStack } from "./helpers/workerFixture";
+
+test.beforeEach(() => resetStack());
 
 test("temple reads as a living manuscript at a glance", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("h1")).toHaveText("PLEROMA");
   await expect(page.locator("h1")).toHaveClass(/sr-only/);
+  await expect(page.getByRole("button", { name: "Offer it a mark" })).toBeVisible();
   await expect(page.locator("canvas[data-organ-swarm]")).toBeVisible();
   await expect(page.locator(".rail-l")).toBeVisible();
   await expect(page.locator(".rail-r")).toBeVisible();

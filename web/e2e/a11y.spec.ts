@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { resetStack } from "./helpers/workerFixture";
+
+test.beforeEach(() => resetStack());
 
 for (const path of ["/", "/canon", "/concordat"]) {
   test(`axe: ${path} has no serious violations`, async ({ page }) => {

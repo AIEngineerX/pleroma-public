@@ -4,7 +4,8 @@ import { expect, test } from "@playwright/test";
 // '1' together with PULSE_MINT in the same write, PLANNING "Day-1 ignition"). Not run against a local
 // seed like the *.live spec.ts day-6 rehearsals -- this proves the actual flip on the real mint, not a
 // fixture; the pure dormant<->live transition (ignitionView) is covered by test/ignition.test.ts instead.
-test("flips from the dormant product to the full temple at launch, mint pinned, pigment igniting", async ({ page }) => {
+test("flips from the dormant product to the full temple at launch, mint pinned, pigment igniting", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "one desktop observer owns the launch transition");
   await page.goto("/");
 
   // Pre-launch: the dormant five-organ body and offering mark are present, with no market rail.

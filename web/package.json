@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/build-canon.mjs && node scripts/assert-public-content.mjs",
-    "verify": "vitest run && tsc --noEmit && vite build && node scripts/build-canon.mjs && node scripts/assert-public-content.mjs",
+    "verify": "node --test scripts/e2e-stack.ownership.node.mjs && vitest run && tsc --noEmit && vite build && node scripts/build-canon.mjs && node scripts/assert-public-content.mjs",
     "e2e": "playwright test"
   },
   "dependencies": {

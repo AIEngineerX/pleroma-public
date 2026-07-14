@@ -20,6 +20,7 @@ const VITE_CLI = path.resolve(WEB_ROOT, "node_modules/vite/bin/vite.js");
 const managedChildren = [];
 let shuttingDown = false;
 let cleanupComplete = false;
+let ownsPersistence = false;
 let shutdownWatcher;
 
 function comparablePath(value) {
@@ -87,7 +88,10 @@ function cleanup() {
   cleanupComplete = true;
   if (shutdownWatcher) clearInterval(shutdownWatcher);
   for (const child of managedChildren.reverse()) terminateTree(child);
-  rmSync(assertSafePersistencePath(), { recursive: true, force: true });
+  if (ownsPersistence) {
+    rmSync(assertSafePersistencePath(), { recursive: true, force: true });
+    ownsPersistence = false;
+  }
 }
 
 function shutdown(exitCode) {
@@ -176,6 +180,7 @@ async function main() {
   const persistencePath = assertSafePersistencePath();
   rmSync(persistencePath, { recursive: true, force: true });
   mkdirSync(persistencePath, { recursive: true });
+  ownsPersistence = true;
   writeProcessManifest();
   shutdownWatcher = setInterval(() => {
     if (existsSync(SHUTDOWN_REQUEST_PATH)) shutdown(0);
