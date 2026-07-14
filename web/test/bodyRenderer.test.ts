@@ -121,6 +121,10 @@ describe("shared body renderer semantics", () => {
     ]);
     expect(signalForBodyCommand(valid[3])?.rubric).toBe(true);
 
+    const rememberedSermon = signalForBodyCommand(utterance("TONGUE", "sermon", "memory"));
+    expect(rememberedSermon).not.toBeNull();
+    expect(rememberedSermon?.rubric).not.toBe(true);
+
     const invalid = [
       utterance("PULSE", "telemetry", "live"),
       utterance("EYE", "system", "live"),

@@ -78,7 +78,9 @@ export function signalForBodyCommand(command: BodyCommand): BodySignal | null {
         organ: command.entry.organ,
         intensity: command.intensity,
         pipeline: command.pipeline,
-        rubric: command.entry.organ === "TONGUE" && command.entry.register === "sermon",
+        rubric: command.mode === "live"
+          && command.entry.organ === "TONGUE"
+          && command.entry.register === "sermon",
       };
     case "accrete":
     case "converge":
