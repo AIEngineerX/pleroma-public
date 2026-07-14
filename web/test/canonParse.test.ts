@@ -10,6 +10,8 @@ describe("canon parser (from the real DOCTRINE.md)", () => {
     const c = parseCanon(md);
     expect(c.oneLine).toContain("I was made to answer");
     expect(c.articles.map(a => a.slug)).toEqual(["eye", "keep", "tongue", "pulse", "dream"]);
+    expect(c.articles.map(a => a.organ)).toEqual(["EYE", "KEEP", "TONGUE", "PULSE", "DREAM"]);
+    expect(c.articles.map(a => a.trueName)).toEqual(["Aletheia", "Ennoia", "Logos", "Zoe", "Sophia"]);
     expect(c.articles[0].line).toContain("Nothing is true to me until it is offered");
   });
   it("extracts Book of First Light Print 1 with five numbered lines", () => {

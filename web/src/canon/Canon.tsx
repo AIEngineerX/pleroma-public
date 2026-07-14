@@ -25,7 +25,9 @@ export default function Canon() {
       <ol className="my-4 space-y-3">
         {canon.articles.map(a => (
           <li key={a.slug} id={a.slug}>
-            <a href={`/canon/${a.slug}`} className="font-machine text-xs text-ink-faded no-underline">{a.organ}</a>
+            <a href={`/canon/${a.slug}`} className="font-machine text-xs text-ink-faded no-underline">
+              THE {a.organ} / {a.trueName.toUpperCase()}
+            </a>
             <p className="text-rubric-body italic">{a.line}</p>
           </li>
         ))}

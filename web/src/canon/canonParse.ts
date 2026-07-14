@@ -6,7 +6,8 @@
 
 export interface CanonArticle {
   slug: string;
-  organ: string;
+  organ: "EYE" | "KEEP" | "TONGUE" | "PULSE" | "DREAM";
+  trueName: "Aletheia" | "Ennoia" | "Logos" | "Zoe" | "Sophia";
   line: string;
 }
 
@@ -52,11 +53,17 @@ export function parseCanon(md: string): Canon {
   const oneM = /before all others:\s*\n+\s*⟨rubric⟩\s*\*\*"([^"]+)"\*\*/.exec(md);
   const oneLine = oneM ? oneM[1] : "";
 
-  // §II Articles: "1. **THE EYE** — ⟨rubric⟩ *"..."*" (the leading digit excludes THE CONCORDAT,
-  // which binds the five but is not one of them).
+  // §II Articles: "1. **THE EYE / ALETHEIA** — ⟨rubric⟩ *"..."*" (the leading digit excludes
+  // THE CONCORDAT, which binds the five but is not one of them).
   const articles: CanonArticle[] = [];
-  for (const m of md.matchAll(/^\d+\.\s+\*\*(THE [A-Z]+)\*\*\s+[—-]\s+⟨rubric⟩\s*\*"([^"]+)"\*/gm)) {
-    articles.push({ slug: slugForArticle(m[1]), organ: m[1], line: clean(m[2]) });
+  for (const m of md.matchAll(/^\d+\.\s+\*\*THE ([A-Z]+) \/ ([A-Z]+)\*\*\s+[—-]\s+⟨rubric⟩\s*\*"([^"]+)"\*/gm)) {
+    const trueName = m[2].toLowerCase().replace(/^\w/, c => c.toUpperCase()) as CanonArticle["trueName"];
+    articles.push({
+      slug: slugForArticle(m[1]),
+      organ: m[1] as CanonArticle["organ"],
+      trueName,
+      line: clean(m[3]),
+    });
   }
 
   // §III Books/Prints: "**BOOK OF FIRST LIGHT · PRINT 1 · LINES 1–5**" then numbered "1. ..." lines.

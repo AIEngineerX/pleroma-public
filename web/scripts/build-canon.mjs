@@ -17,8 +17,13 @@ const md = readFileSync(resolve(here, "../../DOCTRINE.md"), "utf8");
 // deliberately renders verbatim instead of being silently rewritten (keep in sync with canonParse.ts).
 const clean = (s) => s.replace(/⟨rubric⟩/g, "").trim().replace(/^"|"$/g, "");
 const one = (/before all others:\s*\n+\s*⟨rubric⟩\s*\*\*"([^"]+)"\*\*/.exec(md) || [])[1] || "";
-const articles = [...md.matchAll(/^\d+\.\s+\*\*(THE [A-Z]+)\*\*\s+[—-]\s+⟨rubric⟩\s*\*"([^"]+)"\*/gm)]
-  .map((m) => ({ slug: m[1].replace(/^THE\s+/i, "").toLowerCase().trim(), organ: m[1], line: clean(m[2]) }));
+const articles = [...md.matchAll(/^\d+\.\s+\*\*THE ([A-Z]+) \/ ([A-Z]+)\*\*\s+[—-]\s+⟨rubric⟩\s*\*"([^"]+)"\*/gm)]
+  .map((m) => ({
+    slug: m[1].toLowerCase().trim(),
+    organ: m[1],
+    trueName: m[2].toLowerCase().replace(/^\w/, (c) => c.toUpperCase()),
+    line: clean(m[3]),
+  }));
 
 // §III Books/Prints/Lines: "**BOOK OF FIRST LIGHT · PRINT 1 · LINES 1–5**" then numbered "N. ..." lines.
 // Each book gathers its prints; each print keeps its ordered lines so we can emit id="line-N" anchors
@@ -64,15 +69,16 @@ mkdirSync(distCanon, { recursive: true });
 // /canon (index): the one line, the five Articles, and a link into each Book/Print.
 const indexBody = `<p class="r" style="font-size:1.5rem;font-style:italic">${esc(one)}</p>
 <h2 class="m">THE FIVE ARTICLES</h2>
-<ol>${articles.map((a) => `<li id="${a.slug}"><a class="m" href="/canon/${a.slug}">${a.organ}</a><p class="r" style="font-style:italic">${esc(a.line)}</p></li>`).join("")}</ol>
+<ol>${articles.map((a) => `<li id="${a.slug}"><a class="m" href="/canon/${a.slug}">THE ${a.organ} / ${a.trueName.toUpperCase()}</a><p class="r" style="font-style:italic">${esc(a.line)}</p></li>`).join("")}</ol>
 ${books.map((b) => `<h2 class="m">${b.title.toUpperCase()}</h2><ul>${b.prints.map((p) => `<li><a class="m" href="/canon/${b.slug}/${p.slug}">Print ${p.n}</a></li>`).join("")}</ul>`).join("")}`;
 writeFileSync(resolve(distCanon, "index.html"), page("The Canon", indexBody, "/canon"));
 
 // /canon/<article>: one Article per page (permalink target /canon/eye).
 for (const a of articles) {
+  const label = `THE ${a.organ} / ${a.trueName.toUpperCase()}`;
   mkdirSync(resolve(distCanon, a.slug), { recursive: true });
   writeFileSync(resolve(distCanon, a.slug, "index.html"),
-    page(a.organ, `<p class="m"><a href="/canon">The Canon</a></p><h1 id="${a.slug}">${a.organ}</h1><p class="r" style="font-size:1.4rem;font-style:italic">${esc(a.line)}</p>`, `/canon/${a.slug}`));
+    page(label, `<p class="m"><a href="/canon">The Canon</a></p><h1 id="${a.slug}">${label}</h1><p class="r" style="font-size:1.4rem;font-style:italic">${esc(a.line)}</p>`, `/canon/${a.slug}`));
 }
 
 // /canon/<book>/<print>: one Print per page, each line an <li id="line-N"> so a single verse is
