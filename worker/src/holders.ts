@@ -1,4 +1,4 @@
-import { ulid } from "./id";
+import { ulid } from "ulid";
 import type { Env } from "./env";
 import { acquireLock, releaseLock } from "./lock";
 import { nextPulseState, readPulseState, windowMetrics, writePulseState } from "./pulse";

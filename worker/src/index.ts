@@ -1,4 +1,4 @@
-import { ulid } from "./id";
+import { ulid } from "ulid";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./env";

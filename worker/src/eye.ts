@@ -1,4 +1,4 @@
-import { ulid } from "./id";
+import { ulid } from "ulid";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { moderate, ModerationUnavailableError } from "./moderation";
