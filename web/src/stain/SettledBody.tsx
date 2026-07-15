@@ -102,7 +102,7 @@ export function SettledBody({
     <svg
       aria-hidden
       viewBox="0 0 100 100"
-      preserveAspectRatio="xMidYMid slice"
+      preserveAspectRatio="xMidYMax meet"
       className={`swarm-settled${ambientBreath ? " swarm-settled--breathing" : ""} absolute inset-0 z-0 h-full w-full pointer-events-none`}
       data-body-renderer="svg"
       data-arrival="settled"

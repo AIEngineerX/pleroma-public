@@ -45,14 +45,15 @@ export const BODY_ANCHORS: Readonly<Record<BodyAnchorName, BodyAnchor>> = {
   seraph: { x: 0.5, y: 0.5 },
 };
 
-export function anchorForSlice(anchor: BodyAnchor, width: number, height: number): BodyAnchor {
-  if (width <= 0 || height <= 0 || width === height) return { ...anchor };
-  if (width > height) {
-    const offsetY = (height - width) / 2;
-    return { x: anchor.x, y: Number(((anchor.y * width + offsetY) / height).toFixed(6)) };
-  }
-  const offsetX = (width - height) / 2;
-  return { x: Number(((anchor.x * height + offsetX) / width).toFixed(6)), y: anchor.y };
+export function anchorForYMaxMeet(anchor: BodyAnchor, width: number, height: number): BodyAnchor {
+  if (width <= 0 || height <= 0) return { ...anchor };
+  const side = Math.min(width, height);
+  const offsetX = (width - side) / 2;
+  const offsetY = height - side;
+  return {
+    x: Number(((offsetX + anchor.x * side) / width).toFixed(6)),
+    y: Number(((offsetY + anchor.y * side) / height).toFixed(6)),
+  };
 }
 
 export type BodyOrgan = Exclude<BodyAnchorName, "seraph">;
@@ -111,15 +112,44 @@ export function signalForBodyCommand(command: BodyCommand): BodySignal | null {
 }
 
 export function dedupeRelicSamples(samples: readonly RelicInkSample[]): RelicInkSample[] {
-  const seen = new Set<string>();
+  const indices = new Map<string, number>();
   const unique: RelicInkSample[] = [];
   for (const sample of samples) {
-    if (seen.has(sample.offeringId)) continue;
-    seen.add(sample.offeringId);
+    const existing = indices.get(sample.offeringId);
+    if (existing !== undefined) {
+      unique[existing] = sample;
+      continue;
+    }
+    if (unique.length === RELIC_MEMORY_LIMIT) continue;
+    indices.set(sample.offeringId, unique.length);
     unique.push(sample);
-    if (unique.length === RELIC_MEMORY_LIMIT) break;
   }
   return unique;
+}
+
+export function commitRelicSample(
+  samples: readonly RelicInkSample[],
+  sample: RelicInkSample,
+): RelicInkSample[] {
+  const memory = dedupeRelicSamples(samples);
+  const existing = memory.findIndex((candidate) => candidate.offeringId === sample.offeringId);
+  if (existing !== -1) {
+    memory[existing] = sample;
+    return memory;
+  }
+  return dedupeRelicSamples([sample, ...memory]);
+}
+
+export function relicSampleListsMatch(
+  left: readonly RelicInkSample[],
+  right: readonly RelicInkSample[],
+): boolean {
+  return left.length === right.length && left.every((sample, index) => {
+    const other = right[index];
+    return sample.offeringId === other?.offeringId
+      && sample.size === other.size
+      && sample.alpha === other.alpha;
+  });
 }
 
 export function anchorsFromSwarmCentroids(
@@ -170,11 +200,9 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
       const commit = () => {
         this.accretionTimer = null;
         if (this.disposed || this.activeAccretionKey !== key) return;
-        const before = this.relicMemory.map((sample) => sample.offeringId).join("\u001f");
-        this.relicMemory = dedupeRelicSamples([...this.relicMemory, command.ink]);
-        if (this.relicMemory.map((sample) => sample.offeringId).join("\u001f") !== before) {
-          this.relicRevision += 1;
-        }
+        const next = commitRelicSample(this.relicMemory, command.ink);
+        if (!relicSampleListsMatch(next, this.relicMemory)) this.relicRevision += 1;
+        this.relicMemory = next;
         this.activeAccretionKey = null;
         this.emit();
         onComplete(command.id);
@@ -194,9 +222,7 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
   hydrateRelics(samples: readonly RelicInkSample[]): void {
     if (this.disposed) return;
     const next = dedupeRelicSamples(samples);
-    const unchanged = next.length === this.relicMemory.length
-      && next.every((sample, index) => sample.offeringId === this.relicMemory[index]?.offeringId);
-    if (unchanged) return;
+    if (relicSampleListsMatch(next, this.relicMemory)) return;
     this.relicMemory = next;
     this.relicRevision += 1;
     this.emit();

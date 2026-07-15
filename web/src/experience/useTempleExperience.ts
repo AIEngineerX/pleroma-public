@@ -319,6 +319,11 @@ export function planRelicRefresh(
 
   const selected = selectAccretedRelics(relics);
   ledger.visibleKeys = selected.map(relicAccretionKey);
+  const animateReserved = new Set([
+    ...ledger.queued,
+    ...ledger.active,
+    ...[...ledger.inFlight].filter((key) => ledger.modes.get(key) === "animate"),
+  ]);
   const requests: RelicSampleRequest[] = [];
   for (const relic of selected) {
     const key = relicAccretionKey(relic);
@@ -331,8 +336,10 @@ export function planRelicRefresh(
       || ledger.active.has(key)
       || ledger.attemptedGeneration.get(key) === generation
     ) continue;
+    if (mode === "animate" && animateReserved.size >= RELIC_SAMPLE_CONCURRENCY) continue;
 
     ledger.inFlight.add(key);
+    if (mode === "animate") animateReserved.add(key);
     ledger.attemptedGeneration.set(key, generation);
     ledger.requestGeneration.set(key, generation);
     requests.push({ key, relic, generation, mode });
@@ -424,9 +431,9 @@ export function relicMemoryFromLedger(ledger: RelicAccretionLedger): RelicInkSam
 export function accretionAwaitsInkBeforeDream(
   relic: AccretedRelic,
   commands: readonly BodyCommand[],
-  ink: RelicInkSample | undefined,
+  sampledKey: string | undefined,
 ): boolean {
-  const sampledKeys = ink?.offeringId === relic.offering_id ? [relicAccretionKey(relic)] : [];
+  const sampledKeys = sampledKey === undefined ? [] : [sampledKey];
   return relicRefreshBlocksDream(commands, [relic], sampledKeys);
 }
 
@@ -602,6 +609,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
   const commandComplete = useCallback((id: string) => {
     const current = active.current;
     if (current === null || current.id !== id) return;
+    const accretionCompleted = current.kind === "accrete";
     if (current.kind === "converge" && current.dream.source === "replay") setReplayWitness(null);
     if (current.kind === "accrete") {
       relicAccretion.current = completeRelicCommand(relicAccretion.current, current);
@@ -611,6 +619,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     locks.current = { ...locks.current, activeKind: null };
     setActiveCommand(null);
     dispatchNext();
+    if (accretionCompleted) relicWake.current();
   }, [dispatchNext]);
 
   const offeringAccepted = useCallback((offeringId: string) => {

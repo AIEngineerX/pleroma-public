@@ -11,7 +11,9 @@ import {
 } from "./relicInk";
 import {
   BODY_ANCHORS,
+  commitRelicSample,
   dedupeRelicSamples,
+  relicSampleListsMatch,
   signalForBodyCommand,
   type BodyAnchor,
   type BodyAnchorName,
@@ -321,9 +323,7 @@ export class StainSim implements BodyRendererAdapter {
   hydrateRelics(samples: readonly RelicInkSample[]) {
     if (this.disposed) return;
     const next = dedupeRelicSamples(samples);
-    const unchanged = next.length === this.relicMemory.length
-      && next.every((sample, index) => sample.offeringId === this.relicMemory[index]?.offeringId);
-    if (unchanged) return;
+    if (relicSampleListsMatch(next, this.relicMemory)) return;
     this.relicMemory = next;
     this.relicMask = foldRelicSamples(this.relicMemory);
     this.uploadAlpha(this.relicTexture, this.relicMask);
@@ -342,10 +342,8 @@ export class StainSim implements BodyRendererAdapter {
   // The body leans toward the pointer: feed normalized (x,y in 0..1); the wick decays each frame when still.
   setPointer(x: number, y: number) { this.point = [x, 1 - y]; this.pointAmt = 1; }
   private commitRelic(ink: RelicInkSample) {
-    const next = dedupeRelicSamples([...this.relicMemory, ink]);
-    const changed = next.length !== this.relicMemory.length
-      || next.some((sample, index) => sample.offeringId !== this.relicMemory[index]?.offeringId);
-    if (!changed) return;
+    const next = commitRelicSample(this.relicMemory, ink);
+    if (relicSampleListsMatch(next, this.relicMemory)) return;
     this.relicMemory = next;
     this.relicMask = foldRelicSamples(this.relicMemory);
     this.uploadAlpha(this.relicTexture, this.relicMask);

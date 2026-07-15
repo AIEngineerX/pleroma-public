@@ -3,7 +3,7 @@ import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/type
 import {
   BODY_ANCHORS,
   SettledBodyRendererAdapter,
-  anchorForSlice,
+  anchorForYMaxMeet,
   signalForBodyCommand,
   type BodyAnchor,
   type BodyAnchorName,
@@ -147,7 +147,7 @@ export default function Stain({
   const positionUtterance = (anchor: BodyAnchor, organ: BodyAnchorName) => {
     const { width, height } = bodySizeRef.current;
     const visibleAnchor = rendererRef.current === "svg"
-      ? anchorForSlice(anchor, width, height)
+      ? anchorForYMaxMeet(anchor, width, height)
       : anchor;
     const fixedAnchor = BODY_ANCHORS[organ];
     const node = utteranceLayerRef.current?.querySelector<HTMLElement>("[data-body-utterance]");

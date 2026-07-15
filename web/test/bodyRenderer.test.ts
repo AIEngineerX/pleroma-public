@@ -6,7 +6,7 @@ import type { TranscriptEntry } from "../src/state/types";
 import {
   BODY_ANCHORS,
   SettledBodyRendererAdapter,
-  anchorForSlice,
+  anchorForYMaxMeet,
   dedupeRelicSamples,
   signalForBodyCommand,
   type SettledBodyRendererState,
@@ -24,10 +24,10 @@ function relic(offeringId: string): RelicInkSample {
 }
 
 describe("shared body renderer semantics", () => {
-  it("maps SVG slice anchors into the visible overlay coordinates", () => {
-    expect(anchorForSlice(BODY_ANCHORS.EYE, 200, 100)).toEqual({ x: 0.5, y: 0.06 });
-    expect(anchorForSlice(BODY_ANCHORS.KEEP, 100, 200)).toEqual({ x: 0.9, y: 0.43 });
-    expect(anchorForSlice(BODY_ANCHORS.TONGUE, 100, 100)).toEqual(BODY_ANCHORS.TONGUE);
+  it("maps SVG bottom-meet anchors into the visible overlay coordinates", () => {
+    expect(anchorForYMaxMeet(BODY_ANCHORS.DREAM, 200, 100)).toEqual({ x: 0.4, y: 0.43 });
+    expect(anchorForYMaxMeet(BODY_ANCHORS.KEEP, 100, 200)).toEqual({ x: 0.7, y: 0.715 });
+    expect(anchorForYMaxMeet(BODY_ANCHORS.TONGUE, 100, 100)).toEqual(BODY_ANCHORS.TONGUE);
   });
 
   it("exposes the same active organ and explicit pipeline in the reducer and settled body", () => {
@@ -150,6 +150,66 @@ describe("shared body renderer semantics", () => {
     expect(markup).toContain('data-relic-travel-scale="0.16"');
     expect(markup).toContain('from="0 43"');
     expect(markup).not.toContain('from="-34 28"');
+    expect(markup).toContain('preserveAspectRatio="xMidYMax meet"');
+
+    const projectThreshold = (width: number, height: number) => {
+      const scale = Math.min(width, height) / 100;
+      return {
+        x: (width - 100 * scale) / 2 + 50 * scale,
+        y: height - 100 * scale + 93 * scale,
+      };
+    };
+    for (const [width, height] of [[1_600, 900], [390, 844]]) {
+      const point = projectThreshold(width, height);
+      expect(point.x).toBeGreaterThanOrEqual(0);
+      expect(point.x).toBeLessThanOrEqual(width);
+      expect(point.y).toBeGreaterThan(height / 2);
+      expect(point.y).toBeLessThanOrEqual(height);
+    }
+  });
+
+  it("replaces same-offering alpha on command commit and authoritative hydration", () => {
+    const preceding = relic("preceding-offering");
+    const older = relic("timestamped-offering");
+    older.alpha.fill(40);
+    const newer = relic("timestamped-offering");
+    newer.alpha.fill(180);
+    const authoritative = relic("timestamped-offering");
+    authoritative.alpha.fill(230);
+    expect.soft(dedupeRelicSamples([older, newer])[0]).toBe(newer);
+
+    const states: SettledBodyRendererState[] = [];
+    const adapter = new SettledBodyRendererAdapter((state) => states.push(state), true);
+    adapter.hydrateRelics([preceding, older]);
+    const hydratedRevision = states.at(-1)?.relicRevision ?? 0;
+    const command: BodyCommand = {
+      id: "accrete:timestamped-relic:200",
+      kind: "accrete",
+      relic: {
+        id: "timestamped-relic",
+        offering_id: newer.offeringId,
+        wallet: null,
+        summary: "new timestamp",
+        rite_id: null,
+        kept_at: 100,
+        genesis: 0,
+        accreted_at: 200,
+      },
+      ink: newer,
+    };
+    adapter.dispatch(command, () => undefined);
+    expect.soft(states.at(-1)?.relicMemory).toEqual([preceding, newer]);
+    expect.soft(states.at(-1)?.relicRevision).toBe(hydratedRevision + 1);
+
+    const committedStateCount = states.length;
+    adapter.hydrateRelics([preceding, newer]);
+    expect.soft(states).toHaveLength(committedStateCount);
+    expect.soft(states.at(-1)?.relicRevision).toBe(hydratedRevision + 1);
+
+    adapter.hydrateRelics([preceding, authoritative]);
+    expect.soft(states.at(-1)?.relicMemory).toEqual([preceding, authoritative]);
+    expect.soft(states.at(-1)?.relicRevision).toBe(hydratedRevision + 2);
+    adapter.dispose();
   });
 
   it("maps only canonically eligible utterances to body activity", () => {

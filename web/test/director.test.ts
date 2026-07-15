@@ -32,6 +32,7 @@ import {
   mergeObservedTranscripts,
   pollResultIsCurrent,
   planRelicRefresh,
+  RELIC_SAMPLE_CONCURRENCY,
   recordVitalsFailure,
   recordVitalsSuccess,
   reduceRelicPageTruth,
@@ -42,7 +43,7 @@ import {
   settlePoll,
   shouldPoll,
 } from "../src/experience/useTempleExperience";
-import { foldRelicSamples, relicAccretionKey } from "../src/stain/relicInk";
+import { RELIC_MEMORY_LIMIT, foldRelicSamples, relicAccretionKey } from "../src/stain/relicInk";
 import type { RelicEntry, TranscriptEntry, Vitals } from "../src/state/types";
 
 const unlocked: DirectorLocks = { arrival: false, threshold: false, activeKind: null };
@@ -185,7 +186,7 @@ describe("experience director queue", () => {
     const ink: RelicInkSample = { offeringId: "offering", size: 64, alpha: new Uint8Array(64 * 64) };
     const accrete: BodyCommand = { id: "accrete:relic", kind: "accrete", relic, ink };
     expect(accretionAwaitsInkBeforeDream(relic, [dream], undefined)).toBe(true);
-    expect(accretionAwaitsInkBeforeDream(relic, [dream], ink)).toBe(false);
+    expect(accretionAwaitsInkBeforeDream(relic, [dream], relicAccretionKey(relic))).toBe(false);
     queue = enqueueCommand(queue, accrete, waiting);
     expect(nextCommand(queue, { ...waiting, arrival: false })).toBe(accrete);
   });
@@ -224,6 +225,7 @@ describe("experience director queue", () => {
     const older = { ...newer, accreted_at: 100 } satisfies AccretedRelic;
 
     expect(relicRefreshBlocksDream([dream], [newer], [relicAccretionKey(older)])).toBe(true);
+    expect(accretionAwaitsInkBeforeDream(newer, [dream], relicAccretionKey(older))).toBe(true);
   });
 
   it("cancels queued and active memory for every genuine live row before command mapping", () => {
@@ -667,6 +669,65 @@ describe("controller polling truth", () => {
     }
     expect.soft(decodedSamples).toHaveLength(50);
     expect.soft(new Set(decodedSamples.map((sample) => sample.offeringId)).size).toBe(50);
+  });
+
+  it("caps an undrained animate backlog and exposes one refill slot after completion", () => {
+    const makeRelic = (sequence: number): AccretedRelic => ({
+      id: `backlog-relic-${sequence}`,
+      offering_id: `backlog-offering-${sequence}`,
+      wallet: null,
+      summary: `backlog memory ${sequence}`,
+      rite_id: null,
+      kept_at: sequence,
+      genesis: 0,
+      accreted_at: 40_000 + sequence,
+    });
+    const makeInk = (relic: AccretedRelic): RelicInkSample => ({
+      offeringId: relic.offering_id,
+      size: 64,
+      alpha: new Uint8Array(64 * 64).fill(90),
+    });
+
+    const baselinePage = Array.from({ length: 50 }, (_, index) => makeRelic(50 - index));
+    let ledger = createRelicAccretionLedger();
+    const baseline = planRelicRefresh(ledger, baselinePage, 1, true);
+    ledger = baseline.ledger;
+    for (const request of baseline.requests) {
+      ledger = settleRelicSample(ledger, request, makeInk(request.relic), 1).ledger;
+    }
+
+    const secondPage = Array.from({ length: 50 }, (_, index) => makeRelic(150 - index));
+    const second = planRelicRefresh(ledger, secondPage, 2, false);
+    ledger = second.ledger;
+    expect(second.requests).toHaveLength(RELIC_SAMPLE_CONCURRENCY);
+    const commands: Extract<BodyCommand, { kind: "accrete" }>[] = [];
+    for (const request of second.requests) {
+      const settled = settleRelicSample(ledger, request, makeInk(request.relic), 2);
+      ledger = settled.ledger;
+      expect(settled.command).not.toBeNull();
+      if (settled.command !== null) commands.push(settled.command);
+    }
+
+    const thirdPage = Array.from({ length: 50 }, (_, index) => makeRelic(250 - index));
+    const blocked = planRelicRefresh(ledger, thirdPage, 3, false);
+    ledger = blocked.ledger;
+    expect(blocked.requests).toEqual([]);
+    expect(ledger.queued.size).toBe(RELIC_SAMPLE_CONCURRENCY);
+    expect(ledger.samplesByKey.size).toBeLessThanOrEqual(
+      RELIC_MEMORY_LIMIT + RELIC_SAMPLE_CONCURRENCY,
+    );
+    for (const value of Object.values(ledger)) {
+      if (value instanceof Map || value instanceof Set) {
+        expect(value.size).toBeLessThanOrEqual(
+          RELIC_MEMORY_LIMIT * 2 + RELIC_SAMPLE_CONCURRENCY,
+        );
+      }
+    }
+
+    ledger = activateRelicCommand(ledger, commands[0]);
+    ledger = completeRelicCommand(ledger, commands[0]);
+    const refill = planRelicRefresh(ledger, thirdPage, 4, false);
+    expect(refill.requests).toHaveLength(1);
   });
 
   it("keeps fifty committed traces unchanged until a replacement sample completes", () => {
