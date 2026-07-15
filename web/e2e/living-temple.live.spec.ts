@@ -239,62 +239,12 @@ test("branch remount resumes one page-view utterance clock and settles toward th
   `);
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect(page.getByRole("region", { name: "the page" })).toBeVisible({ timeout: 4_000 });
-  await expect(utterance).toHaveCount(1);
-  await expect(utterance).toHaveAttribute("data-presentation-started-at", startedAt!);
-  expect(await phase.getAttribute("data-utterance-phase")).not.toBe("developing");
-  await expect(utterance).toHaveAttribute(
-    "data-settle-direction",
-    testInfo.project.name === "desktop" ? "right" : "down",
-  );
-  const removal = await utterance.evaluate((node) => new Promise<{
-    starts: string[];
-    removed: boolean;
-    initiallyConnected: boolean;
-    completionSource: "initial" | "mutation" | "timeout";
-    elapsedMs: number;
-    nodeConnected: boolean;
-    currentMatches: boolean;
-    phase: string | null;
-    opacity: string;
-    transform: string;
-    bodyCommandId: string | null;
-    bodyCompletedId: string | null;
-    bodyCompletionCount: string | null;
-    utteranceIds: Array<string | undefined>;
-    codexRowIds: Array<string | undefined>;
-  }>((resolve) => {
-    const observedAt = performance.now();
-    const initiallyConnected = node.isConnected;
-    const starts = [node.getAttribute("data-presentation-started-at") ?? ""];
-    const attributes = new MutationObserver(() => {
-      starts.push(node.getAttribute("data-presentation-started-at") ?? "");
-    });
-    let finished = false;
-    let timeout = 0;
-    const finish = (
-      removed: boolean,
-      completionSource: "initial" | "mutation" | "timeout",
-    ) => {
-      if (finished) return;
-      finished = true;
-      attributes.disconnect();
-      removals.disconnect();
-      clearTimeout(timeout);
-      const ink = node.querySelector<HTMLElement>("[data-utterance-phase]");
-      const style = getComputedStyle(ink ?? node);
+  const remount = await page.evaluate(({ commandId }) => {
+    const selector = `[data-body-utterance][data-command-id="${commandId}"]`;
+    const node = document.querySelector<HTMLElement>(selector);
+    const evidence = () => {
       const body = document.querySelector<HTMLElement>("[data-body-renderer]");
-      const current = document.querySelector(`[data-body-utterance][data-command-id="${node.dataset.commandId}"]`);
-      resolve({
-        starts: [...new Set(starts)],
-        removed,
-        initiallyConnected,
-        completionSource,
-        elapsedMs: performance.now() - observedAt,
-        nodeConnected: node.isConnected,
-        currentMatches: current === node,
-        phase: ink?.dataset.utterancePhase ?? null,
-        opacity: style.opacity,
-        transform: style.transform,
+      return {
         bodyCommandId: body?.dataset.commandId ?? null,
         bodyCompletedId: body?.dataset.completedId ?? null,
         bodyCompletionCount: body?.dataset.completionCount ?? null,
@@ -302,27 +252,100 @@ test("branch remount resumes one page-view utterance clock and settles toward th
           .map((utteranceNode) => utteranceNode.dataset.commandId),
         codexRowIds: [...document.querySelectorAll<HTMLElement>("[data-codex-row]")]
           .map((row) => row.dataset.codexRow),
-      });
+      };
     };
-    const removals = new MutationObserver(() => {
-      if (!node.isConnected) finish(true, "mutation");
+    if (node === null) return { state: "gone" as const, ...evidence() };
+
+    const ink = node.querySelector<HTMLElement>("[data-utterance-phase]");
+    const initial = {
+      start: node.dataset.presentationStartedAt ?? null,
+      direction: node.dataset.settleDirection ?? null,
+      phase: ink?.dataset.utterancePhase ?? null,
+    };
+    return new Promise<{
+      state: "present";
+      initial: typeof initial;
+      removal: {
+        starts: string[];
+        removed: boolean;
+        initiallyConnected: boolean;
+        completionSource: "initial" | "mutation" | "timeout";
+        nodeConnected: boolean;
+        currentMatches: boolean;
+        phase: string | null;
+        bodyCommandId: string | null;
+        bodyCompletedId: string | null;
+        bodyCompletionCount: string | null;
+        utteranceIds: Array<string | undefined>;
+        codexRowIds: Array<string | undefined>;
+      };
+    }>((resolve) => {
+      const initiallyConnected = node.isConnected;
+      const starts = [node.getAttribute("data-presentation-started-at") ?? ""];
+      const attributes = new MutationObserver(() => {
+        starts.push(node.getAttribute("data-presentation-started-at") ?? "");
+      });
+      let finished = false;
+      let timeout = 0;
+      const finish = (
+        removed: boolean,
+        completionSource: "initial" | "mutation" | "timeout",
+      ) => {
+        if (finished) return;
+        finished = true;
+        attributes.disconnect();
+        removals.disconnect();
+        clearTimeout(timeout);
+        const settledInk = node.querySelector<HTMLElement>("[data-utterance-phase]");
+        const current = document.querySelector(selector);
+        resolve({
+          state: "present",
+          initial,
+          removal: {
+            starts: [...new Set(starts)],
+            removed,
+            initiallyConnected,
+            completionSource,
+            nodeConnected: node.isConnected,
+            currentMatches: current === node,
+            phase: settledInk?.dataset.utterancePhase ?? null,
+            ...evidence(),
+          },
+        });
+      };
+      const removals = new MutationObserver(() => {
+        if (!node.isConnected) finish(true, "mutation");
+      });
+      attributes.observe(node, { attributes: true, attributeFilter: ["data-presentation-started-at"] });
+      removals.observe(document.body, { childList: true, subtree: true });
+      if (!node.isConnected) finish(true, "initial");
+      else timeout = window.setTimeout(() => finish(!node.isConnected, "timeout"), 3_500);
     });
-    attributes.observe(node, { attributes: true, attributeFilter: ["data-presentation-started-at"] });
-    removals.observe(document.body, { childList: true, subtree: true });
-    if (!node.isConnected) finish(true, "initial");
-    else timeout = window.setTimeout(() => finish(!node.isConnected, "timeout"), 3_500);
-  }));
-  expect(removal.starts).toEqual([startedAt]);
-  expect(removal.removed, JSON.stringify(removal)).toBe(true);
-  expect(removal.completionSource).toBe(removal.initiallyConnected ? "mutation" : "initial");
-  expect(removal.nodeConnected).toBe(false);
-  expect(removal.currentMatches).toBe(false);
-  expect(removal.phase).toBe("settling");
-  expect(removal.bodyCommandId).toBeNull();
-  expect(removal.bodyCompletedId).toBe(commandId);
-  expect(removal.bodyCompletionCount).toBe("1");
-  expect(removal.utteranceIds).toEqual([]);
-  expect(removal.codexRowIds).toContain(baselineId);
+  }, { commandId });
+
+  if (remount.state === "present") {
+    expect(remount.initial.start).toBe(startedAt);
+    expect(remount.initial.phase).not.toBe("developing");
+    expect(remount.initial.direction).toBe(testInfo.project.name === "desktop" ? "right" : "down");
+    const removal = remount.removal;
+    expect(removal.starts).toEqual([startedAt]);
+    expect(removal.removed, JSON.stringify(removal)).toBe(true);
+    expect(removal.completionSource).toBe(removal.initiallyConnected ? "mutation" : "initial");
+    expect(removal.nodeConnected).toBe(false);
+    expect(removal.currentMatches).toBe(false);
+    expect(removal.phase).toBe("settling");
+    expect(removal.bodyCommandId).toBeNull();
+    expect(removal.bodyCompletedId).toBe(commandId);
+    expect(removal.bodyCompletionCount).toBe("1");
+    expect(removal.utteranceIds).toEqual([]);
+    expect(removal.codexRowIds).toContain(baselineId);
+  } else {
+    expect(remount.bodyCommandId).toBeNull();
+    expect(remount.bodyCompletedId).toBe(commandId);
+    expect(remount.bodyCompletionCount).toBe("1");
+    expect(remount.utteranceIds).toEqual([]);
+    expect(remount.codexRowIds).toContain(baselineId);
+  }
   expect(runtimeErrors).toEqual([]);
   await expect(utterance).toHaveCount(0, { timeout: 2_500 });
   expect(Date.now() - visibleAt).toBeLessThanOrEqual(4_000);

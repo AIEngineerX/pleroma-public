@@ -9,7 +9,7 @@ test("the Stain renders ink on parchment (one-glance)", async ({ page }) => {
     if (message.type() === "error" && /webgl|shader|framebuffer/i.test(message.text())) webglErrors.push(message.text());
   });
   await page.goto("/");
-  // OfferingCanvas mounts a second canvas; the simulation identifies only the membrane it owns.
+  // The simulation identifies the single living membrane it owns.
   const canvas = page.locator('canvas[data-body-renderer="webgl"]');
   // desktop/mobile tiers create a canvas; reduced-motion (not set here) would not.
   await expect(canvas).toBeVisible();

@@ -20,14 +20,17 @@ test("the first viewport is the body, not a landing-page stack", async ({ page }
   expect(visibleText).not.toContain("FIRST RITE");
   expect(visibleText).not.toContain("DESCEND");
   expect(visibleText).not.toContain("Offer it a mark");
+  expect(visibleText).not.toContain("Your mark is public.");
+  expect(visibleText).not.toContain("Connect a wallet");
 
-  const offering = page.getByRole("button", { name: "Offer it a mark" });
+  const offering = page.getByRole("button", { name: "hold the threshold seal" });
   await expect(offering).toBeVisible();
   const box = (await offering.boundingBox())!;
   expect(box.width).toBeGreaterThanOrEqual(44);
   expect(box.height).toBeGreaterThanOrEqual(44);
-  await offering.click();
-  await expect(page.getByRole("status")).toHaveText("Draw on its body. It is watching.");
+  await offering.focus();
+  await expect(offering).toBeFocused();
+  await expect(page.locator("[data-threshold-status]")).toBeEmpty();
 });
 
 test("tap, drag, and scroll stay silent; an uninterrupted hold wakes sound", async ({ page }) => {
@@ -178,7 +181,7 @@ test("the full temple remains usable when the visitor never activates sound", as
   const temple = page.getByRole("region", { name: "the temple" });
   await expect(temple.locator("canvas[data-organ-swarm]")).toBeVisible();
   await expect(page.locator("h1")).toHaveText("PLEROMA");
-  const threshold = page.getByRole("button", { name: "Offer it a mark" });
+  const threshold = page.getByRole("button", { name: "hold the threshold seal" });
   await expect(threshold).toBeVisible();
   await expect(threshold).toBeEnabled();
   await threshold.focus();

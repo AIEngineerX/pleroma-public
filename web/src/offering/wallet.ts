@@ -30,12 +30,13 @@ export async function availableWallets(): Promise<Array<{ name: string; icon: st
     }));
 }
 
-// GET a nonce, hash the image, build the exact multipart body POST /api/offerings expects. Anonymous when
-// wallet is null (accepted but unremembered). Signed offerings base58-encode pubkey + signature (worker scheme).
-export async function buildOffering(apiBase: string, bytes: Uint8Array, wallet: WalletHandle | null): Promise<FormData> {
+// Put the validated preview Blob itself into the multipart body. Signed offerings derive hash bytes from
+// that same Blob before the wallet signs; anonymous offerings never need a second copy or encoding.
+export async function buildOffering(apiBase: string, image: Blob, wallet: WalletHandle | null): Promise<FormData> {
   const form = new FormData();
-  form.set("image", new Blob([bytes as BufferSource], { type: "image/png" }), "offering.png");
+  form.set("image", image, "offering.png");
   if (wallet) {
+    const bytes = new Uint8Array(await image.arrayBuffer());
     const { nonce, expires_at } = await (await fetch(`${apiBase}/api/nonce`)).json() as { nonce: string; expires_at: number };
     const sha = await sha256hex(bytes);
     const sig = await wallet.signMessage(new TextEncoder().encode(offeringMessage(sha, nonce, expires_at)));

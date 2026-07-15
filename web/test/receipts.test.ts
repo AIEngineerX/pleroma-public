@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import OfferingReceipts from "../src/experience/OfferingReceipts";
 import { loadReceipts, loadReceiptsSafely, reconcileReceipt, saveReceipts } from "../src/experience/receipts";
 import type { OfferingReceipt } from "../src/experience/types";
 import type { RelicEntry, TranscriptEntry } from "../src/state/types";
@@ -137,5 +140,22 @@ describe("truthful receipt reconciliation", () => {
     const unrelatedEntries = [transcript("other-eye", "EYE", "other", 50)];
     const unrelatedRelics = [relic("other-relic", "other", null)];
     expect(reconcileReceipt(settled, unrelatedEntries, unrelatedRelics)).toEqual(settled);
+  });
+});
+
+describe("offering receipt language", () => {
+  it("renders only the five observable lifecycle phrases", () => {
+    const stages = ["pending", "witnessed", "judged", "kept", "accreted"] as const;
+    const receipts = stages.map((stage, index): OfferingReceipt => ({
+      ...receipt(`offering-${stage}`, index),
+      stage,
+    }));
+    const html = renderToStaticMarkup(createElement(OfferingReceipts, { receipts }));
+    expect(html).toContain("awaiting the Eye");
+    expect(html).toContain("witnessed by the Eye");
+    expect(html).toContain("judged by the Keep");
+    expect(html).toContain("kept, awaiting accretion");
+    expect(html).toContain("carried into the body");
+    expect(html).not.toContain("mourned");
   });
 });

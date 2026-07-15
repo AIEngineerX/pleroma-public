@@ -26,7 +26,7 @@ test("interactive targets are at least 44px", async ({ page }) => {
 test("the offer button is in thumb reach at 390px", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-390", "thumb reach is a mobile-390 concern");
   await page.goto("/");
-  const offer = page.getByRole("button", { name: "Offer it a mark" });
+  const offer = page.getByRole("button", { name: "hold the threshold seal" });
   await expect(offer).toBeVisible();
   const box = (await offer.boundingBox())!;
   const viewport = page.viewportSize()!;

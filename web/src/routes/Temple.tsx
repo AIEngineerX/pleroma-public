@@ -3,12 +3,8 @@ import { gsap } from "gsap";
 import { useEntryGesture } from "../App";
 import MuteToggle from "../lib/MuteToggle";
 import Stain from "../stain/Stain";
-import type { StainSim } from "../stain/stainSim";
 import Codex from "../codex/Codex";
 import CodexAnnouncements from "../codex/CodexAnnouncements";
-import OfferingCanvas from "../offering/OfferingCanvas";
-import OfferingRite from "../offering/OfferingRite";
-import WalletButton from "../offering/WalletButton";
 import type { WalletHandle } from "../offering/wallet";
 import { resolveApiBase } from "../config";
 import { useTempleExperience } from "../experience/useTempleExperience";
@@ -27,6 +23,7 @@ import HowToBuy from "../market/HowToBuy";
 import Ticker from "../market/Ticker";
 import Socials from "../market/Socials";
 import { Link } from "react-router-dom";
+import ThresholdOffering from "../experience/ThresholdOffering";
 
 const API_BASE = resolveApiBase(import.meta.env);
 const today = () => new Date().toISOString().slice(0, 10);
@@ -37,14 +34,26 @@ export default function Temple() {
     typeof performance === "undefined" ? 0 : performance.now(),
   ).current;
   const experience = useTempleExperience(API_BASE);
-  const { state, codex, relics, activeCommand, commandComplete, offeringAccepted } = experience;
+  const {
+    state,
+    codex,
+    relics,
+    receipts,
+    activeCommand,
+    commandComplete,
+    offeringAccepted,
+    setThresholdActive,
+  } = experience;
   const utteranceClock = useRef<{ id: string; startedAt: number } | null>(null);
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
-  const [stainSim, setStainSim] = useState<StainSim | null>(null);
   const [forceSettledRenderer, setForceSettledRenderer] = useState(false);
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
+  const [thresholdMount, setThresholdMount] = useState<HTMLElement | null>(null);
+  const attachThresholdHost = useCallback((node: HTMLElement | null) => {
+    if (node !== null) setThresholdMount(node);
+  }, []);
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
@@ -120,6 +129,16 @@ export default function Temple() {
     <RiteInversion view={rite}>
       <>
         <CodexAnnouncements entries={codex} />
+        <ThresholdOffering
+          apiBase={API_BASE}
+          wallet={wallet}
+          onConnect={setWallet}
+          onEnter={wakeCenter}
+          onSubmitted={offeringAccepted}
+          onThresholdActive={setThresholdActive}
+          receipts={receipts}
+          mount={thresholdMount}
+        />
         {dormant ? (
           <>
           <section
@@ -141,16 +160,12 @@ export default function Temple() {
               onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
-              onSim={setStainSim}
             />
             {holdIndicator}
-            <OfferingRite
-              apiBase={API_BASE}
-              wallet={wallet}
-              onConnect={setWallet}
-              stain={stainSim}
-              onEnter={wakeCenter}
-              onSubmitted={offeringAccepted}
+            <div
+              ref={attachThresholdHost}
+              data-threshold-host="dormant"
+              className="absolute inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-20 flex justify-center px-6"
             />
           </section>
           {/* Beneath the fold: the surfaces that already work before the token launches, on the same
@@ -208,7 +223,6 @@ export default function Temple() {
               onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
-              onSim={setStainSim}
             />
             {holdIndicator}
           </section>
@@ -221,10 +235,11 @@ export default function Temple() {
               "the page (Stain + offering surface) ~60% left"); after the codex on mobile (DESIGN "Mobile, the
               scroll: codex then offering surface"). */}
           <section aria-label="offer a mark" className="md:col-start-1 md:row-start-2 flex flex-col items-center gap-1 pt-1 pb-4">
-            {wallet
-              ? <p className="font-machine text-xs text-ink-faded">wallet connected, {wallet.address.slice(0, 4)}...{wallet.address.slice(-4)}</p>
-              : <WalletButton onConnect={setWallet} />}
-            <OfferingCanvas apiBase={API_BASE} wallet={wallet} stain={stainSim} onSubmitted={offeringAccepted} />
+            <div
+              ref={attachThresholdHost}
+              data-threshold-host="live"
+              className="flex w-full justify-center"
+            />
           </section>
           {/* the Reliquary: the Corpus made visible, in the page column, beneath the offering surface
               on both desktop (falls into an implicit row 3 of col-start-1) and mobile (next in flow). */}
