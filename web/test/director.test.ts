@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as templeExperienceModule from "../src/experience/useTempleExperience";
 import {
   commandFor,
   enqueueControllerCommand,
@@ -41,6 +42,7 @@ import {
   settlePoll,
   shouldPoll,
 } from "../src/experience/useTempleExperience";
+import { foldRelicSamples, relicAccretionKey } from "../src/stain/relicInk";
 import type { RelicEntry, TranscriptEntry, Vitals } from "../src/state/types";
 
 const unlocked: DirectorLocks = { arrival: false, threshold: false, activeKind: null };
@@ -201,10 +203,27 @@ describe("experience director queue", () => {
       genesis: 0,
       accreted_at: 21,
     };
-    const ink: RelicInkSample = { offeringId: "offering", size: 64, alpha: new Uint8Array(64 * 64) };
     expect(relicRefreshBlocksDream([dream], [relic], [])).toBe(true);
-    expect(relicRefreshBlocksDream([dream], [relic], [ink])).toBe(false);
+    expect(relicRefreshBlocksDream([dream], [relic], [relicAccretionKey(relic)])).toBe(false);
     expect(relicRefreshBlocksDream([dream], [{ ...relic, accreted_at: null }], [])).toBe(false);
+  });
+
+  it("does not let an older sample for the same offering release a newer accretion DREAM", () => {
+    const riteDate = "2030-01-01";
+    const dream = required(commandFor(e("dream-new-timestamp", 220, "DREAM", "verse", riteDate), "live"));
+    const newer: AccretedRelic = {
+      id: "relic-newer",
+      offering_id: "same-offering",
+      wallet: null,
+      summary: "the offering changed at accretion",
+      rite_id: riteDate,
+      kept_at: 100,
+      genesis: 0,
+      accreted_at: 200,
+    };
+    const older = { ...newer, accreted_at: 100 } satisfies AccretedRelic;
+
+    expect(relicRefreshBlocksDream([dream], [newer], [relicAccretionKey(older)])).toBe(true);
   });
 
   it("cancels queued and active memory for every genuine live row before command mapping", () => {
@@ -304,6 +323,76 @@ describe("controller polling truth", () => {
       throw new Error("feed unavailable");
     });
     expect(outcome).toEqual({ kind: "failure" });
+  });
+
+  it("delivers relic samples incrementally through a small bounded scheduler", async () => {
+    type RelicQueue = <Input, Output>(
+      inputs: readonly Input[],
+      signal: AbortSignal,
+      sample: (input: Input, signal: AbortSignal) => Promise<Output>,
+      deliver: (input: Input, output: Output | null) => void,
+    ) => Promise<void>;
+    const queueModule = templeExperienceModule as unknown as {
+      RELIC_SAMPLE_CONCURRENCY?: number;
+      runRelicSampleQueue?: RelicQueue;
+    };
+    const concurrency = queueModule.RELIC_SAMPLE_CONCURRENCY;
+    const runQueue = queueModule.runRelicSampleQueue;
+    expect(concurrency).toBe(4);
+    expect(runQueue).toBeTypeOf("function");
+    if (runQueue === undefined || concurrency === undefined) return;
+
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      let reject!: (reason?: unknown) => void;
+      const promise = new Promise<T>((accept, decline) => {
+        resolve = accept;
+        reject = decline;
+      });
+      return { promise, resolve, reject };
+    }
+
+    const gates = Array.from({ length: 4 }, () => deferred<string>());
+    const saturated = deferred<void>();
+    const firstDelivered = deferred<void>();
+    const started: number[] = [];
+    const delivered: number[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const running = runQueue(
+      [0, 1, 2, 3, 4, 5, 6],
+      new AbortController().signal,
+      async (input) => {
+        started.push(input);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        if (active === concurrency) saturated.resolve();
+        try {
+          return input < gates.length ? await gates[input].promise : `ink-${input}`;
+        } finally {
+          active -= 1;
+        }
+      },
+      (input) => {
+        delivered.push(input);
+        if (input === 0) firstDelivered.resolve();
+      },
+    );
+
+    await saturated.promise;
+    expect(started).toEqual([0, 1, 2, 3]);
+    expect(delivered).toEqual([]);
+
+    gates[0].resolve("ink-0");
+    await firstDelivered.promise;
+    expect(delivered[0]).toBe(0);
+    expect(started).toContain(4);
+    expect(maxActive).toBeLessThanOrEqual(concurrency);
+
+    for (const index of [1, 2, 3]) gates[index].resolve(`ink-${index}`);
+    await running;
+    expect(new Set(delivered)).toEqual(new Set([0, 1, 2, 3, 4, 5, 6]));
+    expect(maxActive).toBeLessThanOrEqual(concurrency);
   });
 
   it("keeps a young kept receipt on the fast cadence until it accretes", () => {
@@ -504,6 +593,202 @@ describe("controller polling truth", () => {
       entries.slice(0, 50).map((entry) => entry.offering_id),
     );
     expect(relicMemoryFromLedger(ledger)).toHaveLength(50);
+  });
+
+  it("keeps rotating first-page relic truth, ledger keys, and decoded samples bounded", () => {
+    const makeRelic = (sequence: number): AccretedRelic => ({
+      id: `rotation-relic-${sequence}`,
+      offering_id: `rotation-offering-${sequence}`,
+      wallet: null,
+      summary: `rotating memory ${sequence}`,
+      rite_id: null,
+      kept_at: sequence,
+      genesis: 0,
+      accreted_at: 10_000 + sequence,
+    });
+    const makeInk = (relic: AccretedRelic): RelicInkSample => ({
+      offeringId: relic.offering_id,
+      size: 64,
+      alpha: new Uint8Array(64 * 64).fill((relic.kept_at % 200) + 1),
+    });
+
+    let page = Array.from({ length: 50 }, (_, index) => makeRelic(50 - index));
+    let truth = reduceRelicPageTruth([], page, [], []);
+    let ledger = createRelicAccretionLedger();
+    const baseline = planRelicRefresh(ledger, truth.relics, 1, true);
+    ledger = baseline.ledger;
+    for (const request of baseline.requests) {
+      ledger = settleRelicSample(ledger, request, makeInk(request.relic), 1).ledger;
+    }
+
+    for (let generation = 2; generation <= 76; generation += 1) {
+      const newest = makeRelic(49 + generation);
+      page = [newest, ...page.slice(0, 49)];
+      truth = reduceRelicPageTruth(truth.relics, page, [], []);
+      const planned = planRelicRefresh(ledger, truth.relics, generation, false);
+      ledger = planned.ledger;
+      expect(planned.requests).toHaveLength(1);
+      const settled = settleRelicSample(
+        ledger,
+        planned.requests[0],
+        makeInk(planned.requests[0].relic),
+        generation,
+      );
+      ledger = settled.ledger;
+      expect(settled.command).not.toBeNull();
+      if (settled.command === null) throw new Error("expected rotating accretion command");
+      ledger = activateRelicCommand(ledger, settled.command);
+      ledger = completeRelicCommand(ledger, settled.command);
+    }
+
+    expect.soft(truth.relics).toEqual(page);
+    expect.soft(truth.relics).toHaveLength(50);
+    expect.soft(Object.hasOwn(ledger, "observedTimestamps")).toBe(false);
+    expect.soft(Object.hasOwn(ledger, "memoryByKey")).toBe(false);
+    for (const value of Object.values(ledger)) {
+      if (value instanceof Map || value instanceof Set) {
+        expect.soft(value.size).toBeLessThanOrEqual(50);
+      } else if (Array.isArray(value)) {
+        expect.soft(value).toHaveLength(50);
+      }
+    }
+
+    const decodedSamples: RelicInkSample[] = [];
+    for (const value of Object.values(ledger)) {
+      if (!(value instanceof Map)) continue;
+      for (const stored of value.values()) {
+        if (
+          typeof stored === "object"
+          && stored !== null
+          && "alpha" in stored
+          && stored.alpha instanceof Uint8Array
+        ) decodedSamples.push(stored as RelicInkSample);
+      }
+    }
+    expect.soft(decodedSamples).toHaveLength(50);
+    expect.soft(new Set(decodedSamples.map((sample) => sample.offeringId)).size).toBe(50);
+  });
+
+  it("keeps fifty committed traces unchanged until a replacement sample completes", () => {
+    const makeRelic = (sequence: number): AccretedRelic => ({
+      id: `atomic-relic-${sequence}`,
+      offering_id: `atomic-offering-${sequence}`,
+      wallet: null,
+      summary: `atomic memory ${sequence}`,
+      rite_id: null,
+      kept_at: sequence,
+      genesis: 0,
+      accreted_at: 20_000 + sequence,
+    });
+    const makeInk = (relic: AccretedRelic): RelicInkSample => ({
+      offeringId: relic.offering_id,
+      size: 64,
+      alpha: new Uint8Array(64 * 64).fill((relic.kept_at % 180) + 20),
+    });
+
+    const baselinePage = Array.from({ length: 50 }, (_, index) => makeRelic(50 - index));
+    let ledger = createRelicAccretionLedger();
+    const baseline = planRelicRefresh(ledger, baselinePage, 1, true);
+    ledger = baseline.ledger;
+    for (const request of baseline.requests) {
+      ledger = settleRelicSample(ledger, request, makeInk(request.relic), 1).ledger;
+    }
+    const priorMemory = relicMemoryFromLedger(ledger);
+    const priorMask = foldRelicSamples(priorMemory);
+    expect(priorMemory).toHaveLength(50);
+
+    const newest = makeRelic(51);
+    const nextPage = [newest, ...baselinePage.slice(0, 49)];
+    const first = planRelicRefresh(ledger, nextPage, 2, false);
+    ledger = first.ledger;
+    expect(first.requests).toHaveLength(1);
+    expect.soft(relicMemoryFromLedger(ledger)).toEqual(priorMemory);
+    expect.soft(foldRelicSamples(relicMemoryFromLedger(ledger))).toEqual(priorMask);
+
+    const failed = settleRelicSample(ledger, first.requests[0], null, 2);
+    ledger = failed.ledger;
+    expect(ledger.inFlight.size).toBe(0);
+    expect.soft(relicMemoryFromLedger(ledger)).toEqual(priorMemory);
+    expect.soft(foldRelicSamples(relicMemoryFromLedger(ledger))).toEqual(priorMask);
+
+    const retry = planRelicRefresh(ledger, nextPage, 3, false);
+    ledger = retry.ledger;
+    expect(retry.requests).toHaveLength(1);
+    const newestInk = makeInk(newest);
+    const succeeded = settleRelicSample(ledger, retry.requests[0], newestInk, 3);
+    ledger = succeeded.ledger;
+    expect(succeeded.command).not.toBeNull();
+    expect.soft(relicMemoryFromLedger(ledger)).toEqual(priorMemory);
+    if (succeeded.command === null) throw new Error("expected replacement accretion command");
+
+    ledger = activateRelicCommand(ledger, succeeded.command);
+    expect.soft(relicMemoryFromLedger(ledger)).toEqual(priorMemory);
+    ledger = completeRelicCommand(ledger, succeeded.command);
+
+    const expectedMemory = [newestInk, ...priorMemory.slice(0, 49)];
+    expect(relicMemoryFromLedger(ledger)).toEqual(expectedMemory);
+    expect(foldRelicSamples(relicMemoryFromLedger(ledger))).toEqual(foldRelicSamples(expectedMemory));
+    expect(relicMemoryFromLedger(ledger)).not.toContain(priorMemory[49]);
+  });
+
+  it("replaces an older timestamp for the same offering without consuming two memory slots", () => {
+    const makeRelic = (sequence: number): AccretedRelic => ({
+      id: `timestamp-relic-${sequence}`,
+      offering_id: `timestamp-offering-${sequence}`,
+      wallet: null,
+      summary: `timestamp memory ${sequence}`,
+      rite_id: null,
+      kept_at: 1_000 - sequence,
+      genesis: 0,
+      accreted_at: 30_000 + sequence,
+    });
+    const makeInk = (relic: AccretedRelic): RelicInkSample => ({
+      offeringId: relic.offering_id,
+      size: 64,
+      alpha: new Uint8Array(64 * 64).fill(40 + (relic.kept_at % 100)),
+    });
+
+    const baselinePage = Array.from({ length: 50 }, (_, index) => makeRelic(index));
+    let ledger = createRelicAccretionLedger();
+    const baseline = planRelicRefresh(ledger, baselinePage, 1, true);
+    ledger = baseline.ledger;
+    for (const request of baseline.requests) {
+      ledger = settleRelicSample(ledger, request, makeInk(request.relic), 1).ledger;
+    }
+
+    const older = baselinePage[0];
+    const newer = {
+      ...older,
+      id: "timestamp-relic-newer",
+      accreted_at: older.accreted_at + 100,
+    } satisfies AccretedRelic;
+    const pending = makeRelic(99);
+    const nextPage = [newer, ...baselinePage.slice(1, 49), pending];
+    const planned = planRelicRefresh(ledger, nextPage, 2, false);
+    ledger = planned.ledger;
+    expect(planned.requests).toHaveLength(2);
+    const newerRequest = planned.requests.find((request) => request.relic.id === newer.id);
+    const pendingRequest = planned.requests.find((request) => request.relic.id === pending.id);
+    expect(newerRequest).toBeDefined();
+    expect(pendingRequest).toBeDefined();
+    if (newerRequest === undefined || pendingRequest === undefined) {
+      throw new Error("expected both timestamp replacement requests");
+    }
+
+    ledger = settleRelicSample(ledger, pendingRequest, null, 2).ledger;
+    const settled = settleRelicSample(ledger, newerRequest, makeInk(newer), 2);
+    ledger = settled.ledger;
+    expect(settled.command).not.toBeNull();
+    if (settled.command === null) throw new Error("expected newer timestamp command");
+    ledger = activateRelicCommand(ledger, settled.command);
+    ledger = completeRelicCommand(ledger, settled.command);
+
+    const memory = relicMemoryFromLedger(ledger);
+    expect(memory).toHaveLength(50);
+    expect(new Set(memory.map((sample) => sample.offeringId)).size).toBe(50);
+    expect(ledger.selectedKeys).toContain(relicAccretionKey(newer));
+    expect(ledger.selectedKeys).not.toContain(relicAccretionKey(older));
+    expect(ledger.samplesByKey.has(relicAccretionKey(older))).toBe(false);
   });
 
   it("creates a complete source reset and advances every generation", () => {

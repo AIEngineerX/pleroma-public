@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { fetchCodex } from "../codex/codexClient";
 import { fetchRelics } from "../reliquary/readClient";
 import {
+  RELIC_MEMORY_LIMIT,
   fetchRelicInk,
   isAccreted,
   relicAccretionKey,
@@ -41,6 +42,7 @@ const RITE_POLL_MS = 2_000;
 const RELIC_IDLE_POLL_MS = 30_000;
 const RECEIPT_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const RELIC_IMAGE_TIMEOUT_MS = 5_000;
+export const RELIC_SAMPLE_CONCURRENCY = 4;
 
 export interface VitalsFreshness {
   feed: VitalsFeed;
@@ -94,6 +96,34 @@ export async function settlePoll<T>(work: () => Promise<T>): Promise<PollOutcome
   }
 }
 
+export async function runRelicSampleQueue<Input, Output>(
+  inputs: readonly Input[],
+  signal: AbortSignal,
+  sample: (input: Input, signal: AbortSignal) => Promise<Output>,
+  deliver: (input: Input, output: Output | null) => void,
+): Promise<void> {
+  let nextIndex = 0;
+  async function run(): Promise<void> {
+    while (!signal.aborted) {
+      const index = nextIndex;
+      if (index >= inputs.length) return;
+      nextIndex += 1;
+      const input = inputs[index];
+      let output: Output | null;
+      try {
+        output = await sample(input, signal);
+      } catch {
+        output = null;
+      }
+      if (signal.aborted) return;
+      deliver(input, output);
+    }
+  }
+
+  const runners = Math.min(RELIC_SAMPLE_CONCURRENCY, inputs.length);
+  await Promise.all(Array.from({ length: runners }, () => run()));
+}
+
 export function commandRequiresRelicRefresh(command: BodyCommand): boolean {
   return command.kind === "converge" && command.dream.source === "live";
 }
@@ -120,12 +150,6 @@ export function mergeObservedTranscripts(
   );
 }
 
-function mergeRelics(existing: readonly RelicEntry[], incoming: readonly RelicEntry[]): RelicEntry[] {
-  const byId = new Map(existing.map((relic) => [relic.id, relic]));
-  for (const relic of incoming) byId.set(relic.id, relic);
-  return [...byId.values()].sort((a, b) => b.kept_at - a.kept_at || b.id.localeCompare(a.id));
-}
-
 export interface RelicPageTruth {
   relics: RelicEntry[];
   receipts: OfferingReceipt[];
@@ -137,7 +161,8 @@ export function reduceRelicPageTruth(
   receipts: readonly OfferingReceipt[],
   entries: readonly TranscriptEntry[],
 ): RelicPageTruth {
-  const relics = mergeRelics(existingRelics, pageEntries);
+  void existingRelics;
+  const relics = [...pageEntries].slice(0, RELIC_MEMORY_LIMIT);
   return {
     relics,
     receipts: receipts.map((receipt) => reconcileReceipt(receipt, entries, relics)),
@@ -189,7 +214,6 @@ export interface RelicSampleRequest {
 }
 
 export interface RelicAccretionLedger {
-  observedTimestamps: Map<string, number | null>;
   modes: Map<string, RelicSampleMode>;
   inFlight: Set<string>;
   queued: Set<string>;
@@ -198,13 +222,12 @@ export interface RelicAccretionLedger {
   attemptedGeneration: Map<string, number>;
   requestGeneration: Map<string, number>;
   samplesByKey: Map<string, RelicInkSample>;
-  memoryByKey: Map<string, RelicInkSample>;
+  visibleKeys: string[];
   selectedKeys: string[];
 }
 
 export function createRelicAccretionLedger(): RelicAccretionLedger {
   return {
-    observedTimestamps: new Map(),
     modes: new Map(),
     inFlight: new Set(),
     queued: new Set(),
@@ -213,14 +236,13 @@ export function createRelicAccretionLedger(): RelicAccretionLedger {
     attemptedGeneration: new Map(),
     requestGeneration: new Map(),
     samplesByKey: new Map(),
-    memoryByKey: new Map(),
+    visibleKeys: [],
     selectedKeys: [],
   };
 }
 
 function cloneRelicAccretionLedger(ledger: RelicAccretionLedger): RelicAccretionLedger {
   return {
-    observedTimestamps: new Map(ledger.observedTimestamps),
     modes: new Map(ledger.modes),
     inFlight: new Set(ledger.inFlight),
     queued: new Set(ledger.queued),
@@ -229,9 +251,55 @@ function cloneRelicAccretionLedger(ledger: RelicAccretionLedger): RelicAccretion
     attemptedGeneration: new Map(ledger.attemptedGeneration),
     requestGeneration: new Map(ledger.requestGeneration),
     samplesByKey: new Map(ledger.samplesByKey),
-    memoryByKey: new Map(ledger.memoryByKey),
+    visibleKeys: [...ledger.visibleKeys],
     selectedKeys: [...ledger.selectedKeys],
   };
+}
+
+function pruneRelicAccretionLedger(ledger: RelicAccretionLedger): RelicAccretionLedger {
+  const retained = new Set([
+    ...ledger.visibleKeys,
+    ...ledger.selectedKeys,
+    ...ledger.inFlight,
+    ...ledger.queued,
+    ...ledger.active,
+  ]);
+  for (const key of ledger.modes.keys()) if (!retained.has(key)) ledger.modes.delete(key);
+  for (const key of ledger.attemptedGeneration.keys()) {
+    if (!retained.has(key)) ledger.attemptedGeneration.delete(key);
+  }
+  for (const key of ledger.requestGeneration.keys()) {
+    if (!ledger.inFlight.has(key)) ledger.requestGeneration.delete(key);
+  }
+  for (const key of ledger.samplesByKey.keys()) {
+    if (!retained.has(key)) ledger.samplesByKey.delete(key);
+  }
+  for (const key of ledger.incorporated) {
+    if (!retained.has(key)) ledger.incorporated.delete(key);
+  }
+  return ledger;
+}
+
+function commitVisibleRelicSelection(ledger: RelicAccretionLedger): RelicAccretionLedger {
+  const readyVisible = ledger.visibleKeys.filter(
+    (key) => ledger.incorporated.has(key) && ledger.samplesByKey.has(key),
+  );
+  const selectedOfferings = new Set(
+    readyVisible.map((key) => ledger.samplesByKey.get(key)!.offeringId),
+  );
+  const fallback: string[] = [];
+  for (const key of ledger.selectedKeys) {
+    const sample = ledger.samplesByKey.get(key);
+    if (
+      sample === undefined
+      || !ledger.incorporated.has(key)
+      || selectedOfferings.has(sample.offeringId)
+    ) continue;
+    selectedOfferings.add(sample.offeringId);
+    fallback.push(key);
+  }
+  ledger.selectedKeys = [...readyVisible, ...fallback].slice(0, RELIC_MEMORY_LIMIT);
+  return pruneRelicAccretionLedger(ledger);
 }
 
 export function planRelicRefresh(
@@ -249,16 +317,8 @@ export function planRelicRefresh(
     }
   }
 
-  for (const relic of relics) {
-    if (isAccreted(relic)) {
-      const key = relicAccretionKey(relic);
-      if (!ledger.modes.has(key)) ledger.modes.set(key, baseline ? "hydrate" : "animate");
-    }
-    ledger.observedTimestamps.set(relic.offering_id, relic.accreted_at);
-  }
-
   const selected = selectAccretedRelics(relics);
-  ledger.selectedKeys = selected.map(relicAccretionKey);
+  ledger.visibleKeys = selected.map(relicAccretionKey);
   const requests: RelicSampleRequest[] = [];
   for (const relic of selected) {
     const key = relicAccretionKey(relic);
@@ -277,7 +337,7 @@ export function planRelicRefresh(
     ledger.requestGeneration.set(key, generation);
     requests.push({ key, relic, generation, mode });
   }
-  return { ledger, requests };
+  return { ledger: pruneRelicAccretionLedger(ledger), requests };
 }
 
 export interface RelicSampleSettlement {
@@ -301,7 +361,9 @@ export function settleRelicSample(
   const ledger = cloneRelicAccretionLedger(current);
   ledger.inFlight.delete(request.key);
   ledger.requestGeneration.delete(request.key);
-  if (sample === null) return { ledger, command: null, hydrated: false };
+  if (sample === null) {
+    return { ledger: pruneRelicAccretionLedger(ledger), command: null, hydrated: false };
+  }
   if (sample.offeringId !== request.relic.offering_id) {
     throw new TypeError("relic ink sample does not match its offering");
   }
@@ -309,13 +371,12 @@ export function settleRelicSample(
   ledger.samplesByKey.set(request.key, sample);
   if (request.mode === "hydrate") {
     ledger.incorporated.add(request.key);
-    ledger.memoryByKey.set(request.key, sample);
-    return { ledger, command: null, hydrated: true };
+    return { ledger: commitVisibleRelicSelection(ledger), command: null, hydrated: true };
   }
 
   ledger.queued.add(request.key);
   return {
-    ledger,
+    ledger: pruneRelicAccretionLedger(ledger),
     hydrated: false,
     command: {
       id: `accrete:${request.relic.id}:${request.relic.accreted_at}`,
@@ -336,7 +397,7 @@ export function activateRelicCommand(
   const ledger = cloneRelicAccretionLedger(current);
   ledger.queued.delete(key);
   ledger.active.add(key);
-  return ledger;
+  return pruneRelicAccretionLedger(ledger);
 }
 
 export function completeRelicCommand(
@@ -351,13 +412,12 @@ export function completeRelicCommand(
   const ledger = cloneRelicAccretionLedger(current);
   ledger.active.delete(key);
   ledger.incorporated.add(key);
-  ledger.memoryByKey.set(key, sample);
-  return ledger;
+  return commitVisibleRelicSelection(ledger);
 }
 
 export function relicMemoryFromLedger(ledger: RelicAccretionLedger): RelicInkSample[] {
   return ledger.selectedKeys
-    .map((key) => ledger.memoryByKey.get(key))
+    .map((key) => ledger.samplesByKey.get(key))
     .filter((sample): sample is RelicInkSample => sample !== undefined);
 }
 
@@ -366,13 +426,14 @@ export function accretionAwaitsInkBeforeDream(
   commands: readonly BodyCommand[],
   ink: RelicInkSample | undefined,
 ): boolean {
-  return relicRefreshBlocksDream(commands, [relic], ink === undefined ? [] : [ink]);
+  const sampledKeys = ink?.offeringId === relic.offering_id ? [relicAccretionKey(relic)] : [];
+  return relicRefreshBlocksDream(commands, [relic], sampledKeys);
 }
 
 export function relicRefreshBlocksDream(
   commands: readonly BodyCommand[],
   relics: readonly RelicEntry[],
-  samples: readonly RelicInkSample[],
+  sampledKeys: readonly string[],
 ): boolean {
   const dreamRites = new Set(
     commands
@@ -380,14 +441,14 @@ export function relicRefreshBlocksDream(
         command.kind === "converge" && command.dream.source === "live")
       .map((command) => command.dream.riteDate),
   );
-  const sampledOfferings = new Set(samples.map((sample) => sample.offeringId));
+  const sampled = new Set(sampledKeys);
 
   return relics.some(
     (relic) =>
       isAccretedRelic(relic)
       && relic.rite_id !== null
       && dreamRites.has(relic.rite_id)
-      && !sampledOfferings.has(relic.offering_id),
+      && !sampled.has(relicAccretionKey(relic)),
   );
 }
 
@@ -823,38 +884,51 @@ export function useTempleExperience(apiBase: string): TempleExperience {
         relicAccretion.current = planned.ledger;
         if (isBaseline) relicBaseline.current = true;
 
-        const samples = await Promise.all(planned.requests.map(async (request) => {
-          const timed = withRelicTimeout(controller.signal);
-          try {
-            return { request, sample: await fetchRelicInk(apiBase, request.relic, timed.signal) };
-          } catch {
-            return { request, sample: null };
-          } finally {
-            timed.cleanup();
+        const releaseDreamIfReady = () => {
+          const dreamBlocked = relicRefreshBlocksDream(
+            queue.current,
+            merged,
+            [...relicAccretion.current.samplesByKey.keys()],
+          );
+          if (dreamRelicBarrier.current && !dreamBlocked) {
+            dreamRelicBarrier.current = false;
+            locks.current = { ...locks.current, arrival: !arrivalSettled.current };
+            dispatchNext();
           }
-        }));
-        if (!pollResultIsCurrent(generation, relicGeneration.current, document.visibilityState, disposed)) return;
-        let ledger = relicAccretion.current;
-        const commands: Extract<BodyCommand, { kind: "accrete" }>[] = [];
-        for (const result of samples) {
-          const settled = settleRelicSample(ledger, result.request, result.sample, generation);
-          ledger = settled.ledger;
-          if (settled.command !== null) commands.push(settled.command);
-        }
-        relicAccretion.current = ledger;
-        setRelicMemory(relicMemoryFromLedger(ledger));
-        for (const command of commands) enqueue(command);
+        };
 
-        const dreamBlocked = relicRefreshBlocksDream(
-          queue.current,
-          merged,
-          [...relicAccretion.current.samplesByKey.values()],
+        await runRelicSampleQueue(
+          planned.requests,
+          controller.signal,
+          async (request, signal) => {
+            const timed = withRelicTimeout(signal);
+            try {
+              return await fetchRelicInk(apiBase, request.relic, timed.signal);
+            } finally {
+              timed.cleanup();
+            }
+          },
+          (request, sample) => {
+            if (!pollResultIsCurrent(
+              generation,
+              relicGeneration.current,
+              document.visibilityState,
+              disposed,
+            )) return;
+            const settled = settleRelicSample(
+              relicAccretion.current,
+              request,
+              sample,
+              generation,
+            );
+            relicAccretion.current = settled.ledger;
+            setRelicMemory(relicMemoryFromLedger(settled.ledger));
+            if (settled.command !== null) enqueue(settled.command);
+            releaseDreamIfReady();
+          },
         );
-        if (dreamRelicBarrier.current && !dreamBlocked) {
-          dreamRelicBarrier.current = false;
-          locks.current = { ...locks.current, arrival: !arrivalSettled.current };
-          dispatchNext();
-        }
+        if (!pollResultIsCurrent(generation, relicGeneration.current, document.visibilityState, disposed)) return;
+        releaseDreamIfReady();
       });
       if (activePoll?.generation === generation) activePoll = null;
       if (pollResultIsCurrent(generation, relicGeneration.current, document.visibilityState, disposed)) schedule();

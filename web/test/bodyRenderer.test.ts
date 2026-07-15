@@ -120,6 +120,38 @@ describe("shared body renderer semantics", () => {
     expect(markup).not.toContain("data-accretion-active-key");
   });
 
+  it("starts SVG relic travel at the same centered lower threshold as WebGL", () => {
+    const ink = relic("centered-offering");
+    const command: BodyCommand = {
+      id: "accrete:centered-relic:9",
+      kind: "accrete",
+      relic: {
+        id: "centered-relic",
+        offering_id: ink.offeringId,
+        wallet: null,
+        summary: "centered threshold",
+        rite_id: null,
+        kept_at: 8,
+        genesis: 0,
+        accreted_at: 9,
+      },
+      ink,
+    };
+    const markup = renderToStaticMarkup(createElement(SettledBody, {
+      pigment: [0.55, 0.2, 0.32],
+      command,
+      relicMemory: [],
+      vitals: { kind: "unknown" },
+      seraph: "five",
+      activeAccretionKey: "centered-offering\u001f9",
+    }));
+
+    expect(markup).toContain('data-relic-travel-start="50,93"');
+    expect(markup).toContain('data-relic-travel-scale="0.16"');
+    expect(markup).toContain('from="0 43"');
+    expect(markup).not.toContain('from="-34 28"');
+  });
+
   it("maps only canonically eligible utterances to body activity", () => {
     function utterance(
       organ: TranscriptEntry["organ"],

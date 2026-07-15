@@ -4,6 +4,8 @@ import type { RelicEntry } from "../state/types";
 export const RELIC_SAMPLE_SIZE = 64;
 export const RELIC_MEMORY_LIMIT = 50;
 export const RELIC_ACCRETION_DURATION_MS = 1_200;
+export const RELIC_TRAVEL_THRESHOLD = { x: 0.5, y: 0.07 } as const;
+export const RELIC_TRAVEL_INITIAL_SCALE = 0.16;
 
 export function isAccreted(relic: RelicEntry): relic is AccretedRelic {
   return typeof relic.accreted_at === "number"

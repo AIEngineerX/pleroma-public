@@ -1,6 +1,11 @@
 import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
 import { BODY_ANCHORS, dedupeRelicSamples, signalForBodyCommand, type BodyOrgan } from "./bodyRenderer";
-import { foldRelicSamples, relicAccretionKey } from "./relicInk";
+import {
+  RELIC_TRAVEL_INITIAL_SCALE,
+  RELIC_TRAVEL_THRESHOLD,
+  foldRelicSamples,
+  relicAccretionKey,
+} from "./relicInk";
 
 export interface SettledBodyProps {
   pigment: [number, number, number];
@@ -28,6 +33,12 @@ const CAPILLARIES = [
   { name: "eye-keep", d: "M50 28 C61 31 69 39 70 43" },
   { name: "keep-tongue", d: "M70 43 C68 55 66 61 64 66" },
 ] as const;
+
+const SVG_CENTER = 50;
+const SVG_RELIC_START = {
+  x: RELIC_TRAVEL_THRESHOLD.x * 100,
+  y: (1 - RELIC_TRAVEL_THRESHOLD.y) * 100,
+} as const;
 
 function offeringHash(offeringId: string): number {
   let hash = 0x811c9dc5;
@@ -164,24 +175,42 @@ export function SettledBody({
         ))}
       </g>
       {activeAccretion !== null && activeAccretion.path !== null ? (
-        <g data-relic-travel data-accretion-key={activeAccretion.key}>
+        <g
+          data-relic-travel
+          data-accretion-key={activeAccretion.key}
+          data-relic-travel-start={`${SVG_RELIC_START.x},${SVG_RELIC_START.y}`}
+          data-relic-travel-scale={RELIC_TRAVEL_INITIAL_SCALE}
+        >
           <animateTransform
             attributeName="transform"
             type="translate"
-            from="-34 28"
+            from={`${SVG_RELIC_START.x - SVG_CENTER} ${SVG_RELIC_START.y - SVG_CENTER}`}
             to="0 0"
             dur="1.2s"
             fill="freeze"
           />
-          <path
-            d={activeAccretion.path}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="0.48"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity="0.42"
-          />
+          <g transform={`translate(${SVG_CENTER} ${SVG_CENTER})`}>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                from={`${RELIC_TRAVEL_INITIAL_SCALE} ${RELIC_TRAVEL_INITIAL_SCALE}`}
+                to="1 1"
+                dur="1.2s"
+                fill="freeze"
+              />
+              <path
+                d={activeAccretion.path}
+                transform={`translate(${-SVG_CENTER} ${-SVG_CENTER})`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="0.48"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.42"
+              />
+            </g>
+          </g>
         </g>
       ) : null}
     </svg>

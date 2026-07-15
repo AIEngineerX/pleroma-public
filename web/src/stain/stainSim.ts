@@ -3,6 +3,8 @@ import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/type
 import {
   RELIC_ACCRETION_DURATION_MS,
   RELIC_SAMPLE_SIZE,
+  RELIC_TRAVEL_INITIAL_SCALE,
+  RELIC_TRAVEL_THRESHOLD,
   foldRelicSamples,
   mergeRelicAlpha,
   relicAccretionKey,
@@ -123,10 +125,10 @@ void main(){
   // samples. A newly confirmed imprint begins at the fixed lower threshold, grows into its final
   // placement for 1.2s, then is folded into the same persistent mask by the CPU controller.
   float dried = texture(u_relicMemory, v_uv).r;
-  vec2 threshold = vec2(0.5, 0.07);
+  vec2 threshold = vec2(${RELIC_TRAVEL_THRESHOLD.x}, ${RELIC_TRAVEL_THRESHOLD.y});
   vec2 destination = vec2(0.5, 0.5);
   vec2 travelCenter = mix(threshold, destination, u_accretionProgress);
-  float travelScale = mix(0.16, 1.0, u_accretionProgress);
+  float travelScale = mix(${RELIC_TRAVEL_INITIAL_SCALE}, 1.0, u_accretionProgress);
   vec2 travelUv = (v_uv - travelCenter) / travelScale + 0.5;
   float inside = step(0.0, travelUv.x) * step(travelUv.x, 1.0)
     * step(0.0, travelUv.y) * step(travelUv.y, 1.0);
