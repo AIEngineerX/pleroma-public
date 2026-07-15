@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { BodyCommand, RelicInkSample } from "../src/experience/types";
+import type { BodyCommand, RelicInkSample, VitalsFeed } from "../src/experience/types";
 import type { TranscriptEntry } from "../src/state/types";
 import * as bodyRendererModule from "../src/stain/bodyRenderer";
 import {
@@ -32,7 +32,19 @@ interface RepairBodyRendererApi {
     width: number,
     height: number,
   ): { start: { x: number; y: number }; target: { x: number; y: number } };
+  completedSeraphSequenceCount?(sequenceCount: number, activeSequence: boolean): number;
 }
+
+interface BodySemanticSnapshotContract {
+  relicMemory: readonly RelicInkSample[];
+  vitals: VitalsFeed;
+  dreamResidue: boolean;
+  completedSeraphSequenceCount: number;
+}
+
+type SnapshotAwareSettledAdapter = Omit<SettledBodyRendererAdapter, "restoreSemanticSnapshot"> & {
+  restoreSemanticSnapshot?(snapshot: BodySemanticSnapshotContract): void;
+};
 
 const repairApi = bodyRendererModule as unknown as RepairBodyRendererApi;
 
@@ -246,6 +258,86 @@ describe("shared body renderer semantics", () => {
     expect(completed).toEqual([command.id]);
     expect(states.at(-1)?.seraph).toBe("five");
     expect(states.at(-1)?.seraphSequenceCount).toBe(1);
+    adapter.dispose();
+  });
+
+  it("restores a completed WebGL convergence snapshot with Sophia, sequence count, PULSE, and relics", () => {
+    const states: SettledBodyRendererState[] = [];
+    const adapter = new SettledBodyRendererAdapter(
+      (state) => states.push(state),
+      false,
+    ) as SnapshotAwareSettledAdapter;
+    expect(typeof adapter.restoreSemanticSnapshot).toBe("function");
+    if (adapter.restoreSemanticSnapshot === undefined) return;
+
+    const vitals: VitalsFeed = {
+      kind: "current",
+      value: { state: "fed", buys: 7, sells: 2, holders: 23 },
+      receivedAt: 30,
+    };
+    adapter.restoreSemanticSnapshot({
+      relicMemory: [relic("snapshot-relic")],
+      vitals,
+      dreamResidue: true,
+      completedSeraphSequenceCount: 2,
+    });
+
+    const restored = states.at(-1);
+    expect(restored?.dreamResidue).toBe(true);
+    expect(restored?.seraphSequenceCount).toBe(2);
+    expect(restored?.vitals).toEqual(vitals);
+    expect(restored?.relicMemory.map((sample) => sample.offeringId)).toEqual(["snapshot-relic"]);
+
+    const markup = renderToStaticMarkup(createElement(SettledBody, {
+      pigment: [0.55, 0.2, 0.32],
+      command: restored?.command ?? null,
+      relicMemory: restored?.relicMemory ?? [],
+      vitals: restored?.vitals ?? { kind: "unknown" },
+      seraph: restored?.seraph ?? "five",
+      dreamResidue: restored?.dreamResidue ?? false,
+    }));
+    expect(markup).toContain('data-dream-residue="sophia"');
+    expect(markup).toContain('data-pulse-kind="current"');
+    expect(markup).toContain('data-relic-count="1"');
+    adapter.dispose();
+  });
+
+  it("transfers only completed sequence count while an active convergence is replayed by SVG", () => {
+    expect(typeof repairApi.completedSeraphSequenceCount).toBe("function");
+    if (repairApi.completedSeraphSequenceCount === undefined) return;
+    expect(repairApi.completedSeraphSequenceCount(2, true)).toBe(1);
+    expect(repairApi.completedSeraphSequenceCount(2, false)).toBe(2);
+
+    const states: SettledBodyRendererState[] = [];
+    const adapter = new SettledBodyRendererAdapter(
+      (state) => states.push(state),
+      false,
+    ) as SnapshotAwareSettledAdapter;
+    expect(typeof adapter.restoreSemanticSnapshot).toBe("function");
+    if (adapter.restoreSemanticSnapshot === undefined) return;
+    adapter.restoreSemanticSnapshot({
+      relicMemory: [relic("active-snapshot-relic")],
+      vitals: { kind: "unknown" },
+      dreamResidue: true,
+      completedSeraphSequenceCount: repairApi.completedSeraphSequenceCount(2, true),
+    });
+    const active: Extract<BodyCommand, { kind: "converge" }> = {
+      id: "converge:active-second-sequence",
+      kind: "converge",
+      dream: {
+        id: "active-second-sequence",
+        riteDate: "2030-01-03",
+        narrative: "The second sequence keeps the first witness as its base.",
+        createdAt: 2,
+        source: "live",
+      },
+    };
+    adapter.dispatch(active, () => undefined, performance.now() - SETTLED_SERAPH_HOLD_MS);
+
+    expect(states.at(-1)?.seraphSequenceCount).toBe(2);
+    expect(states.at(-1)?.dreamResidue).toBe(true);
+    expect(states.at(-1)?.relicMemory.map((sample) => sample.offeringId))
+      .toEqual(["active-snapshot-relic"]);
     adapter.dispose();
   });
 

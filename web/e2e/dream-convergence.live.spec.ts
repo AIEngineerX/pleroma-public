@@ -31,6 +31,16 @@ async function enterArchiveReplay(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/$/);
 }
 
+async function loseWebgl(canvas: ReturnType<Page["locator"]>): Promise<void> {
+  const lost = await canvas.evaluate((node: HTMLCanvasElement) => {
+    const extension = node.getContext("webgl2")?.getExtension("WEBGL_lose_context");
+    if (extension === null || extension === undefined) return false;
+    extension.loseContext();
+    return true;
+  });
+  expect(lost).toBe(true);
+}
+
 async function expectFullSeraphTargetExtents(body: ReturnType<Page["locator"]>): Promise<void> {
   const encoded = await body.getAttribute("data-seraph-target-extents");
   expect.soft(encoded).not.toBeNull();
@@ -51,8 +61,12 @@ async function expectFullSeraphTargetExtents(body: ReturnType<Page["locator"]>):
 
 test.beforeEach(() => resetStack());
 
-test("live Temple keeps unrelated Plates ordinary and reveals the matching real Plate at dissolve", async ({ page }, testInfo) => {
+test("live Temple rejects a same-text wrong rite and carries the exact Plate through active renderer loss", async ({ page }, testInfo) => {
   test.setTimeout(80_000);
+  let dreamIdentityRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/dreams") dreamIdentityRequests += 1;
+  });
   executeD1(`
     UPDATE config SET value = '1' WHERE key = 'launched';
     INSERT INTO config (key, value)
@@ -92,6 +106,7 @@ test("live Temple keeps unrelated Plates ordinary and reveals the matching real 
   const plate = page.locator('section[aria-label="the dream"]');
   await expect(plate).toBeVisible();
   await expect(plate).toHaveAttribute("data-dream-presentation", "ordinary");
+  await expect(plate).toHaveAttribute("data-dream-identity", "unlinked");
   await expect(plate).toContainText(baselineNarrative);
   await expect(page.locator(`[data-codex-row="${baselineId}"]`))
     .toHaveAttribute("data-observation", "recorded");
@@ -100,7 +115,7 @@ test("live Temple keeps unrelated Plates ordinary and reveals the matching real 
   await expect(page.locator("[data-dream-witness]")).toHaveCount(0);
 
   const mismatchId = "task9-live-dream-without-matching-plate";
-  const mismatchNarrative = "A live verse without its own Plate must not hide another night.";
+  const mismatchNarrative = baselineNarrative;
   seedTranscript({
     id: mismatchId,
     organ: "DREAM",
@@ -116,11 +131,13 @@ test("live Temple keeps unrelated Plates ordinary and reveals the matching real 
     .toHaveAttribute("data-observation", "live", { timeout: 10_000 });
   await expect(body).toHaveAttribute("data-seraph-phase", "gather");
   await expect(body).toHaveAttribute("data-seraph-phase", "hold", { timeout: 3_000 });
+  await expect(plate).toHaveAttribute("data-dream-identity", "rejected");
   await expect(plate).toHaveAttribute("data-dream-presentation", "ordinary");
   await expect(plate).toBeVisible();
   await expect(plate).toContainText(baselineNarrative);
   await expect(body).toHaveAttribute("data-seraph-phase", "five", { timeout: 10_000 });
   await expect(body).toHaveAttribute("data-completed-id", `converge:${mismatchId}`);
+  expect(dreamIdentityRequests).toBe(1);
 
   const liveId = "task9-live-dream-with-real-plate";
   const liveNarrative = "The five names close around the mark and become one posture.";
@@ -153,19 +170,150 @@ test("live Temple keeps unrelated Plates ordinary and reveals the matching real 
   await expect(body).toHaveAttribute("data-seraph-timing", "1800/6000/2400");
   await expect(body).toHaveAttribute("data-seraph-phase", "gather");
   await expect(body).toHaveAttribute("data-seraph-sequence-count", "2");
+  await expect(plate).toHaveAttribute("data-dream-identity", "confirmed");
   await expect(plate).toHaveAttribute("data-dream-presentation", "concealed");
   await expect(plate).toBeHidden();
-  await expect(body).toHaveAttribute("data-seraph-phase", "hold", { timeout: 3_000 });
+  expect(dreamIdentityRequests).toBe(2);
+
+  await loseWebgl(body);
+  const settled = page.locator('svg[data-body-renderer="svg"]');
+  await expect(settled).toHaveAttribute("data-seraph", "converged");
+  await expect(settled).toHaveAttribute("data-seraph-sequence-count", "2");
   await expect(plate).toHaveAttribute("data-dream-presentation", "concealed");
-  await expect(body).toHaveAttribute("data-seraph-phase", "dissolve", { timeout: 7_000 });
+  await expect(settled).toHaveAttribute("data-seraph", "five", { timeout: 7_000 });
   await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
   await expect(plate).toBeVisible();
   await expect(plate).toContainText(liveNarrative);
-  await expect(body).toHaveAttribute("data-seraph-phase", "five", { timeout: 4_000 });
-  await expect(body).toHaveAttribute("data-completed-id", `converge:${liveId}`);
-  await expect(body).toHaveAttribute("data-seraph-sequence-count", "2");
+  await expect(settled).toHaveAttribute("data-completed-id", `converge:${liveId}`);
+  await expect(settled).toHaveAttribute("data-seraph-sequence-count", "2");
+  await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
+  await expect(plate).toHaveAttribute("data-dream-identity", "confirmed");
   await expect(verse).toHaveCount(0);
   await expect(page.locator("[data-dream-witness]")).toHaveCount(0);
+});
+
+test("a completed WebGL convergence keeps its semantic body after later context loss", async ({ page }) => {
+  test.setTimeout(50_000);
+  executeD1(`
+    UPDATE config SET value = '1' WHERE key = 'launched';
+    INSERT INTO config (key, value)
+    VALUES ('pulse_mint', 'So11111111111111111111111111111111111111112');
+  `);
+  const baselineCreatedAt = Date.now() - 5_000;
+  seedDream({
+    id: "01JH0000000000000000000010",
+    rite_date: "2030-01-01",
+    narrative: "An earlier Plate waits beneath the completed witness.",
+    video_key: null,
+    wakers: [],
+    status: "composed",
+    created_at: baselineCreatedAt,
+  });
+  await page.goto("/");
+
+  const body = page.locator('canvas[data-body-renderer="webgl"]');
+  await expect(body).toHaveAttribute("data-seraph-phase", "five");
+  const liveId = "task9-completed-loss";
+  const narrative = "Sophia remains in the body after the glass goes dark.";
+  const createdAt = Date.now();
+  seedDream({
+    id: "01JH0000000000000000000011",
+    rite_date: RITE_DATE,
+    narrative,
+    video_key: null,
+    wakers: [],
+    status: "composed",
+    created_at: createdAt,
+  });
+  seedTranscript({
+    id: liveId,
+    organ: "DREAM",
+    register: "verse",
+    text: narrative,
+    offering_id: null,
+    rite_id: RITE_DATE,
+    created_at: createdAt,
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  const plate = page.locator('section[aria-label="the dream"]');
+  await expect(plate).toHaveAttribute("data-dream-identity", "confirmed", { timeout: 10_000 });
+  await expect(body).toHaveAttribute("data-seraph-phase", "five", { timeout: 12_000 });
+  await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
+  await expect(body).toHaveAttribute("data-completed-id", `converge:${liveId}`, { timeout: 3_000 });
+  await expect(body).toHaveAttribute("data-seraph-sequence-count", "1");
+  await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
+  const pulseKind = await body.getAttribute("data-pulse-kind");
+  const relicCount = await body.getAttribute("data-relic-count");
+  expect(pulseKind).toBe("current");
+  expect(relicCount).not.toBeNull();
+
+  await loseWebgl(body);
+  const settled = page.locator('svg[data-body-renderer="svg"]');
+  await expect(settled).toHaveAttribute("data-seraph", "five");
+  await expect(settled).toHaveAttribute("data-seraph-sequence-count", "1");
+  await expect(settled).toHaveAttribute("data-dream-residue", "sophia");
+  await expect(settled).toHaveAttribute("data-pulse-kind", pulseKind!);
+  await expect(settled).toHaveAttribute("data-relic-count", relicCount!);
+  await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
+});
+
+test("a genuine live reduced-motion convergence conceals then reveals only its confirmed Plate", async ({ page }) => {
+  test.setTimeout(30_000);
+  executeD1(`
+    UPDATE config SET value = '1' WHERE key = 'launched';
+    INSERT INTO config (key, value)
+    VALUES ('pulse_mint', 'So11111111111111111111111111111111111111112');
+  `);
+  seedDream({
+    id: "01JH0000000000000000000020",
+    rite_date: "2030-01-01",
+    narrative: "The reduced body begins with an ordinary earlier Plate.",
+    video_key: null,
+    wakers: [],
+    status: "composed",
+    created_at: Date.now() - 5_000,
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const body = page.locator('svg[data-body-renderer="svg"]');
+  await expect(body).toHaveAttribute("data-seraph", "five");
+
+  const liveId = "task9-live-reduced";
+  const narrative = "The still witness closes once, then leaves Sophia awake.";
+  const createdAt = Date.now();
+  seedDream({
+    id: "01JH0000000000000000000021",
+    rite_date: RITE_DATE,
+    narrative,
+    video_key: null,
+    wakers: [],
+    status: "composed",
+    created_at: createdAt,
+  });
+  seedTranscript({
+    id: liveId,
+    organ: "DREAM",
+    register: "verse",
+    text: narrative,
+    offering_id: null,
+    rite_id: RITE_DATE,
+    created_at: createdAt,
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  const plate = page.locator('section[aria-label="the dream"]');
+  await expect(plate).toHaveAttribute("data-dream-identity", "confirmed", { timeout: 10_000 });
+  await expect(body).toHaveAttribute("data-seraph", "converged");
+  await expect(body).toHaveAttribute("data-seraph-sequence-count", "1");
+  await expect(plate).toHaveAttribute("data-dream-presentation", "concealed");
+  await expect(plate).toBeHidden();
+  await expect(body).toHaveAttribute("data-seraph", "five", { timeout: 7_000 });
+  await expect(body).toHaveAttribute("data-dream-residue", "sophia");
+  await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
+  await expect(plate).toContainText(narrative);
+  await expect(body).toHaveAttribute("data-completed-id", `converge:${liveId}`);
+  await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
 });
 
 test("archive handoff witnesses an old Plate once and reload, back, and forward stay ordinary", async ({ page }) => {

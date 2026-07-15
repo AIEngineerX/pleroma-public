@@ -8,17 +8,33 @@ const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(pre
 
 export type DreamPlatePresentation = "ordinary" | "concealed" | "revealed";
 export type DreamPlatePhase = "gather" | "hold" | "dissolve" | "five";
+export type DreamPlateIdentityStatus = "unlinked" | "pending" | "confirmed" | "rejected";
+
+export interface DreamPlatePhaseState {
+  commandId: string | null;
+  phase: DreamPlatePhase;
+}
+
+export function dreamPlatePhaseForCommand(
+  command: BodyCommand | null,
+  tracked: DreamPlatePhaseState,
+): DreamPlatePhase {
+  if (command?.kind !== "converge" || command.dream.source !== "live") return "five";
+  return tracked.commandId === command.id ? tracked.phase : "gather";
+}
 
 export function dreamPlatePresentation(
   dream: DreamView | null,
   command: BodyCommand | null,
   phase: DreamPlatePhase,
+  identityConfirmed: boolean,
 ): DreamPlatePresentation {
   if (
     dream === null
     || command?.kind !== "converge"
     || command.dream.source !== "live"
     || command.dream.narrative !== dream.narrative
+    || !identityConfirmed
   ) {
     return "ordinary";
   }
@@ -35,16 +51,19 @@ export default function Dream({
   dream,
   apiBase = "",
   presentation = "ordinary",
+  identity = "unlinked",
 }: {
   dream: DreamView | null;
   apiBase?: string;
   presentation?: DreamPlatePresentation;
+  identity?: DreamPlateIdentityStatus;
 }) {
   const reduced = reducedMotion();
   return (
     <section
       aria-label="the dream"
       data-dream-presentation={presentation}
+      data-dream-identity={identity}
       data-dream-created-at={dream?.created_at}
       hidden={presentation === "concealed"}
       className="flex flex-col items-center gap-3 text-center"

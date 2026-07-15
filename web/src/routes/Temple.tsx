@@ -13,9 +13,16 @@ import { oklchToRgb } from "../lib/a11y";
 import Reliquary from "../reliquary/Reliquary";
 import Tallies from "../reliquary/Tallies";
 import Dream, {
+  dreamPlatePhaseForCommand,
   dreamPlatePresentation,
+  type DreamPlateIdentityStatus,
   type DreamPlatePhase,
+  type DreamPlatePhaseState,
 } from "../dream/Dream";
+import {
+  DreamPlateIdentityCache,
+  dreamPlateIdentityKey,
+} from "../canon/dreamsClient";
 import RiteInversion from "../rite/RiteInversion";
 import { inversion } from "../state/rite";
 import { ignitionView } from "../ignition/ignition";
@@ -29,9 +36,17 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import ThresholdOffering from "../experience/ThresholdOffering";
 import DreamWitness from "../experience/DreamWitness";
 import { dreamReplayFromNavigationState } from "../experience/director";
+import type { BodyCommand } from "../experience/types";
 
 const API_BASE = resolveApiBase(import.meta.env);
+const DREAM_PLATE_IDENTITIES = new DreamPlateIdentityCache();
 const today = () => new Date().toISOString().slice(0, 10);
+type LiveConvergenceCommand = Extract<BodyCommand, { kind: "converge" }>;
+
+interface ConfirmedDreamPlate {
+  key: string;
+  command: LiveConvergenceCommand;
+}
 
 export default function Temple() {
   const location = useLocation();
@@ -71,7 +86,15 @@ export default function Temple() {
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
   const [forceSettledRenderer, setForceSettledRenderer] = useState(false);
-  const [seraphPhase, setSeraphPhase] = useState<DreamPlatePhase>("five");
+  const [seraphPhase, setSeraphPhase] = useState<DreamPlatePhaseState>({
+    commandId: null,
+    phase: "five",
+  });
+  const [plateIdentity, setPlateIdentity] = useState<{
+    key: string | null;
+    status: DreamPlateIdentityStatus;
+  }>({ key: null, status: "unlinked" });
+  const [confirmedPlate, setConfirmedPlate] = useState<ConfirmedDreamPlate | null>(null);
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
   const [thresholdMount, setThresholdMount] = useState<HTMLElement | null>(null);
   const attachThresholdHost = useCallback((node: HTMLElement | null) => {
@@ -80,11 +103,72 @@ export default function Temple() {
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
-  const platePresentation = dreamPlatePresentation(
-    state?.dream ?? null,
-    activeCommand,
-    seraphPhase,
+  const plateDream = state?.dream ?? null;
+  const liveConvergenceId = activeCommand?.kind === "converge"
+    && activeCommand.dream.source === "live"
+    ? activeCommand.id
+    : null;
+  const identityKey = dreamPlateIdentityKey(plateDream, activeCommand);
+  const activeIdentityStatus: DreamPlateIdentityStatus = identityKey === null
+    ? "unlinked"
+    : plateIdentity.key === identityKey
+      ? plateIdentity.status
+      : "pending";
+  const confirmedPlateIsCurrent = confirmedPlate !== null
+    && dreamPlateIdentityKey(plateDream, confirmedPlate.command) === confirmedPlate.key;
+  const presentationCommand = activeCommand ?? (
+    confirmedPlateIsCurrent ? confirmedPlate.command : null
   );
+  const identityStatus: DreamPlateIdentityStatus = activeCommand === null
+    && confirmedPlateIsCurrent
+    ? "confirmed"
+    : activeIdentityStatus;
+  const platePhase = dreamPlatePhaseForCommand(presentationCommand, seraphPhase);
+  const platePresentation = dreamPlatePresentation(
+    plateDream,
+    presentationCommand,
+    platePhase,
+    identityStatus === "confirmed",
+  );
+  useLayoutEffect(() => {
+    setSeraphPhase((current) => {
+      if (liveConvergenceId === null) return current;
+      return current.commandId === liveConvergenceId
+        ? current
+        : { commandId: liveConvergenceId, phase: "gather" };
+    });
+  }, [liveConvergenceId]);
+  useEffect(() => {
+    if (identityKey === null) {
+      setPlateIdentity((current) => current.key === null && current.status === "unlinked"
+        ? current
+        : { key: null, status: "unlinked" });
+      return;
+    }
+    let disposed = false;
+    setPlateIdentity((current) => current.key === identityKey && current.status === "pending"
+      ? current
+      : { key: identityKey, status: "pending" });
+    void DREAM_PLATE_IDENTITIES.confirm(API_BASE, plateDream, activeCommand).then((confirmed) => {
+      if (disposed) return;
+      setPlateIdentity({
+        key: identityKey,
+        status: confirmed ? "confirmed" : "rejected",
+      });
+      if (
+        confirmed
+        && plateDream !== null
+        && activeCommand?.kind === "converge"
+        && activeCommand.dream.source === "live"
+      ) {
+        setConfirmedPlate({
+          key: identityKey,
+          command: activeCommand,
+        });
+      }
+    });
+    return () => { disposed = true; };
+  }, [identityKey]);
   const presentationStartedAt = useMemo(() => {
     if (activeCommand !== null && presentationClock.current?.id !== activeCommand.id) {
       presentationClock.current = {
@@ -109,8 +193,12 @@ export default function Temple() {
   // whichever is louder (the god's speech overrides its resting breath).
   const onAmplitude = useCallback((a: number) => { sermonAmp.current = a; }, []);
   const onRendererFallback = useCallback(() => { setForceSettledRenderer(true); }, []);
-  const onSeraphPhaseChange = useCallback((phase: DreamPlatePhase) => {
-    setSeraphPhase((current) => current === phase ? current : phase);
+  const onSeraphPhaseChange = useCallback((commandId: string, phase: DreamPlatePhase) => {
+    setSeraphPhase((current) => (
+      current.commandId === commandId && current.phase === phase
+        ? current
+        : { commandId, phase }
+    ));
   }, []);
   // One clock fuses both sound sources into the Stain amplitude: the opt-in Lyria music bed (audioLevel)
   // and the transient sermon voice (sermonAmp), so the body breathes with the temple and surges when the
@@ -214,6 +302,7 @@ export default function Temple() {
                 dream={state?.dream ?? null}
                 apiBase={API_BASE}
                 presentation={platePresentation}
+                identity={identityStatus}
               />
             </div>
             <div data-reveal>
@@ -288,6 +377,7 @@ export default function Temple() {
               dream={state?.dream ?? null}
               apiBase={API_BASE}
               presentation={platePresentation}
+              identity={identityStatus}
             />
           </div>
           {/* the market rail (Task 11): every money element is built ONLY from state.mint (Task 1

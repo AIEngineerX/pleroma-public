@@ -11,6 +11,7 @@ import {
   type BodyAnchor,
   type BodyAnchorName,
   type BodyRendererAdapter,
+  type BodySemanticSnapshot,
   type SettledBodyRendererState,
 } from "./bodyRenderer";
 import { SettledBody } from "./SettledBody";
@@ -38,7 +39,10 @@ interface Props {
   onArrivalDone(): void;
   forceSettledRenderer: boolean;
   onRendererFallback(): void;
-  onSeraphPhaseChange?(phase: SeraphConvergenceFrame["phase"]): void;
+  onSeraphPhaseChange?(
+    commandId: string,
+    phase: SeraphConvergenceFrame["phase"],
+  ): void;
   onSim?: (sim: StainSim | null) => void;
 }
 
@@ -81,6 +85,25 @@ export async function runSeraphTargetInstall<T>(
   }
 }
 
+export function runOwnedBodyDispatch(
+  ownership: BodyDispatchOwnership,
+  adapter: BodyRendererAdapter,
+  command: BodyCommand,
+  presentationStartedAt: number,
+  onClaimed: (generation: number) => void,
+  onAcknowledged: (id: string, generation: number) => void,
+): number | null {
+  const generation = ownership.claim(adapter, command.id);
+  if (generation === null) return null;
+  onClaimed(generation);
+  adapter.dispatch(
+    command,
+    (id) => onAcknowledged(id, generation),
+    presentationStartedAt,
+  );
+  return generation;
+}
+
 export default function Stain({
   state,
   pigment,
@@ -109,7 +132,10 @@ export default function Stain({
   const presentedCommandRef = useRef<BodyCommand | null>(null);
   const anchorsRef = useRef<Readonly<Record<BodyAnchorName, BodyAnchor>>>(BODY_ANCHORS);
   const bodySizeRef = useRef({ width: 1, height: 1 });
-  const reportedSeraphPhase = useRef<SeraphConvergenceFrame["phase"]>("five");
+  const reportedSeraphPhase = useRef<{
+    commandId: string | null;
+    phase: SeraphConvergenceFrame["phase"];
+  }>({ commandId: null, phase: "five" });
   const latest = useRef({
     vitals,
     relicMemory,
@@ -188,9 +214,14 @@ export default function Stain({
   };
 
   const reportSeraphPhase = (phase: SeraphConvergenceFrame["phase"]) => {
-    if (reportedSeraphPhase.current === phase) return;
-    reportedSeraphPhase.current = phase;
-    latest.current.onSeraphPhaseChange?.(phase);
+    const command = presentedCommandRef.current;
+    if (command?.kind !== "converge") return;
+    if (
+      reportedSeraphPhase.current.commandId === command.id
+      && reportedSeraphPhase.current.phase === phase
+    ) return;
+    reportedSeraphPhase.current = { commandId: command.id, phase };
+    latest.current.onSeraphPhaseChange?.(command.id, phase);
   };
 
   const dispatchCommand = (
@@ -198,13 +229,16 @@ export default function Stain({
     command: BodyCommand,
     startedAt: number,
   ) => {
-    const generation = dispatchOwnership.current.claim(adapter, command.id);
-    if (generation === null) return;
-    commandGeneration.current = generation;
-    adapter.dispatch(
+    runOwnedBodyDispatch(
+      dispatchOwnership.current,
+      adapter,
       command,
-      (id) => acknowledgeCommand.current(command, id, generation),
       startedAt,
+      (generation) => {
+        clearDwell();
+        commandGeneration.current = generation;
+      },
+      (id, generation) => acknowledgeCommand.current(command, id, generation),
     );
   };
 
@@ -247,13 +281,21 @@ export default function Stain({
     };
     const canvas = canvasRef.current;
 
-    const installSettledRenderer = (replayActive: boolean, fallbackHoldElapsedMs?: number) => {
+    const installSettledRenderer = (
+      replayActive: boolean,
+      fallbackHoldElapsedMs?: number,
+      semanticSnapshot?: BodySemanticSnapshot,
+    ) => {
       if (lifecycle.disposed) return;
       const adapter = new SettledBodyRendererAdapter(setSettled, tier === "reduced");
       adapterRef.current = adapter;
       adapter.setAnchorSink(receiveAnchors);
-      adapter.setVitals(latest.current.vitals);
-      adapter.hydrateRelics(latest.current.relicMemory);
+      if (semanticSnapshot === undefined) {
+        adapter.setVitals(latest.current.vitals);
+        adapter.hydrateRelics(latest.current.relicMemory);
+      } else {
+        adapter.restoreSemanticSnapshot(semanticSnapshot);
+      }
       const replay = replayActive ? latest.current.activeCommand : null;
       if (replay !== null && completedCommandId.current !== replay.id) {
         presentedCommandRef.current = replay;
@@ -310,6 +352,7 @@ export default function Stain({
       clearDwell();
       commandGeneration.current = dispatchOwnership.current.invalidate();
       const failed = simRef.current;
+      const semanticSnapshot = failed?.semanticSnapshot();
       failed?.stop();
       failed?.setAnchorSink(null);
       removePointerListener();
@@ -319,7 +362,11 @@ export default function Stain({
       latest.current.onRendererFallback();
       const now = typeof performance === "undefined" ? Date.now() : performance.now();
       const webglElapsed = Math.max(0, now - latest.current.presentationStartedAt);
-      installSettledRenderer(true, settledSeraphHoldElapsed(webglElapsed));
+      installSettledRenderer(
+        true,
+        settledSeraphHoldElapsed(webglElapsed),
+        semanticSnapshot,
+      );
     };
 
     canvas.addEventListener("webglcontextlost", onContextLost, false);
@@ -447,7 +494,6 @@ export default function Stain({
     }
     const adapter = adapterRef.current;
     if (adapter === null) return;
-    clearDwell();
     presentedCommandRef.current = activeCommand;
     setPresentedCommand(activeCommand);
     dispatchCommand(adapter, activeCommand, presentationStartedAt);

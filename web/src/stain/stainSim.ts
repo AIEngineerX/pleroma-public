@@ -13,12 +13,14 @@ import {
   BODY_ANCHORS,
   WEBGL_SERAPH_GATHER_MS,
   commitRelicSample,
+  completedSeraphSequenceCount,
   dedupeRelicSamples,
   relicSampleListsMatch,
   signalForBodyCommand,
   type BodyAnchor,
   type BodyAnchorName,
   type BodyRendererAdapter,
+  type BodySemanticSnapshot,
 } from "./bodyRenderer";
 
 export type Tier = "desktop" | "mobile" | "reduced";
@@ -259,6 +261,7 @@ export class StainSim implements BodyRendererAdapter {
   } | null = null;
   private seraphSequenceCount = 0;
   private seraphPhase: SeraphConvergenceFrame["phase"] = "five";
+  private dreamResidue = false;
   private disposed = false;
   private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
   private readonly anchorBuffer = new Float32Array(10);
@@ -290,6 +293,7 @@ export class StainSim implements BodyRendererAdapter {
     this.canvas.dataset.seraphPhase = "five";
     this.canvas.dataset.seraphConvergence = "0.000";
     this.canvas.dataset.seraphSequenceCount = "0";
+    this.canvas.dataset.dreamResidue = "none";
     this.canvas.dataset.seraphTiming = `${SERAPH_CONVERGE_MS}/${SERAPH_HOLD_MS}/${SERAPH_DISSOLVE_MS}`;
     this.canvas.dataset.seraphTargetSize = String(Math.sqrt(opts.seraphTargets.length / 4));
     this.canvas.dataset.seraphTargetCount = String(opts.seraphTargets.length / 4);
@@ -437,6 +441,20 @@ export class StainSim implements BodyRendererAdapter {
     this.relicRevision += 1;
     this.updateRelicDebug();
   }
+  semanticSnapshot(): BodySemanticSnapshot {
+    const vitals = this.vitalsFeed.kind === "unknown"
+      ? this.vitalsFeed
+      : { ...this.vitalsFeed, value: { ...this.vitalsFeed.value } };
+    return {
+      relicMemory: dedupeRelicSamples(this.relicMemory),
+      vitals,
+      dreamResidue: this.dreamResidue,
+      completedSeraphSequenceCount: completedSeraphSequenceCount(
+        this.seraphSequenceCount,
+        this.activeConvergence !== null,
+      ),
+    };
+  }
   getAnchor(name: BodyAnchorName): BodyAnchor { return { ...this.anchors[name] }; }
   setAnchorSink(sink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null) {
     this.anchorSink = sink;
@@ -522,6 +540,8 @@ export class StainSim implements BodyRendererAdapter {
     this.updateSeraphDebug(convergenceFrame);
     if (convergence !== null && convergenceFrame.complete) {
       this.activeConvergence = null;
+      this.dreamResidue = true;
+      this.canvas.dataset.dreamResidue = "sophia";
       this.swarm.dispatch({ organ: "DREAM", intensity: 0.35, pipeline: "none" });
       convergence.onComplete(convergence.commandId);
     }

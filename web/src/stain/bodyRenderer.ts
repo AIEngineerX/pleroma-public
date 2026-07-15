@@ -27,6 +27,13 @@ export interface BodyRendererAdapter {
   dispose(): void;
 }
 
+export interface BodySemanticSnapshot {
+  relicMemory: readonly RelicInkSample[];
+  vitals: VitalsFeed;
+  dreamResidue: boolean;
+  completedSeraphSequenceCount: number;
+}
+
 export class BodyDispatchOwnership {
   private generation = 0;
   private current: {
@@ -57,6 +64,14 @@ export class BodyDispatchOwnership {
 
 export const WEBGL_SERAPH_GATHER_MS = 1_800;
 export const SETTLED_SERAPH_HOLD_MS = 6_000;
+
+export function completedSeraphSequenceCount(
+  sequenceCount: number,
+  activeSequence: boolean,
+): number {
+  const total = Math.max(0, Math.floor(sequenceCount));
+  return Math.max(0, total - Number(activeSequence));
+}
 
 export function settledSeraphHoldElapsed(webglElapsedMs: number): number {
   return Math.min(
@@ -313,6 +328,24 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
     if (relicSampleListsMatch(next, this.relicMemory)) return;
     this.relicMemory = next;
     this.relicRevision += 1;
+    this.emit();
+  }
+
+  restoreSemanticSnapshot(snapshot: BodySemanticSnapshot): void {
+    if (this.disposed) return;
+    this.clearAccretionTimer();
+    this.clearSeraphTimer();
+    const relicMemory = dedupeRelicSamples(snapshot.relicMemory);
+    if (!relicSampleListsMatch(relicMemory, this.relicMemory)) this.relicRevision += 1;
+    this.command = null;
+    this.relicMemory = relicMemory;
+    this.vitals = cloneVitalsFeed(snapshot.vitals);
+    this.seraph = "five";
+    this.seraphSequenceCount = Math.max(
+      0,
+      Math.floor(snapshot.completedSeraphSequenceCount),
+    );
+    this.dreamResidue = snapshot.dreamResidue;
     this.emit();
   }
 
