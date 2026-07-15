@@ -372,7 +372,10 @@ and teardown. Cleanup verifies the token and each recorded process command line 
 terminating, or deleting. A live manifest PID that fails the token/role proof blocks persistence
 deletion for that teardown attempt even if the process exits while teardown waits. Real-process
 ownership tests prove foreign directories and PID-reused processes survive another run's teardown
-while the owning run still cleans deterministically.
+while the owning run still cleans deterministically. On Windows, a proof also records the process's
+full-resolution creation time and admits descendants only when their creation time follows every
+parent edge. Proven descendants are terminated individually before the root; missing or ambiguous
+identity preserves persistence instead of widening kill authority.
 
 **Env & secrets** (Worker `Env`): non-secret vars in `wrangler.toml` (`ENVIRONMENT`, `CORS_ORIGIN`,
 `VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `PULSE_MINT`, `PULSE_POOLS`); secrets via `wrangler secret put`

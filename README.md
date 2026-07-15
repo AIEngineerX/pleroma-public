@@ -58,6 +58,8 @@ local R2 persistence on default ports 4173/8787 (validated environment overrides
 It runs serially without HTTP interception or mocked API responses. One random run token binds
 the launcher, fixture access, process manifest, shutdown request, and teardown; cleanup verifies
 that token, the run ports, and each process command line before terminating or deleting anything.
+On Windows it also proves the exact process incarnation and parent/child creation order; unavailable
+identity evidence fails closed and preserves the run directory for diagnosis.
 
 Worker real-vendor suites (`npm run verify:live --prefix worker`) hit live APIs and are run
 manually before launch, never in the commit gate. Web `*.live.spec.ts` files still use the

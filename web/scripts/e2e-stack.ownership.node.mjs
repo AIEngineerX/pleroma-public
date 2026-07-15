@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -21,6 +21,9 @@ import {
   processIdentityMarker,
   readE2EPorts,
   teardownOwnedRun,
+  windowsProcessRecordFromSnapshotRow,
+  windowsProcessDescendantEdgeState,
+  windowsProcessIncarnationState,
 } from "./e2e-run-ownership.mjs";
 import { launcherRunConfiguration, writeE2EWranglerConfig } from "./e2e-stack.mjs";
 
@@ -34,6 +37,23 @@ const TEST_PORTS = { web: 4173, worker: 8787 };
 
 function runToken() {
   return randomBytes(32).toString("hex");
+}
+
+function windowsProcessRows() {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$rows = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, @{Name='CreationTimeMs'; Expression={ ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() }}, @{Name='CreationTimeTicks'; Expression={ ([DateTimeOffset]$_.CreationDate).UtcDateTime.Ticks.ToString() }}, CommandLine)",
+    "[Console]::Out.Write((ConvertTo-Json -InputObject $rows -Compress -Depth 3))",
+  ].join("; ");
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout)
+    .map(windowsProcessRecordFromSnapshotRow)
+    .filter((record) => record !== null);
 }
 
 function isAlive(pid) {
@@ -72,10 +92,50 @@ async function spawnMarkedProcess(token, role, lifetimeMs = null) {
   return child;
 }
 
+async function spawnMarkedShutdownTree(token, role, shutdownPath, exitDelayMs) {
+  const descendantProgram = "setInterval(() => {}, 1000)";
+  const program = [
+    'const { spawn } = require("node:child_process");',
+    'const { existsSync } = require("node:fs");',
+    `const shutdownPath = ${JSON.stringify(shutdownPath)};`,
+    `const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(descendantProgram)}], {`,
+    "  detached: true,",
+    '  stdio: "ignore",',
+    "  windowsHide: true,",
+    "});",
+    'process.stdout.write(`${descendant.pid}\\n`);',
+    "const watcher = setInterval(() => {",
+    "  if (!existsSync(shutdownPath)) return;",
+    "  clearInterval(watcher);",
+    `  setTimeout(() => process.exit(0), ${exitDelayMs});`,
+    "}, 1);",
+  ].join("\n");
+  const root = spawn(
+    process.execPath,
+    [`--title=${processIdentityMarker(token, role)}`, "-e", program],
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  );
+  let output = "";
+  root.stdout.on("data", (chunk) => { output += chunk; });
+  root.stderr.on("data", (chunk) => { output += chunk; });
+  await waitUntil(() => /^\d+\n/.test(output));
+  const descendantPid = Number.parseInt(output, 10);
+  assert.equal(Number.isSafeInteger(descendantPid), true);
+  assert.equal(isAlive(descendantPid), true);
+  assert.equal(await processBelongsToRun(root.pid, token, role), true);
+  return { root, descendantPid };
+}
+
 async function stopChild(child) {
   if (!child.pid || !isAlive(child.pid)) return;
   child.kill("SIGTERM");
   await waitUntil(() => !isAlive(child.pid));
+}
+
+async function stopPid(pid) {
+  if (!isAlive(pid)) return;
+  process.kill(pid, "SIGTERM");
+  await waitUntil(() => !isAlive(pid));
 }
 
 function testPersistencePath() {
@@ -365,6 +425,139 @@ test("the launcher requires one token and validated matching run-scoped ports", 
   );
 });
 
+test("Windows process identity keeps absence, unavailable dates, and PID reuse distinct", () => {
+  const expected = {
+    pid: 4100,
+    creationDate: "2026-07-15T17:00:00.1000000-04:00",
+    creationTimeMs: 1_784_152_800_100,
+    creationTimeTicks: "638882676001000000",
+  };
+  assert.equal(windowsProcessIncarnationState(undefined, expected), "absent");
+  assert.equal(windowsProcessIncarnationState({
+    pid: 4100,
+    creationDate: null,
+    creationTimeMs: null,
+    creationTimeTicks: null,
+  }, expected), "unavailable");
+  assert.equal(windowsProcessIncarnationState({ ...expected }, expected), "same");
+  assert.equal(windowsProcessIncarnationState({
+    ...expected,
+    creationDate: "2026-07-15T17:01:00.1000000-04:00",
+    creationTimeMs: expected.creationTimeMs + 60_000,
+    creationTimeTicks: "638882676601000000",
+  }, expected), "reused");
+});
+
+test("Windows snapshot parsing never coerces null or negative creation times into identity", () => {
+  const baseRow = {
+    ProcessId: 4150,
+    ParentProcessId: 4,
+    CreationDate: "2026-07-15T17:00:00.1000000-04:00",
+    CreationTimeMs: 1_784_152_800_100,
+    CreationTimeTicks: "638882676001000000",
+    CommandLine: "owned fixture",
+  };
+  assert.deepEqual(windowsProcessRecordFromSnapshotRow({
+    ...baseRow,
+    CreationTimeMs: null,
+  }), {
+    pid: 4150,
+    parentPid: 4,
+    creationDate: baseRow.CreationDate,
+    creationTimeMs: null,
+    creationTimeTicks: baseRow.CreationTimeTicks,
+    commandLine: baseRow.CommandLine,
+  });
+  assert.equal(
+    windowsProcessRecordFromSnapshotRow({ ...baseRow, CreationTimeTicks: null })
+      .creationTimeTicks,
+    null,
+  );
+  assert.equal(
+    windowsProcessRecordFromSnapshotRow({ ...baseRow, CreationTimeMs: -1 })
+      .creationTimeMs,
+    null,
+  );
+  assert.equal(
+    windowsProcessRecordFromSnapshotRow({ ...baseRow, CreationTimeTicks: "-1" })
+      .creationTimeTicks,
+    null,
+  );
+});
+
+test("Windows ancestry rejects a stale PPID from before the owned parent incarnation", () => {
+  const ownedParent = {
+    pid: 4200,
+    creationDate: "2026-07-15T17:02:00.0000000-04:00",
+    creationTimeMs: 1_784_152_920_000,
+    creationTimeTicks: "638882677200000000",
+  };
+  const staleForeign = {
+    pid: 4300,
+    parentPid: ownedParent.pid,
+    creationDate: "2026-07-15T17:01:59.0000000-04:00",
+    creationTimeMs: ownedParent.creationTimeMs - 1_000,
+    creationTimeTicks: "638882677190000000",
+  };
+  assert.equal(
+    windowsProcessDescendantEdgeState(ownedParent, staleForeign),
+    "stale-parent",
+  );
+  assert.equal(windowsProcessDescendantEdgeState(ownedParent, {
+    ...staleForeign,
+    creationDate: null,
+    creationTimeMs: null,
+    creationTimeTicks: null,
+  }), "unavailable");
+  assert.equal(windowsProcessDescendantEdgeState(ownedParent, {
+    ...staleForeign,
+    creationDate: "2026-07-15T17:02:00.0000001-04:00",
+    creationTimeMs: ownedParent.creationTimeMs,
+    creationTimeTicks: "638882677200000001",
+  }), "possible-child");
+  assert.equal(windowsProcessDescendantEdgeState(ownedParent, {
+    ...staleForeign,
+    creationDate: ownedParent.creationDate,
+    creationTimeMs: ownedParent.creationTimeMs,
+    creationTimeTicks: ownedParent.creationTimeTicks,
+  }), "unavailable");
+  assert.doesNotMatch(
+    readFileSync(path.resolve(SCRIPT_ROOT, "e2e-run-ownership.mjs"), "utf8"),
+    /["']\/T["']/,
+    "taskkill tree traversal would bypass CreationDate-safe ancestry",
+  );
+});
+
+test("a real stale-PPID process remains outside Windows kill authority", (context) => {
+  if (process.platform !== "win32") {
+    context.skip("Win32_Process supplies the stale ParentProcessId fixture");
+    return;
+  }
+  const processes = windowsProcessRows();
+  const byPid = new Map(processes.map((record) => [record.pid, record]));
+  const staleForeign = processes.find((record) => {
+    const parent = byPid.get(record.parentPid);
+    return parent !== undefined
+      && record.creationTimeMs !== null
+      && parent.creationTimeMs !== null
+      && record.creationTimeTicks !== null
+      && parent.creationTimeTicks !== null
+      && BigInt(record.creationTimeTicks) < BigInt(parent.creationTimeTicks)
+      && isAlive(record.pid);
+  });
+  if (staleForeign === undefined) {
+    context.skip("this Windows process table has no live stale-PPID pair");
+    return;
+  }
+  const reusedParent = byPid.get(staleForeign.parentPid);
+  assert.equal(isAlive(staleForeign.pid), true);
+  assert.equal(
+    windowsProcessDescendantEdgeState(reusedParent, staleForeign),
+    "stale-parent",
+  );
+  assert.equal(isAlive(staleForeign.pid), true);
+});
+
 test("Wrangler keeps the test ULID alias before and after a source reload", async () => {
   const token = runToken();
   const fixtureRoot = path.resolve(E2E_TMP_ROOT, `e2e-alias-${token}`);
@@ -569,6 +762,123 @@ test("teardown preserves evidence after a reused foreign PID exits during its wa
     assert.equal(existsSync(sentinelPath), true);
   } finally {
     await stopChild(foreign);
+    removeTestPersistence(persistencePath);
+  }
+});
+
+test("teardown retires an owned tree whose root exits during identity proof", async (context) => {
+  if (process.platform !== "win32") {
+    context.skip("PowerShell CIM identity lookup creates the Windows exit race");
+    return;
+  }
+
+  const ownerToken = runToken();
+  const persistencePath = testPersistencePath();
+  const { shutdownPath } = fixturePaths(persistencePath);
+  const harness = await spawnMarkedProcess(ownerToken, "harness");
+  const harnessPid = harness.pid;
+  await stopChild(harness);
+  const owned = await spawnMarkedShutdownTree(ownerToken, "worker", shutdownPath, 0);
+  try {
+    writeOwnership(persistencePath, ownerToken, {
+      harness: { pid: harnessPid, role: "harness", tree: false },
+      children: [{ pid: owned.root.pid, role: "worker", tree: true }],
+    });
+
+    const result = await teardownOwnedRun({
+      persistencePath,
+      runToken: ownerToken,
+      ports: TEST_PORTS,
+      gracefulTimeoutMs: 100,
+      forcedTimeoutMs: 2_000,
+      deletionTimeoutMs: 1_000,
+    });
+
+    assert.equal(result, "cleaned");
+    assert.equal(existsSync(persistencePath), false);
+    assert.equal(isAlive(owned.root.pid), false);
+    assert.equal(isAlive(owned.descendantPid), false, "owned descendant survived root exit");
+  } finally {
+    await stopChild(owned.root);
+    await stopPid(owned.descendantPid);
+    removeTestPersistence(persistencePath);
+  }
+});
+
+test("teardown preserves owned state when Windows identity probing is unavailable", async (context) => {
+  if (process.platform !== "win32") {
+    context.skip("the fail-closed probe boundary is Windows-specific");
+    return;
+  }
+
+  const ownerToken = runToken();
+  const owned = await spawnMarkedProcess(ownerToken, "harness");
+  const persistencePath = testPersistencePath();
+  const { sentinelPath } = fixturePaths(persistencePath);
+  const originalPath = process.env.PATH;
+  try {
+    writeOwnership(persistencePath, ownerToken, {
+      harness: { pid: owned.pid, role: "harness", tree: false },
+      children: [],
+    });
+    writeFileSync(sentinelPath, "identity probe unavailable\n");
+    process.env.PATH = "";
+
+    const result = await teardownOwnedRun({
+      persistencePath,
+      runToken: ownerToken,
+      ports: TEST_PORTS,
+      gracefulTimeoutMs: 0,
+      forcedTimeoutMs: 25,
+      deletionTimeoutMs: 25,
+    });
+
+    assert.equal(result, "identity-unavailable");
+    assert.equal(isAlive(owned.pid), true);
+    assert.equal(existsSync(sentinelPath), true);
+  } finally {
+    process.env.PATH = originalPath;
+    await stopChild(owned);
+    removeTestPersistence(persistencePath);
+  }
+});
+
+test("teardown preserves state around a present Windows process with unavailable identity", async (context) => {
+  if (process.platform !== "win32") {
+    context.skip("protected Win32 processes expose the unavailable identity boundary");
+    return;
+  }
+
+  const protectedProcess = windowsProcessRows().find((record) => (
+    record.pid > 0 && record.commandLine === null && isAlive(record.pid)
+  ));
+  if (protectedProcess === undefined) {
+    context.skip("this Windows process table exposes no protected process");
+    return;
+  }
+  const ownerToken = runToken();
+  const persistencePath = testPersistencePath();
+  const { sentinelPath } = fixturePaths(persistencePath);
+  try {
+    writeOwnership(persistencePath, ownerToken, {
+      harness: { pid: protectedProcess.pid, role: "harness", tree: false },
+      children: [],
+    });
+    writeFileSync(sentinelPath, "protected process identity unavailable\n");
+
+    const result = await teardownOwnedRun({
+      persistencePath,
+      runToken: ownerToken,
+      ports: TEST_PORTS,
+      gracefulTimeoutMs: 0,
+      forcedTimeoutMs: 25,
+      deletionTimeoutMs: 25,
+    });
+
+    assert.equal(result, "identity-unavailable");
+    assert.equal(isAlive(protectedProcess.pid), true);
+    assert.equal(existsSync(sentinelPath), true);
+  } finally {
     removeTestPersistence(persistencePath);
   }
 });

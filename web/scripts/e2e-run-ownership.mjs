@@ -218,22 +218,16 @@ export function isProcessAlive(pid) {
   }
 }
 
-function processCommandLine(pid) {
+function commandLineBelongsToRun(commandLine, runToken, role) {
+  const titleMarker = `--title=${processIdentityMarker(runToken, role)}`;
+  if (commandLine.includes(titleMarker)) return true;
+  return role === "harness"
+    && commandLine.includes(`--pleroma-e2e-owner=${runToken}`)
+    && commandLine.includes("--pleroma-e2e-role=harness");
+}
+
+function nonWindowsProcessCommandLine(pid) {
   if (!validPid(pid)) return null;
-  if (process.platform === "win32") {
-    const result = spawnSync(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `$p = Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\"; if ($null -ne $p) { [Console]::Out.Write($p.CommandLine) }`,
-      ],
-      { encoding: "utf8", windowsHide: true },
-    );
-    return result.status === 0 && result.stdout ? result.stdout : null;
-  }
   try {
     const commandLine = readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
     if (commandLine) return commandLine;
@@ -244,16 +238,372 @@ function processCommandLine(pid) {
   return result.status === 0 && result.stdout ? result.stdout : null;
 }
 
+const WINDOWS_IDENTITY_ATTEMPTS = 3;
+const WINDOWS_SNAPSHOT_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  "$rows = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, @{Name='CreationTimeMs'; Expression={ ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() }}, @{Name='CreationTimeTicks'; Expression={ ([DateTimeOffset]$_.CreationDate).UtcDateTime.Ticks.ToString() }}, CommandLine)",
+  "[Console]::Out.Write((ConvertTo-Json -InputObject $rows -Compress -Depth 3))",
+].join("; ");
+
+function validWindowsCreationTimeMs(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function validWindowsCreationTimeTicks(value) {
+  return typeof value === "string" && /^(?:0|[1-9]\d*)$/.test(value);
+}
+
+export function windowsProcessRecordFromSnapshotRow(row) {
+  const pid = Number(row?.ProcessId);
+  const parentPid = Number(row?.ParentProcessId);
+  if (!validPid(pid) || !Number.isSafeInteger(parentPid) || parentPid < 0) return null;
+  return {
+    pid,
+    parentPid,
+    creationDate: typeof row.CreationDate === "string" && row.CreationDate
+      ? row.CreationDate
+      : null,
+    creationTimeMs: validWindowsCreationTimeMs(row.CreationTimeMs)
+      ? row.CreationTimeMs
+      : null,
+    creationTimeTicks: validWindowsCreationTimeTicks(row.CreationTimeTicks)
+      ? row.CreationTimeTicks
+      : null,
+    commandLine: typeof row.CommandLine === "string" ? row.CommandLine : null,
+  };
+}
+
+function windowsProcessSnapshot() {
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_SNAPSHOT_SCRIPT],
+    { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+  );
+  if (result.error || result.status !== 0 || !result.stdout) {
+    return { state: "probe-error" };
+  }
+  try {
+    const rows = JSON.parse(result.stdout);
+    if (!Array.isArray(rows)) return { state: "probe-error" };
+    const processes = new Map();
+    for (const row of rows) {
+      const record = windowsProcessRecordFromSnapshotRow(row);
+      if (record !== null) processes.set(record.pid, record);
+    }
+    return { state: "ok", processes };
+  } catch {
+    return { state: "probe-error" };
+  }
+}
+
+export function windowsProcessIncarnationState(current, expected) {
+  if (current === undefined) return "absent";
+  if (
+    typeof current?.creationDate !== "string"
+    || !current.creationDate
+    || !validWindowsCreationTimeMs(current.creationTimeMs)
+    || !validWindowsCreationTimeTicks(current.creationTimeTicks)
+    || typeof expected?.creationDate !== "string"
+    || !expected.creationDate
+    || !validWindowsCreationTimeMs(expected.creationTimeMs)
+    || !validWindowsCreationTimeTicks(expected.creationTimeTicks)
+  ) return "unavailable";
+  return current.creationDate === expected.creationDate
+    && current.creationTimeMs === expected.creationTimeMs
+    && current.creationTimeTicks === expected.creationTimeTicks
+    ? "same"
+    : "reused";
+}
+
+export function windowsProcessDescendantEdgeState(parent, child) {
+  if (child?.parentPid !== parent?.pid) return "not-child";
+  if (
+    typeof parent?.creationDate !== "string"
+    || !parent.creationDate
+    || !validWindowsCreationTimeMs(parent.creationTimeMs)
+    || !validWindowsCreationTimeTicks(parent.creationTimeTicks)
+    || typeof child?.creationDate !== "string"
+    || !child.creationDate
+    || !validWindowsCreationTimeMs(child.creationTimeMs)
+    || !validWindowsCreationTimeTicks(child.creationTimeTicks)
+  ) return "unavailable";
+  const parentTicks = BigInt(parent.creationTimeTicks);
+  const childTicks = BigInt(child.creationTimeTicks);
+  if (childTicks < parentTicks) return "stale-parent";
+  if (childTicks === parentTicks) return "unavailable";
+  return "possible-child";
+}
+
+function windowsDescendants(snapshot, rootRecord) {
+  const descendants = [];
+  const queue = [{ ...rootRecord, depth: 0 }];
+  const seen = new Set([rootRecord.pid]);
+  while (queue.length > 0) {
+    const parent = queue.shift();
+    for (const processRecord of snapshot.processes.values()) {
+      if (seen.has(processRecord.pid)) continue;
+      const edgeState = windowsProcessDescendantEdgeState(parent, processRecord);
+      if (edgeState === "not-child" || edgeState === "stale-parent") continue;
+      if (edgeState === "unavailable") {
+        return { state: "unavailable", records: descendants };
+      }
+      seen.add(processRecord.pid);
+      const descendant = { ...processRecord, depth: parent.depth + 1 };
+      descendants.push(descendant);
+      queue.push(descendant);
+    }
+  }
+  return { state: "ok", records: descendants };
+}
+
+function windowsRecordKey(record) {
+  return `${record.pid}:${record.creationTimeTicks}`;
+}
+
+function uniqueWindowsRecords(records) {
+  const unique = new Map();
+  for (const record of records) {
+    const key = windowsRecordKey(record);
+    const existing = unique.get(key);
+    if (!existing || (record.depth ?? 0) > (existing.depth ?? 0)) unique.set(key, record);
+  }
+  return [...unique.values()];
+}
+
+function classifyWindowsDescriptor(snapshot, descriptor, runToken) {
+  if (snapshot.state !== "ok") return { state: "unavailable" };
+  const root = snapshot.processes.get(descriptor.pid);
+  if (root === undefined) {
+    if (
+      descriptor.tree
+      && [...snapshot.processes.values()].some((record) => record.parentPid === descriptor.pid)
+    ) {
+      return { state: "unavailable" };
+    }
+    return { state: "absent" };
+  }
+  if (
+    root.creationDate === null
+    || root.creationTimeMs === null
+    || root.creationTimeTicks === null
+    || root.commandLine === null
+  ) return { state: "unavailable" };
+  if (!commandLineBelongsToRun(root.commandLine, runToken, descriptor.role)) {
+    return { state: "mismatch", record: { ...root, depth: 0 } };
+  }
+  const lineage = descriptor.tree
+    ? windowsDescendants(snapshot, root)
+    : { state: "ok", records: [] };
+  if (lineage.state === "unavailable") return { state: "unavailable" };
+  const descendants = lineage.records;
+  if (descendants.some((record) => (
+    record.creationDate === null
+    || record.creationTimeMs === null
+    || record.creationTimeTicks === null
+  ))) {
+    return { state: "unavailable" };
+  }
+  const rootRecord = { ...root, depth: 0 };
+  return {
+    state: "match",
+    proof: {
+      descriptor: { ...descriptor },
+      root: rootRecord,
+      records: uniqueWindowsRecords([rootRecord, ...descendants]),
+    },
+  };
+}
+
+function inspectWindowsDescriptorSync(descriptor, runToken) {
+  let consecutiveAbsences = 0;
+  for (let attempt = 0; attempt < WINDOWS_IDENTITY_ATTEMPTS; attempt += 1) {
+    const identity = classifyWindowsDescriptor(windowsProcessSnapshot(), descriptor, runToken);
+    if (identity.state === "match" || identity.state === "mismatch") return identity;
+    if (identity.state === "absent") {
+      consecutiveAbsences += 1;
+      if (consecutiveAbsences >= 2) return identity;
+    } else {
+      consecutiveAbsences = 0;
+    }
+  }
+  return { state: "unavailable" };
+}
+
+function taskkillWindows(pid) {
+  return spawnSync(
+    "taskkill.exe",
+    ["/PID", String(pid), "/F"],
+    { stdio: "ignore", windowsHide: true },
+  );
+}
+
+function terminateWindowsRecord(record, { runToken, role } = {}) {
+  const snapshot = windowsProcessSnapshot();
+  if (snapshot.state !== "ok") return "identity-unavailable";
+  const current = snapshot.processes.get(record.pid);
+  const incarnation = windowsProcessIncarnationState(current, record);
+  if (incarnation === "unavailable") return "identity-unavailable";
+  if (incarnation === "absent" || incarnation === "reused") return "absent";
+  if (runToken !== undefined) {
+    if (current.commandLine === null) return "identity-unavailable";
+    if (!commandLineBelongsToRun(current.commandLine, runToken, role)) return "foreign-process";
+  }
+  // CreationDate is revalidated immediately before taskkill. Without a retained Windows
+  // process handle or Job Object, this final probe-to-kill interval cannot be atomic.
+  const result = taskkillWindows(record.pid);
+  if (result.error) return "identity-unavailable";
+  if (result.status === 0) return "terminated";
+  const verification = windowsProcessSnapshot();
+  if (verification.state !== "ok") return "identity-unavailable";
+  const verifiedIncarnation = windowsProcessIncarnationState(
+    verification.processes.get(record.pid),
+    record,
+  );
+  if (verifiedIncarnation === "unavailable") return "identity-unavailable";
+  return verifiedIncarnation === "same" ? "processes-running" : "absent";
+}
+
+function inspectWindowsProofLineage(snapshot, proof, knownRecords) {
+  if (snapshot.state !== "ok") {
+    return { status: "identity-unavailable", records: knownRecords };
+  }
+  const currentRoot = snapshot.processes.get(proof.root.pid);
+  const rootIncarnation = windowsProcessIncarnationState(currentRoot, proof.root);
+  if (rootIncarnation === "unavailable") {
+    return { status: "identity-unavailable", records: knownRecords };
+  }
+  if (rootIncarnation === "same") {
+    if (currentRoot.commandLine === null) {
+      return { status: "identity-unavailable", records: knownRecords };
+    }
+    if (!commandLineBelongsToRun(currentRoot.commandLine, proof.runToken, proof.descriptor.role)) {
+      return { status: "foreign-process", records: knownRecords };
+    }
+  }
+
+  const lineage = proof.descriptor.tree
+    ? windowsDescendants(snapshot, proof.root)
+    : { state: "ok", records: [] };
+  if (lineage.state === "unavailable") {
+    return { status: "identity-unavailable", records: knownRecords };
+  }
+  const descendants = lineage.records;
+  if (descendants.some((record) => (
+    record.creationDate === null
+    || record.creationTimeMs === null
+    || record.creationTimeTicks === null
+  ))) return { status: "identity-unavailable", records: knownRecords };
+
+  const known = new Set(knownRecords.map(windowsRecordKey));
+  if (rootIncarnation !== "same") {
+    const unproven = descendants.filter((record) => !known.has(windowsRecordKey(record)));
+    if (unproven.length > 0) {
+      return { status: "identity-unavailable", records: knownRecords };
+    }
+    return { status: "root-retired", records: knownRecords };
+  }
+  return {
+    status: "root-present",
+    records: uniqueWindowsRecords([...knownRecords, ...descendants]),
+  };
+}
+
+function windowsRecordsState(snapshot, records) {
+  if (snapshot.state !== "ok") return "identity-unavailable";
+  let running = false;
+  for (const record of uniqueWindowsRecords(records)) {
+    const incarnation = windowsProcessIncarnationState(snapshot.processes.get(record.pid), record);
+    if (incarnation === "unavailable") return "identity-unavailable";
+    if (incarnation === "same") running = true;
+  }
+  return running ? "processes-running" : "exited";
+}
+
+function terminateWindowsOwnedProof(proof, runToken) {
+  const ownedProof = { ...proof, runToken };
+  let records = [...ownedProof.records];
+  let status = "terminated";
+
+  for (let attempt = 0; attempt < WINDOWS_IDENTITY_ATTEMPTS; attempt += 1) {
+    const lineage = inspectWindowsProofLineage(windowsProcessSnapshot(), ownedProof, records);
+    records = lineage.records;
+    if (lineage.status === "identity-unavailable" || lineage.status === "foreign-process") {
+      return { status: lineage.status, records };
+    }
+
+    const descendants = records
+      .filter((record) => windowsRecordKey(record) !== windowsRecordKey(ownedProof.root))
+      .sort((left, right) => (right.depth ?? 0) - (left.depth ?? 0));
+    for (const descendant of descendants) {
+      const result = terminateWindowsRecord(descendant);
+      if (result === "identity-unavailable") status = result;
+      else if (result === "processes-running" && status !== "identity-unavailable") {
+        status = result;
+      }
+    }
+    if (status === "identity-unavailable") return { status, records };
+
+    const rootResult = terminateWindowsRecord(ownedProof.root, {
+      runToken,
+      role: ownedProof.descriptor.role,
+    });
+    if (rootResult === "foreign-process" || rootResult === "identity-unavailable") {
+      return { status: rootResult, records };
+    }
+    if (rootResult === "processes-running") status = rootResult;
+
+    const snapshot = windowsProcessSnapshot();
+    const completion = windowsRecordsState(snapshot, records);
+    const postKillLineage = inspectWindowsProofLineage(snapshot, ownedProof, records);
+    records = postKillLineage.records;
+    if (
+      postKillLineage.status === "identity-unavailable"
+      || postKillLineage.status === "foreign-process"
+    ) return { status: postKillLineage.status, records };
+    if (completion === "exited" && postKillLineage.status === "root-retired") {
+      return { status: "terminated", records };
+    }
+  }
+
+  const finalSnapshot = windowsProcessSnapshot();
+  const finalLineage = inspectWindowsProofLineage(finalSnapshot, ownedProof, records);
+  records = finalLineage.records;
+  if (finalLineage.status === "identity-unavailable" || finalLineage.status === "foreign-process") {
+    return { status: finalLineage.status, records };
+  }
+  return { status: windowsRecordsState(finalSnapshot, records), records };
+}
+
+function auditWindowsOwnedProofs(proofs, records, runToken) {
+  const snapshot = windowsProcessSnapshot();
+  if (snapshot.state !== "ok") return { status: "identity-unavailable", records };
+  let observed = uniqueWindowsRecords(records);
+  for (const proof of proofs) {
+    const lineage = inspectWindowsProofLineage(
+      snapshot,
+      { ...proof, runToken },
+      observed,
+    );
+    observed = lineage.records;
+    if (lineage.status === "identity-unavailable" || lineage.status === "foreign-process") {
+      return { status: lineage.status, records: observed };
+    }
+  }
+  return { status: windowsRecordsState(snapshot, observed), records: observed };
+}
+
 export function processBelongsToRunSync(pid, runToken, role) {
   const token = assertRunToken(runToken);
   const processRole = assertRole(role);
-  const commandLine = processCommandLine(pid);
+  if (process.platform === "win32") {
+    return inspectWindowsDescriptorSync(
+      { pid, role: processRole, tree: false },
+      token,
+    ).state === "match";
+  }
+  const commandLine = nonWindowsProcessCommandLine(pid);
   if (commandLine === null) return false;
-  const titleMarker = `--title=${processIdentityMarker(token, processRole)}`;
-  if (commandLine.includes(titleMarker)) return true;
-  return processRole === "harness"
-    && commandLine.includes(`--pleroma-e2e-owner=${token}`)
-    && commandLine.includes("--pleroma-e2e-role=harness");
+  return commandLineBelongsToRun(commandLine, token, processRole);
 }
 
 export async function processBelongsToRun(pid, runToken, role) {
@@ -279,16 +629,14 @@ export function terminateOwnedProcess(
   if (!directoryBelongsToRun(persistencePath, token, normalizedPorts)) return false;
   const manifest = readOwnedManifest(persistencePath, token, normalizedPorts);
   if (manifest === null || !manifestContains(manifest, descriptor)) return false;
+  if (process.platform === "win32") {
+    const identity = inspectWindowsDescriptorSync(descriptor, token);
+    if (identity.state === "absent") return true;
+    if (identity.state !== "match") return false;
+    return terminateWindowsOwnedProof(identity.proof, token).status === "terminated";
+  }
   if (!isProcessAlive(descriptor.pid)) return true;
   if (!processBelongsToRunSync(descriptor.pid, token, descriptor.role)) return false;
-  if (process.platform === "win32") {
-    const result = spawnSync(
-      "taskkill.exe",
-      ["/PID", String(descriptor.pid), ...(descriptor.tree ? ["/T"] : []), "/F"],
-      { stdio: "ignore", windowsHide: true },
-    );
-    return result.status === 0 || !isProcessAlive(descriptor.pid);
-  }
   try {
     process.kill(descriptor.tree ? -descriptor.pid : descriptor.pid, "SIGTERM");
     return true;
@@ -318,6 +666,18 @@ async function waitForProcessesToExit(descriptors, timeoutMs) {
     await delay(25);
   }
   return descriptors.every((descriptor) => !isProcessAlive(descriptor.pid));
+}
+
+async function waitForWindowsRecordsToExit(records, timeoutMs) {
+  const expected = uniqueWindowsRecords(records);
+  if (expected.length === 0) return "exited";
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const snapshot = windowsProcessSnapshot();
+    if (windowsRecordsState(snapshot, expected) === "exited") return "exited";
+    await delay(25);
+  }
+  return windowsRecordsState(windowsProcessSnapshot(), expected);
 }
 
 function attemptRemoveOwnedPersistence(persistencePath, runToken, ports) {
@@ -361,7 +721,7 @@ export async function teardownOwnedRun({
   runToken,
   ports = DEFAULT_E2E_PORTS,
   gracefulTimeoutMs = 10_000,
-  forcedTimeoutMs = 3_000,
+  forcedTimeoutMs = process.platform === "win32" ? 15_000 : 3_000,
   deletionTimeoutMs = 30_000,
 } = {}) {
   const safePath = assertSafePersistencePath(persistencePath);
@@ -371,6 +731,34 @@ export async function teardownOwnedRun({
   if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "not-owner";
   const manifest = readOwnedManifest(safePath, token, normalizedPorts);
   if (manifest === null) return "invalid-manifest";
+
+  const descriptors = [...manifest.children].reverse().concat(manifest.harness);
+  const windowsIdentities = new Map();
+  let foundForeignProcess = false;
+  let identityUnavailable = false;
+  let observedWindowsRecords = [];
+  const windowsProofs = [];
+  if (process.platform === "win32") {
+    for (const descriptor of descriptors) {
+      if (!existsSync(safePath)) return "cleaned";
+      if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
+      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts);
+      if (currentManifest === null || !manifestContains(currentManifest, descriptor)) {
+        return "ownership-lost";
+      }
+      const identity = inspectWindowsDescriptorSync(descriptor, token);
+      windowsIdentities.set(`${descriptor.role}:${descriptor.pid}:${descriptor.tree}`, identity);
+      if (identity.state === "match") {
+        windowsProofs.push(identity.proof);
+        observedWindowsRecords.push(...identity.proof.records);
+      } else if (identity.state === "mismatch") {
+        foundForeignProcess = true;
+        observedWindowsRecords.push(identity.record);
+      } else if (identity.state === "unavailable") {
+        identityUnavailable = true;
+      }
+    }
+  }
 
   const { shutdownPath } = ownershipPaths(safePath);
   if (
@@ -382,33 +770,66 @@ export async function teardownOwnedRun({
   writeFileSync(shutdownPath, JSON.stringify({ runToken: token, ports: normalizedPorts }));
   if (await waitForDirectoryRemoval(safePath, gracefulTimeoutMs)) return "cleaned";
 
-  const descriptors = [...manifest.children].reverse().concat(manifest.harness);
-  let foundForeignProcess = false;
-  for (const descriptor of descriptors) {
-    if (!existsSync(safePath)) return "cleaned";
-    if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
-    const currentManifest = readOwnedManifest(safePath, token, normalizedPorts);
-    if (currentManifest === null || !manifestContains(currentManifest, descriptor)) {
-      return "ownership-lost";
+  if (process.platform === "win32") {
+    for (const descriptor of descriptors) {
+      if (!existsSync(safePath)) return "cleaned";
+      if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
+      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts);
+      if (currentManifest === null || !manifestContains(currentManifest, descriptor)) {
+        return "ownership-lost";
+      }
+      const identity = windowsIdentities.get(`${descriptor.role}:${descriptor.pid}:${descriptor.tree}`);
+      if (identity?.state !== "match") continue;
+      const termination = terminateWindowsOwnedProof(identity.proof, token);
+      observedWindowsRecords.push(...termination.records);
+      if (termination.status === "foreign-process") foundForeignProcess = true;
+      if (termination.status === "identity-unavailable") identityUnavailable = true;
     }
-    if (!isProcessAlive(descriptor.pid)) continue;
-    if (!processBelongsToRunSync(descriptor.pid, token, descriptor.role)) {
-      foundForeignProcess = true;
-      continue;
+    const waitResult = await waitForWindowsRecordsToExit(
+      observedWindowsRecords,
+      forcedTimeoutMs,
+    );
+    if (foundForeignProcess) return "foreign-process";
+    if (identityUnavailable || waitResult === "identity-unavailable") {
+      return "identity-unavailable";
     }
-    terminateOwnedProcess(safePath, token, descriptor, normalizedPorts);
+    if (waitResult === "processes-running") return "processes-running";
+    const finalAudit = auditWindowsOwnedProofs(
+      windowsProofs,
+      observedWindowsRecords,
+      token,
+    );
+    if (finalAudit.status === "foreign-process") return "foreign-process";
+    if (finalAudit.status === "identity-unavailable") return "identity-unavailable";
+    if (finalAudit.status === "processes-running") return "processes-running";
+  } else {
+    for (const descriptor of descriptors) {
+      if (!existsSync(safePath)) return "cleaned";
+      if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
+      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts);
+      if (currentManifest === null || !manifestContains(currentManifest, descriptor)) {
+        return "ownership-lost";
+      }
+      if (!isProcessAlive(descriptor.pid)) continue;
+      if (!processBelongsToRunSync(descriptor.pid, token, descriptor.role)) {
+        foundForeignProcess = true;
+        continue;
+      }
+      terminateOwnedProcess(safePath, token, descriptor, normalizedPorts);
+    }
+    const exited = await waitForProcessesToExit(descriptors, forcedTimeoutMs);
+    if (foundForeignProcess) return "foreign-process";
+    if (!exited) return "processes-running";
   }
 
-  await waitForProcessesToExit(descriptors, forcedTimeoutMs);
-  if (foundForeignProcess) return "foreign-process";
   if (!existsSync(safePath)) return "cleaned";
   if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
   const finalManifest = readOwnedManifest(safePath, token, normalizedPorts);
   if (finalManifest === null) return "ownership-lost";
-  const liveDescriptors = [...finalManifest.children, finalManifest.harness]
-    .filter((descriptor) => isProcessAlive(descriptor.pid));
-  if (liveDescriptors.length > 0) {
-    return "processes-running";
+  if (process.platform !== "win32") {
+    const liveDescriptors = [...finalManifest.children, finalManifest.harness]
+      .filter((descriptor) => isProcessAlive(descriptor.pid));
+    if (liveDescriptors.length > 0) return "processes-running";
   }
   return await removeOwnedPersistence(safePath, token, normalizedPorts, deletionTimeoutMs)
     ? "cleaned"
