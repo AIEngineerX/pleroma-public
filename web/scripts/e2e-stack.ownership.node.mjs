@@ -22,11 +22,13 @@ import {
   readE2EPorts,
   teardownOwnedRun,
 } from "./e2e-run-ownership.mjs";
-import { launcherRunConfiguration } from "./e2e-stack.mjs";
+import { launcherRunConfiguration, writeE2EWranglerConfig } from "./e2e-stack.mjs";
 
 const SCRIPT_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_ROOT, "../..");
 const STACK_SCRIPT = path.resolve(SCRIPT_ROOT, "e2e-stack.mjs");
+const WORKER_ROOT = path.resolve(REPOSITORY_ROOT, "worker");
+const WRANGLER_CLI = path.resolve(WORKER_ROOT, "node_modules/wrangler/bin/wrangler.js");
 const FIXED_SENTINEL_NAME = "must-survive-port-collision.txt";
 const TEST_PORTS = { web: 4173, worker: 8787 };
 
@@ -103,6 +105,23 @@ function removeTestPersistence(persistencePath) {
   rmSync(persistencePath, { recursive: true, force: true });
 }
 
+async function removeTestPersistenceEventually(persistencePath) {
+  assert.notEqual(path.resolve(persistencePath), E2E_PERSIST_PATH);
+  const deadline = Date.now() + 10_000;
+  while (true) {
+    try {
+      rmSync(persistencePath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (
+        !["EPERM", "EBUSY", "ENOTEMPTY"].includes(error?.code)
+        || Date.now() >= deadline
+      ) throw error;
+      await delay(100);
+    }
+  }
+}
+
 function acquireFixedPersistenceFixture(contents) {
   mkdirSync(E2E_TMP_ROOT, { recursive: true });
   try {
@@ -167,6 +186,136 @@ function runStack(token, ports = TEST_PORTS) {
   });
 }
 
+async function unusedPort() {
+  const listener = net.createServer();
+  await listen(listener, 0, "127.0.0.1");
+  const address = listener.address();
+  assert.notEqual(address, null);
+  assert.equal(typeof address, "object");
+  const port = address.port;
+  await close(listener);
+  return port;
+}
+
+function aliasProbeSource(version) {
+  return [
+    'import { ulid } from "ulid";',
+    "export default {",
+    `  fetch() { return new Response("${version}:" + ulid()); },`,
+    "};",
+    "",
+  ].join("\n");
+}
+
+function spawnAliasProbe(entryPath, persistencePath, configPath, port) {
+  const child = spawn(process.execPath, [
+    WRANGLER_CLI,
+    "dev",
+    entryPath,
+    "--local",
+    "--config", configPath,
+    "--port", String(port),
+    "--persist-to", persistencePath,
+  ], {
+    cwd: WORKER_ROOT,
+    env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { output += chunk; });
+  return { child, output: () => output };
+}
+
+function waitForChildExit(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", () => resolve());
+  });
+}
+
+function spawnExclusiveFileLock(filePath, holdMs) {
+  const escapedPath = filePath.replaceAll("'", "''");
+  const script = [
+    `$stream = [System.IO.File]::Open('${escapedPath}',`,
+    "[System.IO.FileMode]::Open,",
+    "[System.IO.FileAccess]::ReadWrite,",
+    "[System.IO.FileShare]::None);",
+    "[Console]::Out.Write('locked');",
+    `Start-Sleep -Milliseconds ${holdMs};`,
+    "$stream.Dispose()",
+  ].join(" ");
+  const child = spawn("powershell.exe", [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    script,
+  ], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+
+  return new Promise((resolve, reject) => {
+    let output = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`timed out acquiring exclusive test lock: ${output}`));
+    }, 5_000);
+    const append = (chunk) => {
+      output += chunk;
+      if (settled || !output.includes("locked")) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(child);
+    };
+    child.stdout.on("data", append);
+    child.stderr.on("data", append);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(new Error(`exclusive test lock exited ${String(code)}: ${output}`));
+    });
+  });
+}
+
+async function firstHttpResponse(url, output, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
+      return { status: response.status, body: await response.text() };
+    } catch (error) {
+      lastError = error;
+      await delay(100);
+    }
+  }
+  assert.fail(`Wrangler alias probe did not answer: ${String(lastError)}\n${output()}`);
+}
+
+async function waitForProbeVersion(url, version, output, timeoutMs = 15_000) {
+  const expected = new RegExp(`^${version}:[0-9A-HJKMNP-TV-Z]{26}$`);
+  const deadline = Date.now() + timeoutMs;
+  let lastResponse = null;
+  while (Date.now() < deadline) {
+    lastResponse = await firstHttpResponse(url, output, 2_000);
+    if (lastResponse.status === 200 && expected.test(lastResponse.body)) return;
+    await delay(100);
+  }
+  assert.fail(
+    `Wrangler alias probe never reached ${version}; last response ${JSON.stringify(lastResponse)}\n${output()}`,
+  );
+}
+
 test("the launcher requires one token and validated matching run-scoped ports", () => {
   const token = runToken();
   const argv = [
@@ -214,6 +363,92 @@ test("the launcher requires one token and validated matching run-scoped ports", 
     ),
     /port.*does not match/i,
   );
+});
+
+test("Wrangler keeps the test ULID alias before and after a source reload", async () => {
+  const token = runToken();
+  const fixtureRoot = path.resolve(E2E_TMP_ROOT, `e2e-alias-${token}`);
+  const entryPath = path.resolve(fixtureRoot, "probe.mjs");
+  const persistencePath = path.resolve(fixtureRoot, "state");
+  const port = await unusedPort();
+  mkdirSync(fixtureRoot, { recursive: true });
+  writeFileSync(entryPath, aliasProbeSource("v1"));
+  const configPath = writeE2EWranglerConfig(fixtureRoot);
+  const authoritativeConfig = readFileSync(path.resolve(WORKER_ROOT, "wrangler.toml"), "utf8");
+  const generatedConfig = readFileSync(configPath, "utf8");
+  const expectedAlias = path.resolve(
+    REPOSITORY_ROOT,
+    "web/e2e/fixtures/worker-ulid.mjs",
+  ).replaceAll("\\", "/");
+  const aliasBlock = `\n[alias]\nulid = ${JSON.stringify(expectedAlias)}\n`;
+  assert.equal(generatedConfig.endsWith(aliasBlock), true);
+  const withoutAlias = generatedConfig.slice(0, -aliasBlock.length);
+  assert.equal(
+    withoutAlias.replace(
+      /^main = ".*\/worker\/src\/index\.ts"$/m,
+      'main = "src/index.ts"',
+    ),
+    authoritativeConfig,
+  );
+  const probe = spawnAliasProbe(entryPath, persistencePath, configPath, port);
+
+  try {
+    const first = await firstHttpResponse(`http://127.0.0.1:${port}/`, probe.output);
+    assert.equal(first.status, 200, `${first.body}\n${probe.output()}`);
+    assert.match(first.body, /^v1:[0-9A-HJKMNP-TV-Z]{26}$/);
+
+    writeFileSync(entryPath, aliasProbeSource("v2"));
+    await waitForProbeVersion(`http://127.0.0.1:${port}/`, "v2", probe.output);
+  } finally {
+    await stopChild(probe.child);
+    await removeTestPersistenceEventually(fixtureRoot);
+  }
+});
+
+test("owned teardown outlasts delayed Windows persistence-handle release", async (context) => {
+  if (process.platform !== "win32") {
+    context.skip("FileShare.None models the Windows Wrangler SQLite handle lag");
+    return;
+  }
+
+  const ownerToken = runToken();
+  const recorded = await spawnMarkedProcess(ownerToken, "harness");
+  const recordedPid = recorded.pid;
+  await stopChild(recorded);
+  const persistencePath = testPersistencePath();
+  writeOwnership(persistencePath, ownerToken, {
+    harness: { pid: recordedPid, role: "harness", tree: false },
+    children: [],
+  });
+  const lockedPath = path.resolve(persistencePath, "delayed-metadata.sqlite");
+  writeFileSync(lockedPath, "owned sqlite stand-in\n");
+  const lockHolder = await spawnExclusiveFileLock(lockedPath, 12_000);
+
+  try {
+    const result = await teardownOwnedRun({
+      persistencePath,
+      runToken: ownerToken,
+      ports: TEST_PORTS,
+      gracefulTimeoutMs: 0,
+      forcedTimeoutMs: 0,
+    });
+    assert.equal(result, "cleaned");
+    assert.equal(existsSync(persistencePath), false);
+  } finally {
+    await waitForChildExit(lockHolder);
+    if (existsSync(persistencePath)) {
+      const cleanup = await teardownOwnedRun({
+        persistencePath,
+        runToken: ownerToken,
+        ports: TEST_PORTS,
+        gracefulTimeoutMs: 0,
+        forcedTimeoutMs: 0,
+        deletionTimeoutMs: 5_000,
+      });
+      assert.equal(cleanup, "cleaned");
+    }
+    removeTestPersistence(persistencePath);
+  }
 });
 
 test("an occupied port fails without deleting persistence this harness does not own", async (context) => {

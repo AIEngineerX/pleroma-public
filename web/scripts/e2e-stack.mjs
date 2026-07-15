@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,7 @@ export const TEST_PULSE_MINT = "9C6hybhQ6Aycep9jaUnP6uL9ZYvDjUp1aSkFWPUFJtpj";
 const WORKER_ROOT = path.resolve(REPOSITORY_ROOT, "worker");
 const WEB_ROOT = path.resolve(REPOSITORY_ROOT, "web");
 const WRANGLER_CLI = path.resolve(WORKER_ROOT, "node_modules/wrangler/bin/wrangler.js");
+const WRANGLER_CONFIG = path.resolve(WORKER_ROOT, "wrangler.toml");
 const VITE_CLI = path.resolve(WEB_ROOT, "node_modules/vite/bin/vite.js");
 const TEST_ULID_MODULE = path.resolve(WEB_ROOT, "e2e/fixtures/worker-ulid.mjs");
 const managedChildren = [];
@@ -67,6 +68,26 @@ export function launcherRunConfiguration(argv = process.argv, env = process.env)
     || argumentPorts.worker !== environmentPorts.worker
   ) throw new Error("E2E launcher port configuration does not match its environment");
   return { runToken: argumentToken, ports: argumentPorts };
+}
+
+function tomlPath(filePath) {
+  return filePath.replaceAll("\\", "/");
+}
+
+export function writeE2EWranglerConfig(persistencePath) {
+  const safePath = assertSafePersistencePath(persistencePath);
+  const source = readFileSync(WRANGLER_CONFIG, "utf8");
+  const mainDeclaration = /^main = "src\/index\.ts"$/gm;
+  if ([...source.matchAll(mainDeclaration)].length !== 1) {
+    throw new Error("E2E Wrangler config expected one authoritative Worker main declaration");
+  }
+  const configPath = path.resolve(safePath, "wrangler.e2e.toml");
+  const config = source.replace(
+    mainDeclaration,
+    `main = ${JSON.stringify(tomlPath(path.resolve(WORKER_ROOT, "src/index.ts")))}`,
+  ) + `\n[alias]\nulid = ${JSON.stringify(tomlPath(TEST_ULID_MODULE))}\n`;
+  writeFileSync(configPath, config);
+  return configPath;
 }
 
 function npmCliPath() {
@@ -218,6 +239,7 @@ async function main() {
   mkdirSync(persistencePath, { recursive: true });
   writeRunOwner(persistencePath, activeRunToken, activePorts);
   writeProcessManifest();
+  const wranglerConfigPath = writeE2EWranglerConfig(persistencePath);
   shutdownWatcher = setInterval(() => {
     if (
       activeRunToken !== null
@@ -249,11 +271,11 @@ async function main() {
     [
       "dev",
       "--local",
+      "--config", wranglerConfigPath,
       "--port", String(activePorts.worker),
       "--persist-to", persistencePath,
       "--var", `CORS_ORIGIN:${origins.web}`,
       "--var", `PULSE_MINT:${TEST_PULSE_MINT}`,
-      "--alias", `ulid=${TEST_ULID_MODULE}`,
     ],
     childEnv,
   );

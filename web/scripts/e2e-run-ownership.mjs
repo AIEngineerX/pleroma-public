@@ -362,7 +362,7 @@ export async function teardownOwnedRun({
   ports = DEFAULT_E2E_PORTS,
   gracefulTimeoutMs = 10_000,
   forcedTimeoutMs = 3_000,
-  deletionTimeoutMs = 10_000,
+  deletionTimeoutMs = 30_000,
 } = {}) {
   const safePath = assertSafePersistencePath(persistencePath);
   const token = assertRunToken(runToken);
