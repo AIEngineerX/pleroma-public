@@ -21,6 +21,11 @@ interface RepairDreamApi {
     command: BodyCommand | null,
     tracked: { commandId: string | null; phase: SeraphPhase },
   ): SeraphPhase;
+  dreamPlatePhaseForPresentation?(
+    activeCommand: BodyCommand | null,
+    presentationCommand: BodyCommand | null,
+    tracked: { commandId: string | null; phase: SeraphPhase },
+  ): SeraphPhase;
 }
 
 interface DreamPage {
@@ -66,13 +71,14 @@ function convergence(
   source: "live" | "replay",
   narrative = plate.narrative,
   id = `${source}-dream`,
+  riteDate = "2030-01-02",
 ): BodyCommand {
   return {
     id: `converge:${id}`,
     kind: "converge",
     dream: {
       id,
-      riteDate: "2030-01-02",
+      riteDate,
       narrative,
       createdAt: plate.created_at,
       source,
@@ -131,6 +137,37 @@ describe("Temple Dream Plate convergence linkage", () => {
     const secondInitial = phaseForCommand(second, completedFirst);
     expect(secondInitial).toBe("gather");
     expect(presentation(plate, second, secondInitial, true)).toBe("concealed");
+  });
+
+  it("keeps witnessed Plate A revealed after same-text wrong-rite convergence B completes", () => {
+    expect(typeof repairApi.dreamPlatePhaseForPresentation).toBe("function");
+    expect(typeof repairApi.dreamPlatePresentation).toBe("function");
+    expect(typeof identityApi.archiveConfirmsDreamPlate).toBe("function");
+    const phaseForPresentation = repairApi.dreamPlatePhaseForPresentation;
+    const presentation = repairApi.dreamPlatePresentation;
+    const confirmsPlate = identityApi.archiveConfirmsDreamPlate;
+    if (
+      phaseForPresentation === undefined
+      || presentation === undefined
+      || confirmsPlate === undefined
+    ) return;
+
+    const witnessedA = convergence("live", plate.narrative, "witnessed-a");
+    const rejectedB = convergence("live", plate.narrative, "rejected-b", "2030-01-03");
+    expect(confirmsPlate(plate, witnessedA, [archiveEntry()])).toBe(true);
+    expect(confirmsPlate(plate, rejectedB, [archiveEntry()])).toBe(false);
+
+    const completedA = { commandId: witnessedA.id, phase: "five" as const };
+    expect(phaseForPresentation(null, witnessedA, completedA)).toBe("five");
+    expect(presentation(plate, witnessedA, "five", true)).toBe("revealed");
+
+    expect(phaseForPresentation(rejectedB, rejectedB, completedA)).toBe("gather");
+    expect(presentation(plate, rejectedB, "gather", false)).toBe("ordinary");
+
+    const completedB = { commandId: rejectedB.id, phase: "five" as const };
+    const retainedPhase = phaseForPresentation(null, witnessedA, completedB);
+    expect(retainedPhase).toBe("five");
+    expect(presentation(plate, witnessedA, retainedPhase, true)).toBe("revealed");
   });
 
   it("removes a concealed Plate from layout and accessibility, then restores the real Plate", () => {

@@ -61,7 +61,7 @@ async function expectFullSeraphTargetExtents(body: ReturnType<Page["locator"]>):
 
 test.beforeEach(() => resetStack());
 
-test("live Temple rejects a same-text wrong rite and carries the exact Plate through active renderer loss", async ({ page }, testInfo) => {
+test("live Temple carries a witnessed Plate through renderer loss and a later same-text wrong rite", async ({ page }, testInfo) => {
   test.setTimeout(80_000);
   let dreamIdentityRequests = 0;
   page.on("request", (request) => {
@@ -190,6 +190,34 @@ test("live Temple rejects a same-text wrong rite and carries the exact Plate thr
   await expect(plate).toHaveAttribute("data-dream-identity", "confirmed");
   await expect(verse).toHaveCount(0);
   await expect(page.locator("[data-dream-witness]")).toHaveCount(0);
+
+  const laterRejectedId = "task9-later-same-text-wrong-rite";
+  seedTranscript({
+    id: laterRejectedId,
+    organ: "DREAM",
+    register: "verse",
+    text: liveNarrative,
+    offering_id: null,
+    rite_id: "2030-01-03",
+    created_at: liveCreatedAt + 1_000,
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(page.locator(`[data-codex-row="${laterRejectedId}"]`))
+    .toHaveAttribute("data-observation", "live", { timeout: 10_000 });
+  await expect(settled).toHaveAttribute("data-seraph", "converged");
+  await expect(settled).toHaveAttribute("data-seraph-sequence-count", "3");
+  await expect(plate).toHaveAttribute("data-dream-identity", "rejected");
+  await expect(plate).toHaveAttribute("data-dream-presentation", "ordinary");
+  await expect(plate).toBeVisible();
+  expect(dreamIdentityRequests).toBe(3);
+
+  await expect(settled).toHaveAttribute("data-seraph", "five", { timeout: 7_000 });
+  await expect(settled).toHaveAttribute("data-completed-id", `converge:${laterRejectedId}`);
+  await expect(plate).toHaveAttribute("data-dream-identity", "confirmed");
+  await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
+  await expect(plate).toBeVisible();
+  await expect(plate).toContainText(liveNarrative);
 });
 
 test("a completed WebGL convergence keeps its semantic body after later context loss", async ({ page }) => {

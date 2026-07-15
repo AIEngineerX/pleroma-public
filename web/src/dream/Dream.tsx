@@ -23,6 +23,16 @@ export function dreamPlatePhaseForCommand(
   return tracked.commandId === command.id ? tracked.phase : "gather";
 }
 
+export function dreamPlatePhaseForPresentation(
+  activeCommand: BodyCommand | null,
+  presentationCommand: BodyCommand | null,
+  tracked: DreamPlatePhaseState,
+): DreamPlatePhase {
+  return activeCommand === null
+    ? "five"
+    : dreamPlatePhaseForCommand(presentationCommand, tracked);
+}
+
 export function dreamPlatePresentation(
   dream: DreamView | null,
   command: BodyCommand | null,

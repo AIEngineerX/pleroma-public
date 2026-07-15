@@ -13,7 +13,7 @@ import { oklchToRgb } from "../lib/a11y";
 import Reliquary from "../reliquary/Reliquary";
 import Tallies from "../reliquary/Tallies";
 import Dream, {
-  dreamPlatePhaseForCommand,
+  dreamPlatePhaseForPresentation,
   dreamPlatePresentation,
   type DreamPlateIdentityStatus,
   type DreamPlatePhase,
@@ -123,7 +123,11 @@ export default function Temple() {
     && confirmedPlateIsCurrent
     ? "confirmed"
     : activeIdentityStatus;
-  const platePhase = dreamPlatePhaseForCommand(presentationCommand, seraphPhase);
+  const platePhase = dreamPlatePhaseForPresentation(
+    activeCommand,
+    presentationCommand,
+    seraphPhase,
+  );
   const platePresentation = dreamPlatePresentation(
     plateDream,
     presentationCommand,
