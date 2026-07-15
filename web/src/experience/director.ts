@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "../state/types";
+import { isTimestamp, type TranscriptEntry } from "../state/types";
 import type { BodyCommand, DirectorLocks, DreamCue, PipelineLink, UtteranceMode } from "./types";
 
 const SPEECH_REGISTERS: Partial<Record<TranscriptEntry["organ"], readonly TranscriptEntry["register"][]>> = {
@@ -24,9 +24,7 @@ export function dreamReplayFromNavigationState(state: unknown): DreamCue | null 
   if (typeof cue.id !== "string" || cue.id.length === 0) return null;
   if (typeof cue.riteDate !== "string" || !isRiteDate(cue.riteDate)) return null;
   if (typeof cue.narrative !== "string" || cue.narrative.length === 0) return null;
-  if (typeof cue.createdAt !== "number" || !Number.isFinite(cue.createdAt)) return null;
-  const date = new Date(cue.createdAt);
-  if (!Number.isFinite(date.getTime())) return null;
+  if (!isTimestamp(cue.createdAt)) return null;
   return {
     id: cue.id,
     riteDate: cue.riteDate,

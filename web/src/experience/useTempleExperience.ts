@@ -307,6 +307,7 @@ export function planRelicRefresh(
   relics: readonly RelicEntry[],
   generation: number,
   baseline: boolean,
+  pendingCommands: readonly BodyCommand[] = [],
 ): { ledger: RelicAccretionLedger; requests: RelicSampleRequest[] } {
   const ledger = cloneRelicAccretionLedger(current);
   for (const key of ledger.inFlight) {
@@ -324,6 +325,12 @@ export function planRelicRefresh(
     ...ledger.active,
     ...[...ledger.inFlight].filter((key) => ledger.modes.get(key) === "animate"),
   ]);
+  const requiredDreamRites = new Set(
+    pendingCommands
+      .filter((command): command is Extract<BodyCommand, { kind: "converge" }> =>
+        command.kind === "converge" && command.dream.source === "live")
+      .map((command) => command.dream.riteDate),
+  );
   const requests: RelicSampleRequest[] = [];
   for (const relic of selected) {
     const key = relicAccretionKey(relic);
@@ -336,7 +343,12 @@ export function planRelicRefresh(
       || ledger.active.has(key)
       || ledger.attemptedGeneration.get(key) === generation
     ) continue;
-    if (mode === "animate" && animateReserved.size >= RELIC_SAMPLE_CONCURRENCY) continue;
+    const requiredForDream = relic.rite_id !== null && requiredDreamRites.has(relic.rite_id);
+    if (
+      mode === "animate"
+      && !requiredForDream
+      && animateReserved.size >= RELIC_SAMPLE_CONCURRENCY
+    ) continue;
 
     ledger.inFlight.add(key);
     if (mode === "animate") animateReserved.add(key);
@@ -888,7 +900,13 @@ export function useTempleExperience(apiBase: string): TempleExperience {
         setRelics(merged);
         if (!receiptListsMatch(receiptsRef.current, truth.receipts)) persistReceipts(truth.receipts);
 
-        const planned = planRelicRefresh(relicAccretion.current, merged, generation, isBaseline);
+        const planned = planRelicRefresh(
+          relicAccretion.current,
+          merged,
+          generation,
+          isBaseline,
+          queue.current,
+        );
         relicAccretion.current = planned.ledger;
         if (isBaseline) relicBaseline.current = true;
 

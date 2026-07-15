@@ -149,6 +149,20 @@ describe("truthful receipt reconciliation", () => {
     const unrelatedRelics = [relic("other-relic", "other", null)];
     expect(reconcileReceipt(settled, unrelatedEntries, unrelatedRelics)).toEqual(settled);
   });
+
+  it.each([-1, 8.64e15 + 1])(
+    "does not accept %s as proof that a kept relic accreted",
+    (invalidTimestamp) => {
+      const pending = receipt("offering", 10);
+      const reconciled = reconcileReceipt(
+        pending,
+        [],
+        [relic("relic", "offering", invalidTimestamp)],
+      );
+      expect(reconciled.stage).toBe("kept");
+      expect(reconciled.accretedAt).toBeNull();
+    },
+  );
 });
 
 describe("offering receipt language", () => {

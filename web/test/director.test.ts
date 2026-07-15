@@ -39,6 +39,7 @@ import {
   relicMemoryFromLedger,
   relicRefreshBlocksDream,
   requiresFastRelicPoll,
+  runRelicSampleQueue,
   settleRelicSample,
   settlePoll,
   shouldPoll,
@@ -202,6 +203,81 @@ describe("experience director queue", () => {
     expect(accretionAwaitsInkBeforeDream(relic, [dream], relicAccretionKey(relic))).toBe(false);
     queue = enqueueCommand(queue, accrete, waiting);
     expect(nextCommand(queue, { ...waiting, arrival: false })).toBe(accrete);
+  });
+
+  it("drains all twelve same-rite accretions before one live DREAM and later speech", async () => {
+    const riteDate = "2030-01-01";
+    const dream = required(commandFor(e("dream-twelve", 1_000, "DREAM", "verse", riteDate), "live"));
+    const speech = required(commandFor(e("speech-after-dream", 2_000, "TONGUE", "sermon"), "live"));
+    const relics: AccretedRelic[] = Array.from({ length: 12 }, (_, index) => ({
+      id: `rite-relic-${index}`,
+      offering_id: `rite-offering-${index}`,
+      wallet: null,
+      summary: `same-rite relic ${index}`,
+      rite_id: riteDate,
+      kept_at: 100 + index,
+      genesis: 0,
+      accreted_at: 500 + index,
+    }));
+    const waiting = { ...unlocked, arrival: true };
+    let commandQueue = enqueueCommand(enqueueCommand([], dream, waiting), speech, waiting);
+    let ledger = createRelicAccretionLedger();
+    const planned = planRelicRefresh(ledger, relics, 1, false, commandQueue);
+    ledger = planned.ledger;
+
+    expect(relicRefreshBlocksDream(commandQueue, relics, [])).toBe(true);
+    expect(planned.requests).toHaveLength(12);
+
+    let activeFetches = 0;
+    let maxActiveFetches = 0;
+    await runRelicSampleQueue(
+      planned.requests,
+      new AbortController().signal,
+      async (request) => {
+        activeFetches += 1;
+        maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        activeFetches -= 1;
+        return {
+          offeringId: request.relic.offering_id,
+          size: 64,
+          alpha: new Uint8Array(64 * 64).fill(120),
+        } satisfies RelicInkSample;
+      },
+      (request, ink) => {
+        const settled = settleRelicSample(ledger, request, ink, 1);
+        ledger = settled.ledger;
+        expect(settled.command).not.toBeNull();
+        if (settled.command !== null) {
+          commandQueue = enqueueControllerCommand(commandQueue, settled.command, waiting, null);
+        }
+      },
+    );
+
+    expect(maxActiveFetches).toBeLessThanOrEqual(RELIC_SAMPLE_CONCURRENCY);
+    expect(relicRefreshBlocksDream(
+      commandQueue,
+      relics,
+      [...ledger.samplesByKey.keys()],
+    )).toBe(false);
+
+    const completed: BodyCommand[] = [];
+    let locks = { ...waiting, arrival: false };
+    while (commandQueue.length > 0) {
+      const command = required(nextCommand(commandQueue, locks));
+      commandQueue = commandQueue.filter((queued) => queued.id !== command.id);
+      if (command.kind === "accrete") ledger = activateRelicCommand(ledger, command);
+      locks = { ...locks, activeKind: command.kind };
+      expect(nextCommand(commandQueue, locks)).toBeNull();
+      completed.push(command);
+      if (command.kind === "accrete") ledger = completeRelicCommand(ledger, command);
+      locks = { ...locks, activeKind: null };
+    }
+
+    expect(completed.slice(0, 12).every((command) => command.kind === "accrete")).toBe(true);
+    expect(ledger.incorporated.size).toBe(12);
+    expect(completed.filter((command) => command.id === dream.id)).toHaveLength(1);
+    expect(completed.at(-1)?.id).toBe(speech.id);
   });
 
   it("keeps a pre-baseline DREAM blocked only while matching accreted ink is missing", () => {

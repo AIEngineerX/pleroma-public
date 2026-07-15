@@ -33,7 +33,17 @@ interface DreamPage {
   next: string | null;
 }
 
+type DreamPlateIdentityResult = "confirmed" | "mismatch" | "unavailable";
+type DreamArchiveRiteResult =
+  | { status: "confirmed"; riteDate: string }
+  | { status: "mismatch" }
+  | { status: "unavailable" };
+
 interface RepairDreamsClientApi {
+  archiveRiteForCurrentDream?(
+    dream: DreamView | null,
+    entries: readonly DreamArchiveEntry[],
+  ): string | null;
   archiveConfirmsDreamPlate?(
     dream: DreamView | null,
     command: BodyCommand | null,
@@ -44,12 +54,31 @@ interface RepairDreamsClientApi {
     dream: DreamView | null,
     command: BodyCommand | null,
     page: Promise<DreamPage>,
-  ): Promise<boolean>;
+  ): Promise<DreamPlateIdentityResult>;
   DreamPlateIdentityCache?: new (
     load?: (apiBase: string, cursor: null) => Promise<DreamPage>,
+    wait?: (milliseconds: number) => Promise<void>,
   ) => {
-    confirm(apiBase: string, dream: DreamView | null, command: BodyCommand | null): Promise<boolean>;
+    confirm(
+      apiBase: string,
+      dream: DreamView | null,
+      command: BodyCommand | null,
+    ): Promise<DreamPlateIdentityResult>;
+    identifyCurrentRite?(
+      apiBase: string,
+      dream: DreamView | null,
+    ): Promise<DreamArchiveRiteResult>;
   };
+  retryUnavailableDreamPlateIdentity?(
+    confirm: () => Promise<DreamPlateIdentityResult>,
+    signal: AbortSignal,
+    wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
+  ): Promise<DreamPlateIdentityResult>;
+  retryUnavailableDreamArchiveRite?(
+    confirm: () => Promise<DreamArchiveRiteResult>,
+    signal: AbortSignal,
+    wait: (milliseconds: number, signal: AbortSignal) => Promise<void>,
+  ): Promise<DreamArchiveRiteResult>;
 }
 
 const repairApi = dreamModule as unknown as RepairDreamApi;
@@ -189,6 +218,45 @@ describe("Temple Dream Plate convergence linkage", () => {
 });
 
 describe("exact live Dream Plate identity", () => {
+  it("binds the current Dream to one exact archive rite and leaves duplicate identity neutral", () => {
+    expect(typeof identityApi.archiveRiteForCurrentDream).toBe("function");
+    const riteForDream = identityApi.archiveRiteForCurrentDream;
+    if (riteForDream === undefined) return;
+
+    const historical = archiveEntry({
+      id: "01JH0000000000000000000000",
+      rite_date: "2030-01-01",
+      created_at: plate.created_at - 1,
+    });
+    const current = archiveEntry();
+    expect(riteForDream(plate, [historical, current])).toBe("2030-01-02");
+    expect(riteForDream(plate, [
+      current,
+      { ...current, id: "01JH0000000000000000000002", rite_date: "2030-01-03" },
+    ])).toBeNull();
+    expect(riteForDream(plate, [historical])).toBeNull();
+    expect(riteForDream(null, [current])).toBeNull();
+  });
+
+  it("resolves the state Dream rite and shares its archive page with live Plate confirmation", async () => {
+    expect(typeof identityApi.DreamPlateIdentityCache).toBe("function");
+    if (identityApi.DreamPlateIdentityCache === undefined) return;
+    let loads = 0;
+    const identities = new identityApi.DreamPlateIdentityCache(async () => {
+      loads += 1;
+      return { entries: [archiveEntry()], next: null };
+    });
+    expect(typeof identities.identifyCurrentRite).toBe("function");
+    if (identities.identifyCurrentRite === undefined) return;
+
+    expect(await identities.identifyCurrentRite("", plate)).toEqual({
+      status: "confirmed",
+      riteDate: "2030-01-02",
+    });
+    expect(await identities.confirm("", plate, convergence("live"))).toBe("confirmed");
+    expect(loads).toBe(1);
+  });
+
   it("requires the archive rite, cue narrative, and state Plate timestamp to identify one Plate", () => {
     expect(typeof identityApi.archiveConfirmsDreamPlate).toBe("function");
     if (identityApi.archiveConfirmsDreamPlate === undefined) return;
@@ -209,7 +277,7 @@ describe("exact live Dream Plate identity", () => {
     expect(identityApi.archiveConfirmsDreamPlate(plate, live, [])).toBe(false);
   });
 
-  it("keeps pending and failed identity lookups ordinary and caches one lookup per command + Plate tuple", async () => {
+  it("keeps unavailable identity pending, retries once without spinning, and caches only authoritative results", async () => {
     expect(typeof identityApi.resolveDreamPlateIdentity).toBe("function");
     expect(typeof identityApi.DreamPlateIdentityCache).toBe("function");
     expect(typeof identityApi.dreamPlateIdentityKey).toBe("function");
@@ -225,12 +293,12 @@ describe("exact live Dream Plate identity", () => {
     const pending = identityApi.resolveDreamPlateIdentity(plate, live, pendingPage);
     expect(repairApi.dreamPlatePresentation?.(plate, live, "hold", false)).toBe("ordinary");
     releasePage({ entries: [archiveEntry()], next: null });
-    expect(await pending).toBe(true);
+    expect(await pending).toBe("confirmed");
     expect(await identityApi.resolveDreamPlateIdentity(
       plate,
       live,
       Promise.reject(new Error("archive unavailable")),
-    )).toBe(false);
+    )).toBe("unavailable");
 
     let loadCount = 0;
     const identities = new identityApi.DreamPlateIdentityCache(async () => {
@@ -240,13 +308,68 @@ describe("exact live Dream Plate identity", () => {
     const first = identities.confirm("", plate, live);
     const duplicate = identities.confirm("", plate, live);
     expect(duplicate).toBe(first);
-    expect(await first).toBe(true);
+    expect(await first).toBe("confirmed");
     expect(loadCount).toBe(1);
 
     const nextCommand = convergence("live", plate.narrative, "next-command");
     expect(identityApi.dreamPlateIdentityKey(plate, nextCommand))
       .not.toBe(identityApi.dreamPlateIdentityKey(plate, live));
-    expect(await identities.confirm("", plate, nextCommand)).toBe(true);
-    expect(loadCount).toBe(2);
+    expect(await identities.confirm("", plate, nextCommand)).toBe("confirmed");
+    expect(loadCount).toBe(1);
+
+    let recoveryLoads = 0;
+    const recovering = new identityApi.DreamPlateIdentityCache(async () => {
+      recoveryLoads += 1;
+      if (recoveryLoads === 1) throw new Error("transient archive failure");
+      return { entries: [archiveEntry()], next: null };
+    });
+    expect(await recovering.confirm("", plate, live)).toBe("unavailable");
+    expect(recoveryLoads).toBe(1);
+    expect(await recovering.confirm("", plate, live)).toBe("confirmed");
+    expect(recoveryLoads).toBe(2);
+    expect(await recovering.confirm("", plate, live)).toBe("confirmed");
+    expect(recoveryLoads).toBe(2);
+  });
+
+  it("paces repeated unavailable Plate and archive-rite confirmations while identity remains pending", async () => {
+    expect(typeof identityApi.retryUnavailableDreamPlateIdentity).toBe("function");
+    const retry = identityApi.retryUnavailableDreamPlateIdentity;
+    if (retry === undefined) return;
+
+    let attempts = 0;
+    const delays: number[] = [];
+    const result = await retry(
+      async () => {
+        attempts += 1;
+        return attempts <= 3 ? "unavailable" : "confirmed";
+      },
+      new AbortController().signal,
+      async (milliseconds, signal) => {
+        expect(signal.aborted).toBe(false);
+        delays.push(milliseconds);
+      },
+    );
+
+    expect(result).toBe("confirmed");
+    expect(attempts).toBe(4);
+    expect(delays).toEqual([500, 1_000, 2_000]);
+
+    expect(typeof identityApi.retryUnavailableDreamArchiveRite).toBe("function");
+    const retryRite = identityApi.retryUnavailableDreamArchiveRite;
+    if (retryRite === undefined) return;
+    let riteAttempts = 0;
+    const riteDelays: number[] = [];
+    expect(await retryRite(
+      async () => {
+        riteAttempts += 1;
+        return riteAttempts <= 2
+          ? { status: "unavailable" }
+          : { status: "confirmed", riteDate: "2030-01-02" };
+      },
+      new AbortController().signal,
+      async (milliseconds) => { riteDelays.push(milliseconds); },
+    )).toEqual({ status: "confirmed", riteDate: "2030-01-02" });
+    expect(riteAttempts).toBe(3);
+    expect(riteDelays).toEqual([500, 1_000]);
   });
 });

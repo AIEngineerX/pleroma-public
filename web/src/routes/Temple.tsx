@@ -20,7 +20,10 @@ import Dream, {
 } from "../dream/Dream";
 import {
   DreamPlateIdentityCache,
+  dreamArchiveIdentityKey,
   dreamPlateIdentityKey,
+  retryUnavailableDreamArchiveRite,
+  retryUnavailableDreamPlateIdentity,
 } from "../canon/dreamsClient";
 import RiteInversion from "../rite/RiteInversion";
 import { inversion } from "../state/rite";
@@ -95,6 +98,10 @@ export default function Temple() {
     key: string | null;
     status: DreamPlateIdentityStatus;
   }>({ key: null, status: "unlinked" });
+  const [currentDreamArchive, setCurrentDreamArchive] = useState<{
+    key: string | null;
+    riteDate: string | null;
+  }>({ key: null, riteDate: null });
   const [confirmedPlate, setConfirmedPlate] = useState<ConfirmedDreamPlate | null>(null);
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
   const [thresholdMount, setThresholdMount] = useState<HTMLElement | null>(null);
@@ -104,6 +111,12 @@ export default function Temple() {
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const plateDream = state?.dream ?? null;
+  const currentDreamArchiveKey = plateDream === null
+    ? null
+    : dreamArchiveIdentityKey(plateDream);
+  const currentDreamRiteDate = currentDreamArchive.key === currentDreamArchiveKey
+    ? currentDreamArchive.riteDate
+    : null;
   const liveConvergenceId = activeCommand?.kind === "converge"
     && activeCommand.dream.source === "live"
     ? activeCommand.id
@@ -143,6 +156,29 @@ export default function Temple() {
     });
   }, [liveConvergenceId]);
   useEffect(() => {
+    if (plateDream === null || currentDreamArchiveKey === null) {
+      setCurrentDreamArchive((current) => current.key === null && current.riteDate === null
+        ? current
+        : { key: null, riteDate: null });
+      return;
+    }
+    const controller = new AbortController();
+    setCurrentDreamArchive((current) => current.key === currentDreamArchiveKey
+      ? current
+      : { key: currentDreamArchiveKey, riteDate: null });
+    void retryUnavailableDreamArchiveRite(
+      () => DREAM_PLATE_IDENTITIES.identifyCurrentRite(API_BASE, plateDream),
+      controller.signal,
+    ).then((result) => {
+      if (controller.signal.aborted) return;
+      setCurrentDreamArchive({
+        key: currentDreamArchiveKey,
+        riteDate: result.status === "confirmed" ? result.riteDate : null,
+      });
+    });
+    return () => { controller.abort(); };
+  }, [currentDreamArchiveKey]);
+  useEffect(() => {
     if (identityKey === null) {
       setPlateIdentity((current) => current.key === null && current.status === "unlinked"
         ? current
@@ -150,17 +186,25 @@ export default function Temple() {
       return;
     }
     let disposed = false;
+    const controller = new AbortController();
     setPlateIdentity((current) => current.key === identityKey && current.status === "pending"
       ? current
       : { key: identityKey, status: "pending" });
-    void DREAM_PLATE_IDENTITIES.confirm(API_BASE, plateDream, activeCommand).then((confirmed) => {
-      if (disposed) return;
+    void retryUnavailableDreamPlateIdentity(
+      () => DREAM_PLATE_IDENTITIES.confirm(API_BASE, plateDream, activeCommand),
+      controller.signal,
+    ).then((result) => {
+      if (disposed || controller.signal.aborted) return;
       setPlateIdentity({
         key: identityKey,
-        status: confirmed ? "confirmed" : "rejected",
+        status: result === "confirmed"
+          ? "confirmed"
+          : result === "mismatch"
+            ? "rejected"
+            : "pending",
       });
       if (
-        confirmed
+        result === "confirmed"
         && plateDream !== null
         && activeCommand?.kind === "converge"
         && activeCommand.dream.source === "live"
@@ -171,7 +215,10 @@ export default function Temple() {
         });
       }
     });
-    return () => { disposed = true; };
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
   }, [identityKey]);
   const presentationStartedAt = useMemo(() => {
     if (activeCommand !== null && presentationClock.current?.id !== activeCommand.id) {
@@ -285,7 +332,13 @@ export default function Temple() {
             <section data-section="codex" className="temple-folio temple-reading-section">
               <h2 className="temple-section-label">{copy.codex.toUpperCase()}</h2>
               <aside aria-label="the codex" className="min-w-0 text-ink-faded">
-                <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
+                <Codex
+                  entries={codex}
+                  state={state}
+                  currentDreamRiteDate={currentDreamRiteDate}
+                  onAmplitude={onAmplitude}
+                  audioCtx={unlockAudio}
+                />
               </aside>
             </section>
 

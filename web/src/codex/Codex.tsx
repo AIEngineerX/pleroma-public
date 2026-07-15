@@ -19,10 +19,11 @@ export function codexDisplayEntry(observed: ObservedTranscript): ObservedTranscr
   };
 }
 
-export default function Codex({ entries, state, onAmplitude, audioCtx }:
+export default function Codex({ entries, state, currentDreamRiteDate = null, onAmplitude, audioCtx }:
   {
     entries: readonly ObservedTranscript[];
     state: TempleState | null;
+    currentDreamRiteDate?: string | null;
     onAmplitude: (a: number) => void;
     audioCtx: () => AudioContext;
   }) {
@@ -47,10 +48,12 @@ export default function Codex({ entries, state, onAmplitude, audioCtx }:
       // to both the dreams row and this plate transcript). Render from the ENTRY, never the shared
       // state.dream (which is always the LATEST dream), so an older plate shows its genuine narrative
       // instead of today's — published scripture must stay genuine and unedited. video_key/wakers are not
-      // carried per transcript row, so only the latest dream (matched by its identical narrative, an exact
-      // string match since dream.ts binds the same narrative to both rows) can surface them; older plates
-      // honestly read "plate pending".
-      const isLatest = state?.dream?.narrative === e.text;
+      // carried per transcript row, so only the row whose rite matches the current Dream's exact archive
+      // identity can surface them. A missing or ambiguous archive identity leaves every historical row
+      // honestly at "plate pending" rather than promoting duplicate narrative text.
+      const isLatest = currentDreamRiteDate !== null
+        && e.rite_id === currentDreamRiteDate
+        && state?.dream?.narrative === e.text;
       return <Plate key={e.id} observed={observed} epoch={dreamEpoch}
         dream={{ narrative: e.text, created_at: e.created_at,
                  video_key: isLatest ? state!.dream!.video_key : null,

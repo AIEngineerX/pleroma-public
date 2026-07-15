@@ -24,12 +24,18 @@ export interface RelicEntry {
 }
 export interface Tally { wallet: string; count: number; name: string | null }
 
+export const MAX_DATE_TIMESTAMP = 8.64e15;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+export function isTimestamp(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0 && value <= MAX_DATE_TIMESTAMP;
 }
 
 function isNullableString(value: unknown): value is string | null {
@@ -56,11 +62,11 @@ export function isTempleState(value: unknown): value is TempleState {
     && isNullableString(dream.video_key)
     && Array.isArray(dream.wakers)
     && dream.wakers.every((waker) => typeof waker === "string")
-    && isFiniteNumber(dream.created_at));
+    && isTimestamp(dream.created_at));
   return (value.phase === "dormant" || value.phase === "live")
     && typeof value.asleep === "boolean"
     && typeof value.degraded === "boolean"
-    && (value.countdown_to === null || isFiniteNumber(value.countdown_to))
+    && (value.countdown_to === null || isTimestamp(value.countdown_to))
     && isFiniteNumber(value.communicants_today)
     && (value.spend_state === "ok" || value.spend_state === "asleep")
     && isNullableString(value.mint)
@@ -77,7 +83,7 @@ export function isTranscriptEntry(value: unknown): value is TranscriptEntry {
     && typeof value.text === "string"
     && isNullableString(value.offering_id)
     && isNullableString(value.rite_id)
-    && isFiniteNumber(value.created_at);
+    && isTimestamp(value.created_at);
 }
 
 export function isRelicEntry(value: unknown): value is RelicEntry {
@@ -87,7 +93,7 @@ export function isRelicEntry(value: unknown): value is RelicEntry {
     && isNullableString(value.wallet)
     && typeof value.summary === "string"
     && isNullableString(value.rite_id)
-    && isFiniteNumber(value.kept_at)
+    && isTimestamp(value.kept_at)
     && isFiniteNumber(value.genesis)
-    && (value.accreted_at === null || isFiniteNumber(value.accreted_at));
+    && (value.accreted_at === null || isTimestamp(value.accreted_at));
 }

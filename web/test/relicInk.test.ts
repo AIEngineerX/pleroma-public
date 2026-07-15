@@ -42,6 +42,7 @@ describe("timestamp-confirmed relic ink", () => {
     expect(isAccreted(kept)).toBe(false);
     expect(isAccreted({ ...kept, accreted_at: Number.NaN })).toBe(false);
     expect(isAccreted({ ...kept, accreted_at: -1 })).toBe(false);
+    expect(isAccreted({ ...kept, accreted_at: 8.64e15 + 1 })).toBe(false);
 
     const accreted = { ...kept, accreted_at: 250 } satisfies AccretedRelic;
     expect(isAccreted(accreted)).toBe(true);

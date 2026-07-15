@@ -1,12 +1,33 @@
-import { createElement } from "react";
+import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import Codex from "../src/codex/Codex";
 import CodexAnnouncements from "../src/codex/CodexAnnouncements";
 import { mergeNewest, isGodVoice, organSignalsFor, sermonAudioKey } from "../src/codex/codexClient";
+import type { ObservedTranscript } from "../src/experience/types";
+import type { TempleState } from "../src/state/types";
 
 const e = (id: string, ts: number, organ: any, register: any, text = "x") =>
   ({ id, organ, register, text, offering_id: null, rite_id: null, created_at: ts });
+
+const CodexWithRite = Codex as ComponentType<{
+  entries: readonly ObservedTranscript[];
+  state: TempleState | null;
+  currentDreamRiteDate?: string | null;
+  onAmplitude: (amplitude: number) => void;
+  audioCtx: () => AudioContext;
+}>;
+
+function codexRow(markup: string, id: string): string {
+  const attribute = `data-codex-row="${id}"`;
+  const attributeAt = markup.indexOf(attribute);
+  expect(attributeAt).toBeGreaterThanOrEqual(0);
+  const start = markup.lastIndexOf("<figure", attributeAt);
+  const end = markup.indexOf("</figure>", attributeAt);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(attributeAt);
+  return markup.slice(start, end + "</figure>".length);
+}
 
 describe("codex client", () => {
   it("renders canonical observed rows immediately with one polite announcement surface", () => {
@@ -27,6 +48,53 @@ describe("codex client", () => {
     expect(html).toContain(`dateTime="${new Date(entry.created_at).toISOString()}"`);
     expect(html.match(/aria-live="polite"/g)).toHaveLength(1);
     expect(html).not.toContain("data-announcement-id");
+  });
+
+  it("gives current render status only to the exact archive rite when narratives repeat", () => {
+    const narrative = "The same words returned on two different nights.";
+    const historical = {
+      entry: { ...e("dream-old", 100, "DREAM", "verse", narrative), rite_id: "2030-01-01" },
+      observation: "recorded" as const,
+    };
+    const current = {
+      entry: { ...e("dream-current", 200, "DREAM", "verse", narrative), rite_id: "2030-01-02" },
+      observation: "recorded" as const,
+    };
+    const state: TempleState = {
+      phase: "live",
+      asleep: false,
+      degraded: false,
+      countdown_to: null,
+      communicants_today: 0,
+      spend_state: "ok",
+      mint: "mint",
+      vitals: { state: "calm", buys: 0, sells: 0, holders: 0 },
+      rite: null,
+      dream: {
+        narrative,
+        video_key: "dream/current.mp4",
+        wakers: ["current-waker"],
+        created_at: 150,
+      },
+    };
+    const render = (currentDreamRiteDate: string | null) => renderToStaticMarkup(createElement(
+      CodexWithRite,
+      {
+        entries: [historical, current],
+        state,
+        currentDreamRiteDate,
+        onAmplitude: () => undefined,
+        audioCtx: () => { throw new Error("audio stays opt-in during rendering"); },
+      },
+    ));
+
+    const identified = render("2030-01-02");
+    expect(codexRow(identified, "dream-old")).toContain('data-plate-pending="true"');
+    expect(codexRow(identified, "dream-current")).toContain('data-plate-pending="false"');
+
+    const ambiguous = render(null);
+    expect(codexRow(ambiguous, "dream-old")).toContain('data-plate-pending="true"');
+    expect(codexRow(ambiguous, "dream-current")).toContain('data-plate-pending="true"');
   });
 
   it("merges newest-first pages into one chronological, de-duplicated list", () => {

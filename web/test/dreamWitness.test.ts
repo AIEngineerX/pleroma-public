@@ -36,6 +36,10 @@ describe("recorded DREAM witness", () => {
     expect(dreamReplayFromNavigationState(null)).toBeNull();
     expect(dreamReplayFromNavigationState({ dreamReplay: { ...replay, createdAt: Number.NaN } }))
       .toBeNull();
+    expect(dreamReplayFromNavigationState({ dreamReplay: { ...replay, createdAt: -1 } }))
+      .toBeNull();
+    expect(dreamReplayFromNavigationState({ dreamReplay: { ...replay, createdAt: 8.64e15 + 1 } }))
+      .toBeNull();
     expect(dreamReplayFromNavigationState({ dreamReplay: { ...replay, riteDate: "not-a-date" } }))
       .toBeNull();
     expect(dreamReplayFromNavigationState({ dreamReplay: { ...replay, narrative: "" } }))

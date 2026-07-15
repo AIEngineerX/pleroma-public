@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import type { DreamArchiveEntry } from "../src/state/types";
 import {
   executeD1,
+  putDreamVideo,
+  putRelicPng,
   resetStack,
   seedDream,
   seedTranscript,
@@ -57,6 +59,34 @@ async function expectFullSeraphTargetExtents(body: ReturnType<Page["locator"]>):
   expect(extents[2][2]).toBeLessThan(0.1);
   expect(extents[3][2]).toBeLessThan(0.1);
   expect(extents[4][0]).toBeLessThan(0.1);
+}
+
+async function observeFinalReviewCommands(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const body = document.querySelector<HTMLElement>("[data-body-renderer]");
+    if (body === null) throw new Error("body renderer is missing");
+    const state = window as typeof window & {
+      __finalReviewCommands?: { active: string[]; completed: string[] };
+    };
+    state.__finalReviewCommands = { active: [], completed: [] };
+    const record = () => {
+      const evidence = state.__finalReviewCommands!;
+      const active = body.dataset.commandId;
+      const completed = body.dataset.completedId;
+      if (active && evidence.active.at(-1) !== active) evidence.active.push(active);
+      if (completed && evidence.completed.at(-1) !== completed) evidence.completed.push(completed);
+    };
+    record();
+    new MutationObserver(record).observe(body, { attributes: true });
+  });
+}
+
+async function finalReviewCompletions(page: Page): Promise<string[]> {
+  return page.evaluate(() => (
+    (window as typeof window & {
+      __finalReviewCommands?: { completed: string[] };
+    }).__finalReviewCommands?.completed ?? []
+  ));
 }
 
 test.beforeEach(() => resetStack());
@@ -142,11 +172,13 @@ test("live Temple carries a witnessed Plate through renderer loss and a later sa
   const liveId = "task9-live-dream-with-real-plate";
   const liveNarrative = "The five names close around the mark and become one posture.";
   const liveCreatedAt = Date.now();
+  const currentVideoKey = "dream/task9-current-duplicate.mp4";
+  putDreamVideo(currentVideoKey);
   seedDream({
     id: "01JH0000000000000000000002",
     rite_date: RITE_DATE,
     narrative: liveNarrative,
-    video_key: null,
+    video_key: currentVideoKey,
     wakers: [],
     status: "composed",
     created_at: liveCreatedAt,
@@ -175,6 +207,8 @@ test("live Temple carries a witnessed Plate through renderer loss and a later sa
   await expect(plate).toHaveAttribute("data-dream-identity", "confirmed");
   await expect(plate).toHaveAttribute("data-dream-presentation", "concealed");
   await expect(plate).toBeHidden();
+  await expect(page.locator(`[data-codex-row="${liveId}"]`))
+    .toHaveAttribute("data-plate-pending", "false");
   expect(dreamIdentityRequests).toBe(2);
 
   await loseWebgl(body);
@@ -207,12 +241,18 @@ test("live Temple carries a witnessed Plate through renderer loss and a later sa
 
   await expect(page.locator(`[data-codex-row="${laterRejectedId}"]`))
     .toHaveAttribute("data-observation", "live", { timeout: 10_000 });
+  await expect(page.locator(`[data-codex-row="${laterRejectedId}"]`))
+    .toHaveAttribute("data-plate-pending", "true");
+  await expect(page.locator(`[data-codex-row="${liveId}"]`))
+    .toHaveAttribute("data-plate-pending", "false");
   await expect(settled).toHaveAttribute("data-seraph", "converged");
   await expect(settled).toHaveAttribute("data-seraph-sequence-count", "3");
   await expect(plate).toHaveAttribute("data-dream-identity", "rejected");
   await expect(plate).toHaveAttribute("data-dream-presentation", "ordinary");
   await expect(plate).toBeVisible();
-  expect(dreamIdentityRequests).toBe(3);
+  // Current-Dream rite resolution and live confirmation share one authoritative archive page;
+  // the later wrong-rite command reuses that exact state-Dream page instead of refetching it.
+  expect(dreamIdentityRequests).toBe(2);
 
   await expect(settled).toHaveAttribute("data-seraph", "five", { timeout: 7_000 });
   await expect(settled).toHaveAttribute("data-completed-id", `converge:${laterRejectedId}`);
@@ -220,6 +260,176 @@ test("live Temple carries a witnessed Plate through renderer loss and a later sa
   await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
   await expect(plate).toBeVisible();
   await expect(plate).toContainText(liveNarrative);
+});
+
+test("twelve same-rite accretions drain before one live DREAM and later speech", async ({ page }, testInfo) => {
+  test.setTimeout(80_000);
+  executeD1(`
+    UPDATE config SET value = '1' WHERE key = 'launched';
+    INSERT INTO config (key, value)
+    VALUES ('pulse_mint', 'So11111111111111111111111111111111111111112');
+  `);
+  const keptAt = Date.now() - 1_000;
+  const relics = Array.from({ length: 12 }, (_, index) => ({
+    id: `final-review-relic-${index}`,
+    offeringId: `01JZ${String(index).padStart(22, "0")}`,
+    accretedAt: keptAt + 100 + index,
+  }));
+  for (const relic of relics) putRelicPng(relic.offeringId);
+  executeD1(`
+    INSERT INTO relics (id, offering_id, wallet, summary, rite_id, kept_at, genesis, accreted_at)
+    VALUES ${relics.map((relic, index) => (
+      `('${relic.id}', '${relic.offeringId}', NULL, 'same-rite witness ${index}', `
+      + `'${RITE_DATE}', ${keptAt + index}, 0, NULL)`
+    )).join(",\n")};
+  `);
+
+  await page.goto("/");
+  const body = page.locator("[data-body-renderer]").first();
+  await expect(page.locator("[data-reliquary-offering]")).toHaveCount(12, { timeout: 10_000 });
+  await expect(body).toHaveAttribute("data-relic-count", "0");
+  await observeFinalReviewCommands(page);
+
+  executeD1(`
+    UPDATE relics
+       SET accreted_at = CASE id
+         ${relics.map((relic) => `WHEN '${relic.id}' THEN ${relic.accretedAt}`).join("\n")}
+       END;
+  `);
+  const dreamId = "final-review-twelve-relic-dream";
+  const dreamNarrative = "Twelve kept marks arrive before Sophia closes the living rite.";
+  const dreamCreatedAt = keptAt + 1_000;
+  seedDream({
+    id: "01JH0000000000000000000091",
+    rite_date: RITE_DATE,
+    narrative: dreamNarrative,
+    video_key: null,
+    wakers: [],
+    status: "composed",
+    created_at: dreamCreatedAt,
+  });
+  seedTranscript({
+    id: dreamId,
+    organ: "DREAM",
+    register: "verse",
+    text: dreamNarrative,
+    offering_id: null,
+    rite_id: RITE_DATE,
+    created_at: dreamCreatedAt,
+  });
+  const speechId = "final-review-after-twelve-speech";
+  seedTranscript({
+    id: speechId,
+    organ: "TONGUE",
+    register: "sermon",
+    text: "After the twelve marks, the Tongue resumes its measured witness.",
+    offering_id: null,
+    rite_id: RITE_DATE,
+    created_at: dreamCreatedAt + 1,
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(page.locator(`[data-codex-row="${dreamId}"]`))
+    .toHaveAttribute("data-observation", "live", { timeout: 10_000 });
+  const expectedAccretions = relics.map(
+    (relic) => `accrete:${relic.id}:${relic.accretedAt}`,
+  );
+  const convergeId = `converge:${dreamId}`;
+  const speechCommandId = `utterance:live:${speechId}`;
+  await expect.poll(async () => (await finalReviewCompletions(page)).filter(
+    (id) => expectedAccretions.includes(id),
+  ).length, { timeout: 45_000 }).toBe(12);
+  await expect.poll(() => finalReviewCompletions(page), { timeout: 20_000 })
+    .toContain(speechCommandId);
+
+  const completed = await finalReviewCompletions(page);
+  expect(new Set(completed.filter((id) => expectedAccretions.includes(id))).size).toBe(12);
+  for (const id of expectedAccretions) expect(completed.indexOf(id)).toBeLessThan(completed.indexOf(convergeId));
+  expect(completed.filter((id) => id === convergeId)).toHaveLength(1);
+  expect(completed.indexOf(convergeId)).toBeLessThan(completed.indexOf(speechCommandId));
+  await expect(body).toHaveAttribute("data-seraph-sequence-count", "1");
+  await expect(body).toHaveAttribute("data-relic-count", "12");
+  await expect(page.locator(`[data-codex-row="${speechId}"]`))
+    .toHaveAttribute("data-observation", "live");
+  await testInfo.attach("twelve-relic-dream-complete", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
+});
+
+test("a live DREAM recovers after repeated archive failures under the same identity", async ({ page }, testInfo) => {
+  test.setTimeout(55_000);
+  executeD1(`
+    UPDATE config SET value = '1' WHERE key = 'launched';
+    INSERT INTO config (key, value)
+    VALUES ('pulse_mint', 'So11111111111111111111111111111111111111112');
+  `);
+  const createdAt = Date.now();
+  executeD1(`
+    INSERT INTO dreams (id, rite_date, narrative, video_prompt, video_key, wakers, status, created_at)
+    VALUES (
+      '01JH0000000000000000000092', '2030-01-01', 'An older malformed archive row.',
+      'An older malformed prompt.', NULL, 'not-json', 'composed', ${createdAt - 1}
+    );
+  `);
+  const narrative = "Sophia remains one identity while the archive passage is repaired.";
+  seedDream({
+    id: "01JH0000000000000000000093",
+    rite_date: RITE_DATE,
+    narrative,
+    video_key: null,
+    wakers: [],
+    status: "composed",
+    created_at: createdAt,
+  });
+  const dreamResponses: Array<{ status: number; at: number }> = [];
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/api/dreams") {
+      dreamResponses.push({ status: response.status(), at: Date.now() });
+    }
+  });
+
+  await page.goto("/");
+  const body = page.locator("[data-body-renderer]").first();
+  const plate = page.locator('section[aria-label="the dream"]');
+  await expect(plate).toContainText(narrative, { timeout: 10_000 });
+  await observeFinalReviewCommands(page);
+  const liveId = "final-review-transient-dream";
+  seedTranscript({
+    id: liveId,
+    organ: "DREAM",
+    register: "verse",
+    text: narrative,
+    offering_id: null,
+    rite_id: RITE_DATE,
+    created_at: createdAt,
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(page.locator(`[data-codex-row="${liveId}"]`))
+    .toHaveAttribute("data-observation", "live", { timeout: 10_000 });
+  await expect(plate).toHaveAttribute("data-dream-identity", "pending");
+  await expect.poll(() => dreamResponses.filter((response) => response.status === 500).length, {
+    timeout: 10_000,
+  }).toBeGreaterThanOrEqual(4);
+  const failures = dreamResponses.filter((response) => response.status === 500);
+  expect(failures.at(-1)!.at - failures[0].at).toBeGreaterThan(750);
+  await expect(plate).toHaveAttribute("data-dream-presentation", "ordinary");
+
+  executeD1(`UPDATE dreams SET wakers = '[]' WHERE id = '01JH0000000000000000000092';`);
+  await expect.poll(() => dreamResponses.some((response) => response.status === 200), {
+    timeout: 12_000,
+  }).toBe(true);
+  await expect(plate).toHaveAttribute("data-dream-identity", "confirmed", { timeout: 5_000 });
+  await expect(body).toHaveAttribute("data-seraph-sequence-count", "1");
+  const convergeId = `converge:${liveId}`;
+  await expect.poll(() => finalReviewCompletions(page), { timeout: 12_000 }).toContain(convergeId);
+  expect((await finalReviewCompletions(page)).filter((id) => id === convergeId)).toHaveLength(1);
+  await expect(plate).toHaveAttribute("data-dream-presentation", "revealed");
+  await testInfo.attach("transient-dream-recovered", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
 });
 
 test("a completed WebGL convergence keeps its semantic body after later context loss", async ({ page }) => {
