@@ -17,6 +17,8 @@ test("offers the exact real preview PNG and creates only a pending receipt", asy
 
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
   await expect(seal).toBeVisible({ timeout: 5_000 });
+  const originalSeal = await seal.elementHandle();
+  expect(originalSeal).not.toBeNull();
   await seal.scrollIntoViewIfNeeded();
   const sealBox = (await seal.boundingBox())!;
   expect(sealBox.width).toBeGreaterThanOrEqual(44);
@@ -41,7 +43,9 @@ test("offers the exact real preview PNG and creates only a pending receipt", asy
   await page.waitForTimeout(180);
   await page.mouse.move(sealBox.x + sealBox.width * 0.68, sealBox.y + sealBox.height * 0.38, { steps: 5 });
   await page.mouse.up();
-  await expect.poll(() => seal.evaluate((node) => (node as HTMLButtonElement).hasPointerCapture(1))).toBe(false);
+  await expect.poll(() => originalSeal!.evaluate(node => (
+    !node.isConnected || !(node as HTMLButtonElement).hasPointerCapture(1)
+  ))).toBe(true);
 
   const preview = page.locator("img[data-threshold-preview]");
   await expect(preview).toBeVisible();
@@ -91,6 +95,8 @@ test("offers the exact real preview PNG and creates only a pending receipt", asy
     (window as typeof window & { __accretionCommands?: string[] }).__accretionCommands ?? []
   ))).toEqual([]);
   await expect(page.locator(`[data-relic-offering="${offeringId}"]`)).toHaveCount(0);
+  await pending.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `e2e/__shots__/threshold-receipt-${test.info().project.name}.png` });
 });
 
 test("keyboard hold creates a preview and letting it fade releases the threshold", async ({ page }) => {
@@ -119,6 +125,127 @@ test("keyboard hold creates a preview and letting it fade releases the threshold
     }
   }, previewUrl)).toBe(false);
   await expect(seal).toBeVisible();
+});
+
+test("the short mobile threshold remains one usable, scrollable rite through submission", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-390", "short threshold geometry is a mobile concern");
+  await page.setViewportSize({ width: 390, height: 667 });
+  await page.goto("/");
+
+  const threshold = page.locator("[data-threshold-offering]");
+  const originalThreshold = await threshold.elementHandle();
+  const seal = page.getByRole("button", { name: "hold the threshold seal" });
+  await seal.focus();
+  await page.keyboard.down("Enter");
+  await page.waitForTimeout(140);
+  await page.keyboard.up("Enter");
+
+  await expect(threshold).toHaveAttribute("data-threshold-phase", "preview");
+  expect(await threshold.evaluate((node, original) => node === original, originalThreshold)).toBe(true);
+  expect(await threshold.evaluate(node => ({
+    position: getComputedStyle(node).position,
+    overflowY: getComputedStyle(node).overflowY,
+    top: node.getBoundingClientRect().top,
+    height: node.getBoundingClientRect().height,
+  }))).toEqual({ position: "fixed", overflowY: "auto", top: 0, height: 667 });
+
+  const previewParts = [
+    page.locator("img[data-threshold-preview]"),
+    page.locator("[data-threshold-actions]"),
+    page.locator("[data-threshold-terms]"),
+    page.getByRole("button", { name: "connect a wallet" }),
+  ];
+  for (const part of previewParts) {
+    await part.scrollIntoViewIfNeeded();
+    const box = (await part.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(667);
+  }
+  for (const action of await threshold.locator("button").all()) {
+    const box = (await action.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  const wallet = page.getByRole("button", { name: "connect a wallet" });
+  await expect(wallet).toHaveAttribute("aria-expanded", "false");
+  const chooserId = await wallet.getAttribute("aria-controls");
+  expect(chooserId).toBeTruthy();
+  await wallet.click();
+  await expect(wallet).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(`[id="${chooserId}"]`)).toBeVisible();
+  await expect(page.getByRole("status", { name: "" }).filter({ hasText: "no wallet found" })).toBeVisible();
+
+  await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>("[data-threshold-offering]")!;
+    const target = window as typeof window & {
+      __thresholdSubmitting?: { position: string; overflowY: string; height: number; scrollHeight: number };
+    };
+    new MutationObserver(() => {
+      if (root.dataset.thresholdPhase !== "submitting") return;
+      target.__thresholdSubmitting = {
+        position: getComputedStyle(root).position,
+        overflowY: getComputedStyle(root).overflowY,
+        height: root.getBoundingClientRect().height,
+        scrollHeight: root.scrollHeight,
+      };
+    }).observe(root, { attributes: true, attributeFilter: ["data-threshold-phase"] });
+  });
+  await page.getByRole("button", { name: "offer this imprint" }).click();
+  await expect(page.locator('[data-receipt-stage="pending"]'))
+    .toContainText("awaiting the Eye", { timeout: 10_000 });
+  const submitting = await page.evaluate(() => (
+    window as typeof window & {
+      __thresholdSubmitting?: { position: string; overflowY: string; height: number; scrollHeight: number };
+    }
+  ).__thresholdSubmitting);
+  expect(submitting).toBeDefined();
+  expect(submitting).toMatchObject({ position: "fixed", overflowY: "auto", height: 667 });
+  expect(submitting!.scrollHeight).toBeGreaterThanOrEqual(submitting!.height);
+  expect(await threshold.evaluate((node, original) => node === original, originalThreshold)).toBe(true);
+});
+
+test("the mobile preview is a modal focus boundary and restores the threshold seal", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-390", "threshold overlay semantics are a mobile concern");
+  await page.goto("/");
+
+  const seal = page.getByRole("button", { name: "hold the threshold seal" });
+  await seal.focus();
+  await page.keyboard.down("Enter");
+  await page.waitForTimeout(140);
+  await page.keyboard.up("Enter");
+
+  const dialog = page.getByRole("dialog", { name: "threshold offering preview" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect(page.locator("[data-body-page]")).toHaveAttribute("inert", "");
+  await expect(page.locator("[data-reading-column]")).toHaveAttribute("inert", "");
+  await expect(page.locator(".temple-sound-toggle")).toHaveAttribute("inert", "");
+  await expect(page.getByRole("button", { name: "play the temple sound" })).toHaveCount(0);
+  const modalLayers = await page.evaluate(() => ({
+    host: Number(getComputedStyle(document.querySelector<HTMLElement>("[data-threshold-host]")!).zIndex),
+    sound: Number(getComputedStyle(document.querySelector<HTMLElement>(".temple-sound-toggle")!).zIndex),
+  }));
+  expect(modalLayers.host).toBeGreaterThan(modalLayers.sound);
+
+  const offer = dialog.getByRole("button", { name: "offer this imprint" });
+  const wallet = dialog.getByRole("button", { name: "connect a wallet" });
+  await expect(offer).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(wallet).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(offer).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  const restoredSeal = page.getByRole("button", { name: "hold the threshold seal" });
+  await expect(restoredSeal).toBeFocused();
+  await expect(page.locator("[data-body-page]")).not.toHaveAttribute("inert", "");
+  await expect(page.locator("[data-reading-column]")).not.toHaveAttribute("inert", "");
+  await expect(page.locator(".temple-sound-toggle")).not.toHaveAttribute("inert", "");
+  await expect(page.getByRole("button", { name: "mute the temple" })).toBeVisible();
 });
 
 test("announces one genuine receipt transition without replacing the stable receipt ledger", async ({ page }) => {

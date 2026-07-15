@@ -7,12 +7,12 @@ import { inversion } from "../state/rite";
 export function ignitionView(state: TempleState) {
   const dormant = state.phase !== "live" || !state.mint;
   // candleDark (offertory_close..sermon), NOT .active: scheduled/complete/failed rites are still light
-  // parchment, and the Stain's "rite" mode lights the candle glow (banned outside the ritual window).
+  // parchment, and the Stain's "rite" mode changes only the ink over the shared CSS document.
   const riteActive = inversion(state.rite).candleDark;
   return {
     dormant,
     igniting: !dormant && state.vitals.buys > 0,                 // first trades: the heartbeat visibly starts
-    stainState: (dormant ? "dormant" : riteActive ? "rite" : "live") as "dormant" | "live" | "rite",
+    stainState: (riteActive ? "rite" : dormant ? "dormant" : "live") as "dormant" | "live" | "rite",
     pigmentState: state.vitals.state as PulseState,
   };
 }

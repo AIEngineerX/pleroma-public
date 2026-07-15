@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { BODY_ANCHORS, anchorsFromSwarmCentroids } from "../src/stain/bodyRenderer";
 import {
@@ -13,7 +14,19 @@ import {
   simResFor,
 } from "../src/stain/stainSim";
 
+const stainSource = readFileSync(new URL("../src/stain/stainSim.ts", import.meta.url), "utf8");
+const compositeSource = stainSource.slice(
+  stainSource.indexOf("const COMPOSITE"),
+  stainSource.indexOf("interface FBO"),
+);
+
 describe("Stain quality tiers", () => {
+  it("composites only transparent premultiplied marks onto the CSS document", () => {
+    expect(compositeSource).not.toMatch(/u_ground|u_candle|u_vignette|\bfiber\s*\(/);
+    expect(compositeSource).not.toMatch(/fragColor\s*=\s*vec4\([^;]+,\s*1\.0\s*\)/);
+    expect(compositeSource).toMatch(/fragColor\s*=\s*vec4\(markColor\s*\*\s*alpha,\s*alpha\s*\)/);
+  });
+
   it("resolves presentation-only emergence over 2.5 seconds with an exponential ease", () => {
     expect(ARRIVAL_DURATION_MS).toBe(2_500);
     expect(arrivalProgress(0)).toBe(0);

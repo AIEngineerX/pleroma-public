@@ -114,6 +114,7 @@ export function SettledBody({
       preserveAspectRatio="xMidYMax meet"
       className={`swarm-settled${ambientBreath ? " swarm-settled--breathing" : ""} absolute inset-0 z-0 h-full w-full pointer-events-none`}
       data-body-renderer="svg"
+      data-composite-ground="transparent"
       data-arrival="settled"
       data-arrival-progress="1.000"
       data-active-organ={signal?.organ}

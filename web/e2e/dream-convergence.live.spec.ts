@@ -168,7 +168,9 @@ test("live Temple carries a witnessed Plate through renderer loss and a later sa
   await expect(verse).toContainText(liveNarrative, { timeout: 10_000 });
   await expect(verse).toHaveAttribute("aria-hidden", "true");
   await expect(body).toHaveAttribute("data-seraph-timing", "1800/6000/2400");
-  await expect(body).toHaveAttribute("data-seraph-phase", "gather");
+  // Identity and utterance checks above may outlast the 1.8s gather on a loaded real stack.
+  // Both gather and hold are valid concealed-Plate phases; dissolve/five are not.
+  await expect(body).toHaveAttribute("data-seraph-phase", /^(gather|hold)$/);
   await expect(body).toHaveAttribute("data-seraph-sequence-count", "2");
   await expect(plate).toHaveAttribute("data-dream-identity", "confirmed");
   await expect(plate).toHaveAttribute("data-dream-presentation", "concealed");

@@ -271,12 +271,13 @@ export default function Temple() {
               onSeraphPhaseChange={onSeraphPhaseChange}
             />
             {holdIndicator}
-            <div
-              ref={attachThresholdHost}
-              data-threshold-host="stable"
-              className="temple-threshold-host"
-            />
           </section>
+
+          <div
+            ref={attachThresholdHost}
+            data-threshold-host="stable"
+            className="temple-threshold-host"
+          />
 
           <div className="temple-reading-column" data-reading-column>
             <TempleLore />
@@ -306,7 +307,7 @@ export default function Temple() {
 
             {replayWitness !== null ? <DreamWitness dream={replayWitness} /> : null}
 
-            <section data-section="tallies" className="temple-folio temple-reading-section">
+            <section data-section="tallies" className="temple-folio temple-reading-section temple-tallies">
               <h2 className="temple-section-label">{copy.tallies.toUpperCase()}</h2>
               <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null} />
             </section>

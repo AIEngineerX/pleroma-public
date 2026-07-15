@@ -3,7 +3,7 @@ import type { inversion } from "../state/rite";
 
 type View = ReturnType<typeof inversion>;
 
-// Pure: the root class set. rite-active is the ONLY place candle-dark ground/ink is allowed
+// Pure: the root class set. rite-active is the only place the document-dark ground/ink is allowed
 // (Plan 03 Global) — everywhere else the page stays light parchment.
 export function inversionClasses(view: View): string {
   return view.candleDark ? "rite-active" : "";

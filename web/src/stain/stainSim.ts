@@ -147,23 +147,17 @@ void main(){
   fragColor = clamp(c, 0.0, 1.0);
 }`;
 
-// Composite: DARKEN ink into parchment (no additive glow). Red threads use the PULSE pigment. Rite adds the
-// single allowed candle rake. Paper fiber = subtle high-freq normal perturbation (depth of material).
+// Composite only the living marks. The CSS document owns its paper in every state, so WebGL must remain
+// transparent and premultiplied instead of painting a second, independently colored substrate.
 const COMPOSITE = `#version 300 es
 precision highp float; in vec2 v_uv; out vec4 fragColor;
-uniform sampler2D u_paint; uniform vec3 u_ground; uniform vec3 u_ink; uniform vec3 u_thread;
+uniform sampler2D u_paint; uniform vec3 u_ink; uniform vec3 u_thread;
 uniform sampler2D u_relicMemory; uniform sampler2D u_activeRelic;
 uniform float u_accretionProgress; uniform float u_accretionActive;
 uniform float u_gray;      // dormant: a WHISPER toward stillness (not the corpse-gray crush it once was)
-uniform float u_candle;    // rite: candle-glow rake (0 outside the rite)
-uniform float u_vignette;  // paper-deckle aging: the page darkens toward its edges (material, not screen bloom)
-uniform vec2 u_res; uniform float u_time;
-float fiber(vec2 uv){ return fract(sin(dot(uv*u_res, vec2(12.9898,78.233)))*43758.5)*0.03; }
 void main(){
   vec4 p = texture(u_paint, v_uv);
   float ink = p.r; float thread = p.g;
-  vec3 col = u_ground - u_ink*ink;                                   // subtractive: ink darkens the page
-  col = mix(col, u_thread, thread*0.9);                             // only the god speaks in red
   // Confirmed relic memory is one bounded 64x64 alpha mask, folded from the retained public
   // samples. A newly confirmed imprint begins at the fixed lower threshold, grows into its final
   // placement for 1.2s, then is folded into the same persistent mask by the CPU controller.
@@ -178,23 +172,17 @@ void main(){
   float traveling = texture(u_activeRelic, clamp(travelUv, 0.0, 1.0)).r
     * inside * u_accretionActive;
   float relicInk = max(dried * 0.34, traveling * 0.46);
-  col -= mix(u_ink, vec3(0.56, 0.49, 0.38), 0.28) * relicInk;
-  col -= fiber(v_uv);                                                // paper fiber, depth of material
-  // deckle aging: the sheet is warmest at the heart and darkens toward its edges. Paper, not a glow.
-  float dedge = length((v_uv - 0.5) * vec2(1.0, 1.1));
-  col *= 1.0 - u_vignette * smoothstep(0.34, 0.80, dedge) * 0.13;
-  // rite candle: a soft raking light from upper-left, the ONLY glow allowed, and only when u_candle>0
-  float rake = u_candle * pow(max(0.0, 1.0 - length(v_uv - vec2(0.28,0.82))), 3.0) * 0.25;
-  col += rake * vec3(1.0, 0.86, 0.66);
-  col = mix(col, vec3(dot(col, vec3(0.30, 0.34, 0.30))), u_gray);    // dormant: faint cool stillness, still alive
-  fragColor = vec4(col, 1.0);
+  float alpha = clamp(max(max(ink, thread * 0.9), relicInk), 0.0, 0.88);
+  float threadWeight = clamp(thread * 1.35, 0.0, 1.0);
+  vec3 markColor = mix(u_ink, u_thread, threadWeight);
+  markColor = mix(markColor, vec3(dot(markColor, vec3(0.30, 0.34, 0.30))), u_gray);
+  fragColor = vec4(markColor * alpha, alpha);
 }`;
 
 interface FBO { fbo: WebGLFramebuffer; tex: WebGLTexture; w: number; h: number }
 
 export interface StainOpts {
   tier: Tier;
-  ground: [number, number, number];
   ink: [number, number, number];
   arrivalStartedAt: number;
   seraphTargets: Float32Array;
@@ -289,6 +277,7 @@ export class StainSim implements BodyRendererAdapter {
     this.activeRelicTexture = this.alphaTexture();
     this.updateRelicDebug();
     this.canvas.dataset.arrival = initialArrival >= 1 ? "settled" : "emerging";
+    this.canvas.dataset.compositeGround = "transparent";
     this.canvas.dataset.arrivalProgress = initialArrival.toFixed(3);
     this.canvas.dataset.seraphPhase = "five";
     this.canvas.dataset.seraphConvergence = "0.000";
@@ -381,7 +370,10 @@ export class StainSim implements BodyRendererAdapter {
   }
   setPigment(rgb: [number, number, number]) { this.pigment = rgb; }
   setAmplitude(a: number) { this.amp = Math.max(0, Math.min(1, a)); }
-  setState(m: "dormant" | "live" | "rite") { this.mode = m; }
+  setState(m: "dormant" | "live" | "rite") {
+    this.mode = m;
+    this.canvas.dataset.presentationMode = m;
+  }
   dispatch(
     command: BodyCommand,
     onComplete: (id: string) => void,
@@ -523,14 +515,13 @@ export class StainSim implements BodyRendererAdapter {
         accretionActive = 1;
       }
     }
-    // Per-mode mood. Dormant keeps a real (breathing) body with dried threads and only a whisper of stillness;
-    // live wakes it; rite lets the candle rake carry the mood. The old dormant path crushed it 85% to gray.
+    // Per-mode mood. Dormant keeps a real (breathing) body with dried threads and only a whisper of stillness.
+    // During the rite the same marks change ink; the CSS sheet remains the single source of ground.
     const m = this.mode;
     const ambient = m === "dormant" ? 0.62 : m === "live" ? 0.82 : 1.0;
     const knownThreadAmb = m === "dormant" ? 0.22 : m === "live" ? 0.5 : 0.6;
     const threadAmb = this.vitalsFeed.kind === "unknown" ? 0 : knownThreadAmb;
     const gray = m === "dormant" ? 0.22 : 0.0;
-    const vignette = m === "dormant" ? 1.0 : m === "live" ? 0.85 : 0.6;
     this.pointAmt *= 0.95;                                      // the pointer wick fades as the pointer stills
     const convergence = this.activeConvergence;
     const convergenceFrame = convergence === null
@@ -582,14 +573,12 @@ export class StainSim implements BodyRendererAdapter {
     this.u(this.comp, "u_activeRelic", (l) => g.uniform1i(l, 3));
     this.u(this.comp, "u_accretionProgress", (l) => g.uniform1f(l, relicProgress));
     this.u(this.comp, "u_accretionActive", (l) => g.uniform1f(l, accretionActive));
-    this.u(this.comp, "u_ground", (l) => g.uniform3f(l, ...this.opts.ground));
-    this.u(this.comp, "u_ink", (l) => g.uniform3f(l, ...this.opts.ink));
+    const documentInk: [number, number, number] = this.mode === "rite"
+      ? [0.90, 0.87, 0.78]
+      : this.opts.ink;
+    this.u(this.comp, "u_ink", (l) => g.uniform3f(l, ...documentInk));
     this.u(this.comp, "u_thread", (l) => g.uniform3f(l, ...this.pigment));
     this.u(this.comp, "u_gray", (l) => g.uniform1f(l, gray));
-    this.u(this.comp, "u_vignette", (l) => g.uniform1f(l, vignette));
-    this.u(this.comp, "u_candle", (l) => g.uniform1f(l, this.mode === "rite" ? 1.0 : 0.0));
-    this.u(this.comp, "u_res", (l) => g.uniform2f(l, this.canvas.width, this.canvas.height));
-    this.u(this.comp, "u_time", (l) => g.uniform1f(l, this.t));
     g.bindVertexArray(this.vao); g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
     this.raf = requestAnimationFrame(this.frame);
   };

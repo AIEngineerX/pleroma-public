@@ -12,8 +12,6 @@ import { copy } from "../lib/copy";
 // /canon/dreams#YYYY-MM-DD is its permalink.
 const API_BASE = resolveApiBase(import.meta.env);
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
-const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 function caption(d: DreamArchiveEntry): string {
   if (d.video_key) return "generative replay";
   return d.status === "rendering" ? "plate rendering" : "plate pending";
@@ -24,7 +22,6 @@ export default function DreamArchive() {
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const reduced = reducedMotion();
 
   const load = useCallback(async (cursor: string | null) => {
     setLoading(true);
@@ -61,7 +58,7 @@ export default function DreamArchive() {
               {d.video_key ? (
                 <div className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
                   <video className="w-full h-full object-cover" src={`${API_BASE}/api/${d.video_key}`}
-                    autoPlay={!reduced} loop muted playsInline controls={reduced} aria-label={d.narrative} />
+                    loop muted playsInline controls aria-label={d.narrative} />
                 </div>
               ) : (
                 <div className="dream-plate__media aspect-video overflow-hidden flex items-center">

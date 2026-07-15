@@ -23,9 +23,14 @@ describe("ignition", () => {
     const rite = { ...base, phase: "live" as const, mint: "Mint111", rite: { date: "d", phase: "sermon" as const } };
     expect(ignitionView(rite).stainState).toBe("rite");
   });
-  it("stays live (no candle) for a scheduled or terminal rite, since those are not candle-dark", () => {
-    // scheduled is still daylight (rite.ts); the Stain must NOT enter rite mode (its candle glow is banned
-    // outside the offertory_close..sermon window). This guards the .candleDark gate against a .active regression.
+  it("keeps the rite ink continuous even before market ignition", () => {
+    const rite = { ...base, rite: { date: "d", phase: "offertory_close" as const } };
+    expect(ignitionView(rite).dormant).toBe(true);
+    expect(ignitionView(rite).stainState).toBe("rite");
+  });
+  it("stays live for a scheduled or terminal rite, since those are not document-dark", () => {
+    // scheduled is still daylight (rite.ts); the Stain must not enter rite mode outside the
+    // offertory_close..sermon window. This guards the .candleDark gate against an .active regression.
     for (const phase of ["scheduled", "complete", "failed"] as const) {
       const s = { ...base, phase: "live" as const, mint: "Mint111", rite: { date: "d", phase } };
       expect(ignitionView(s).stainState).toBe("live");

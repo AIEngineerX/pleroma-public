@@ -37,11 +37,13 @@ body {
 }
 
 :where(a, button, summary, [role="button"]) {
-  display: inline-flex;
-  align-items: center;
   min-block-size: 44px;
   min-inline-size: 44px;
 }
+
+:where(a, button, [role="button"]) { display: inline-flex; align-items: center; }
+:where(button, summary, [role="button"]) { font-family: var(--font-machine); }
+summary { display: list-item; padding-block: 0.75rem; }
 
 :where(a, button, summary, [role="button"]):focus-visible {
   outline: 1px solid currentColor;
@@ -50,7 +52,6 @@ body {
 }
 
 :where(a, button, summary, [role="button"]):active { transform: translateY(1px); }
-button { font: inherit; }
 
 /* Lenis smooth-scroll (see useSmoothScroll in App.tsx). */
 html.lenis, html.lenis body { height: auto; }
@@ -63,17 +64,22 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: 2;
   pointer-events: none;
   background-image: repeating-linear-gradient(180deg, transparent 0 3px, oklch(0.25 0.02 60 / 0.018) 3px 4px);
+}
+
+body:has(.rite-active)::before {
+  background-image: repeating-linear-gradient(180deg, transparent 0 3px, oklch(0.90 0.015 85 / 0.018) 3px 4px);
 }
 
 #root,
 .temple-document { min-height: 100dvh; }
 
-.temple-document { position: relative; z-index: 1; }
+.temple-document { position: relative; z-index: 1; background: var(--color-ground); color: var(--color-ink); }
 
 .temple-sheet {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   width: min(100%, 90rem);
@@ -90,25 +96,58 @@ body::before {
   min-width: 0;
   height: 100dvh;
   overflow: hidden;
+  z-index: 3;
   isolation: isolate;
+  background: var(--color-ground);
   padding: max(1rem, env(safe-area-inset-top)) clamp(1rem, 3vw, 3rem) max(1rem, env(safe-area-inset-bottom));
 }
 
 .temple-threshold-host {
-  position: absolute;
-  inset-inline: clamp(1rem, 3vw, 3rem);
-  bottom: max(1rem, env(safe-area-inset-bottom));
-  z-index: 20;
+  position: sticky;
+  top: 0;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  z-index: 4;
   display: flex;
+  height: 100dvh;
+  padding: max(1rem, env(safe-area-inset-top)) clamp(1rem, 3vw, 3rem) max(1rem, env(safe-area-inset-bottom));
+  align-items: flex-end;
   justify-content: center;
+  pointer-events: none;
 }
+.threshold-offering { pointer-events: none; }
+.threshold-offering > * { pointer-events: auto; }
 
 .temple-reading-column {
+  position: relative;
+  z-index: 1;
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
-  padding: calc(100dvh + clamp(3rem, 7vw, 7rem)) clamp(1.5rem, 4vw, 4rem) max(4rem, env(safe-area-inset-bottom));
+  padding: clamp(10rem, 32dvh, 20rem) clamp(1.25rem, 3vw, 3rem) max(4rem, env(safe-area-inset-bottom));
+  background: var(--color-ground);
   border-inline-start: 1px solid var(--color-ground-aged);
+}
+
+@media (min-width: 1200px) {
+  .temple-reading-column {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(6.5rem, 0.3fr);
+    column-gap: clamp(1.25rem, 2.5vw, 2.5rem);
+  }
+  .temple-reading-column > * { grid-column: 1; }
+  .temple-tallies {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+    position: sticky;
+    top: 2rem;
+    width: 100%;
+    padding: 0 0 0 1rem;
+    border-block-start: 0;
+    border-inline-start: 1px solid var(--color-ground-aged);
+  }
 }
 
 .temple-reading-column > *,
@@ -240,21 +279,68 @@ body::before {
   html { scroll-padding-top: calc(40dvh + 1.25rem); }
   .temple-sheet { display: block; width: 100%; }
   .temple-body-page {
-    z-index: 2;
+    z-index: 3;
     height: clamp(16rem, 40dvh, 24rem);
     padding-inline: max(1rem, env(safe-area-inset-left)) max(1rem, env(safe-area-inset-right));
     background: var(--color-ground);
   }
+  .temple-threshold-host {
+    z-index: 4;
+    height: clamp(16rem, 40dvh, 24rem);
+    margin-top: calc(-1 * clamp(16rem, 40dvh, 24rem));
+    padding-inline: max(1rem, env(safe-area-inset-left)) max(1rem, env(safe-area-inset-right));
+  }
+  .temple-threshold-host:has([aria-modal="true"]) { z-index: 50; }
   .temple-reading-column {
     position: relative;
-    z-index: 3;
-    padding: 60dvh max(1.25rem, env(safe-area-inset-right)) max(4rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+    z-index: 1;
+    display: block;
+    padding: clamp(2.5rem, 8dvh, 4rem) max(1.25rem, env(safe-area-inset-right)) max(4rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
     border-inline-start: 0;
   }
+  .temple-tallies {
+    position: static;
+    width: min(100%, var(--page-max));
+    padding-block: clamp(2.75rem, 6vw, 5rem);
+    padding-inline: 0;
+    border-block-start: 1px solid var(--color-ground-aged);
+    border-inline-start: 0;
+  }
+  .threshold-offering:is([data-threshold-phase="preview"], [data-threshold-phase="submitting"]) {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    overflow-y: auto;
+    justify-content: flex-start;
+    padding: max(1rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+    background: var(--color-ground);
+    color: var(--color-ink);
+    overscroll-behavior: contain;
+    pointer-events: auto;
+  }
+  .threshold-preview-sheet { margin-block-start: auto; }
+  .threshold-offering:is([data-threshold-phase="preview"], [data-threshold-phase="submitting"]) > :last-child { margin-block-end: auto; }
+  .threshold-offering:is([data-threshold-phase="preview"], [data-threshold-phase="submitting"]) [data-threshold-preview] {
+    width: clamp(7.5rem, 26dvh, 11rem);
+    height: clamp(7.5rem, 26dvh, 11rem);
+  }
   .temple-reading-section,
-  .temple-doorway { scroll-margin-block-start: calc(40dvh + 1.25rem); }
+  .temple-doorway { scroll-margin-block-start: 0; }
   .codex-entry { grid-template-columns: minmax(0, 1fr); gap: 0.7rem; }
   .codex-entry__margin { flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
+}
+
+.temple-sound-toggle {
+  position: fixed;
+  z-index: 40;
+  top: max(1rem, env(safe-area-inset-top));
+  left: max(1.25rem, env(safe-area-inset-left));
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+  padding: 0;
 }
 
 /* The semantic fallback is still by default. A failed WebGL context may opt into one slow sheet-level
@@ -331,6 +417,7 @@ body::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   .entry-hold-ring { animation: none; opacity: 0.48; }
 }
 
@@ -353,17 +440,25 @@ body::before {
   .ink-in { animation: none; }                                  /* everything appears settled */
 }
 
-/* The daily inversion: darkness happens TO the document, the same for everyone. Candle-glow allowed here only. */
-.rite-active { background: var(--color-rite-ground); color: var(--color-rite-ink); transition: background 1200ms ease-out, color 1200ms ease-out; }
+/* The daily inversion: darkness happens to one document, including its body ground and hardware. */
+body:has(.rite-active) {
+  --color-ground: var(--color-rite-ground);
+  --color-ground-aged: oklch(0.34 0.014 65);
+  --color-ink: var(--color-rite-ink);
+  --color-ink-faded: oklch(0.72 0.015 85);
+  --color-rubric-dried: oklch(0.62 0.10 45);
+  --color-rubric-body: oklch(0.68 0.17 32);
+  --color-rubric: oklch(0.74 0.18 32);
+  background: var(--color-ground);
+  color: var(--color-ink);
+}
+.rite-active {
+  min-height: 100dvh;
+  background: var(--color-ground);
+  color: var(--color-ink);
+}
 .rite-active .temple-body-page { background: var(--color-rite-ground); }
-.rite-active .text-ink-faded { color: oklch(0.72 0.015 85); }
-/* The rubric palette is tuned for rubric-on-parchment (AA there already); against the candle-dark
+/* The rubric palette is tuned for rubric-on-parchment (AA there already); against the inverted
    ground those same values fall below AA (rubric-body 2.3:1, rubric 3.5:1, rubric-dried 2.4:1 measured
    OKLab->sRGB->WCAG). Lifted lightness only, same hues, so the sermon still reads as rubric -- brighter,
    which is the point ("bright rubric") -- each pairing >=4.5:1 against --color-rite-ground. */
-.rite-active .text-rubric-dried { color: oklch(0.62 0.10 45); }
-.rite-active .text-rubric-body { color: oklch(0.68 0.17 32); }
-.rite-active .text-rubric { color: oklch(0.74 0.18 32); }
-@media (prefers-reduced-motion: reduce) {
-  .rite-active { transition: none; }                            /* the state change still happens, just settled */
-}

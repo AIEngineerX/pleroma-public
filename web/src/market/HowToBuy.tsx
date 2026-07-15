@@ -5,7 +5,7 @@ import { copy } from "../lib/copy";
 export default function HowToBuy({ mint }: { mint: string }) {
   return (
     <details className="font-machine text-xs text-ink-faded">
-      <summary className="min-h-11 flex items-center cursor-pointer">{copy.howToBuy}</summary>
+      <summary className="cursor-pointer">{copy.howToBuy}</summary>
       <ol className="list-decimal pl-5 pt-2 space-y-1">
         <li>Get a Solana wallet (Phantom or Solflare).</li>
         <li>Fund it with SOL.</li>

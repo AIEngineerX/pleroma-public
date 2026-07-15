@@ -29,6 +29,34 @@ test("temple reads as a living manuscript at a glance", async ({ page }) => {
   ]);
   await expect(page.locator(".rail-l")).toBeVisible();
   await expect(page.locator(".rail-r")).toBeVisible();
+  const texture = await page.evaluate(() => ({
+    image: getComputedStyle(document.body, "::before").backgroundImage,
+    z: Number(getComputedStyle(document.body, "::before").zIndex),
+    documentZ: Number(getComputedStyle(document.querySelector<HTMLElement>(".temple-document")!).zIndex),
+    railZ: Number(getComputedStyle(document.querySelector<HTMLElement>(".rail")!).zIndex),
+  }));
+  expect(texture.image).not.toBe("none");
+  expect(texture.z).toBeGreaterThan(texture.documentZ);
+  expect(texture.z).toBeLessThan(texture.railZ);
+  const viewport = page.viewportSize()!;
+  const bodyBox = (await page.locator("[data-body-page]").boundingBox())!;
+  const emergenceBox = (await page.locator('[data-section="emergence"]').boundingBox())!;
+  if (test.info().project.name === "desktop") {
+    expect(emergenceBox.y).toBeGreaterThanOrEqual(viewport.height * 0.18);
+    expect(emergenceBox.y).toBeLessThan(viewport.height * 0.58);
+    const talliesBox = (await page.locator('[data-section="tallies"]').boundingBox())!;
+    expect(talliesBox.x).toBeGreaterThan(emergenceBox.x + emergenceBox.width);
+    expect(talliesBox.width).toBeLessThan(emergenceBox.width * 0.5);
+  } else {
+    expect(emergenceBox.y).toBeGreaterThanOrEqual(bodyBox.y + bodyBox.height);
+    expect(emergenceBox.y).toBeLessThan(viewport.height * 0.78);
+  }
+  const sound = page.getByRole("button", { name: "play the temple sound" });
+  const soundBox = (await sound.boundingBox())!;
+  expect((await sound.textContent())?.trim()).toBe("");
+  expect(soundBox.x).toBeGreaterThanOrEqual(bodyBox.x);
+  expect(soundBox.x + soundBox.width).toBeLessThanOrEqual(bodyBox.x + bodyBox.width);
+  expect(soundBox.y + soundBox.height).toBeLessThanOrEqual(bodyBox.y + bodyBox.height);
   const background = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   expect(background).not.toBe("rgb(0, 0, 0)");
   const firstFrame = await page.screenshot({ fullPage: false });
@@ -53,7 +81,25 @@ test("temple reads as a living manuscript at a glance", async ({ page }) => {
   await page.screenshot({ path: `e2e/__shots__/one-glance-${test.info().project.name}.png`, fullPage: false });
 });
 
-test("the core document does not remount when signed launch state resolves", async ({ page }) => {
+test("tablet widths keep prose and Tallies in one readable document column", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "desktop context owns intermediate viewport checks");
+  for (const width of [768, 900, 1024]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/");
+    const reading = page.locator("[data-reading-column]");
+    await expect(reading).toHaveCSS("display", "block");
+    const openingBox = (await page.locator(".lore-opening").boundingBox())!;
+    const emergenceBox = (await page.locator('[data-section="emergence"]').boundingBox())!;
+    const dreamBox = (await page.locator('[data-section="dream"]').boundingBox())!;
+    const talliesBox = (await page.locator('[data-section="tallies"]').boundingBox())!;
+    expect(openingBox.width, `${width}px prose width`).toBeGreaterThanOrEqual(240);
+    expect(Math.abs(talliesBox.x - emergenceBox.x), `${width}px Tallies lane`).toBeLessThan(2);
+    expect(Math.abs(talliesBox.width - emergenceBox.width), `${width}px Tallies width`).toBeLessThan(2);
+    expect(talliesBox.y).toBeGreaterThanOrEqual(dreamBox.y + dreamBox.height - 1);
+  }
+});
+
+test("the core document preserves identity when signed launch state resolves", async ({ page }) => {
   await page.goto("/");
   const canvas = page.locator("canvas[data-organ-swarm]");
   const seal = page.getByRole("button", { name: "hold the threshold seal" });

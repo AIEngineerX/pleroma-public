@@ -192,7 +192,7 @@ test("the full temple remains usable when the visitor never activates sound", as
   await expect(codex).toBeAttached();
   await reliquary.scrollIntoViewIfNeeded();
   await expect(reliquary).toBeVisible();
-  const concordat = page.getByRole("link", { name: /what this is/i });
+  const concordat = page.getByRole("link", { name: "the Concordat" });
   await expect(concordat).toBeVisible();
   await concordat.click();
   await expect(page).toHaveURL(/\/concordat$/);

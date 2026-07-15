@@ -139,15 +139,22 @@ test("arrival yields to remembered EYE, then genuine TONGUE prints once from bod
   expect(Date.now() - visibleAt).toBeLessThanOrEqual(4_000);
   await expect(body).toHaveAttribute("data-completed-id", liveCommandId);
 
-  // Crossing dormant to live remounts the body and Codex branches. The page-view clock and shared
-  // announcement ledger must keep both from replaying.
+  // Crossing dormant to live changes signed facts inside the same Temple. The presentation clock and
+  // shared announcement ledger must keep the stable body and Codex from replaying.
+  const temple = page.getByRole("region", { name: "the temple" });
+  const originalTemple = await temple.elementHandle();
+  const originalBody = await body.elementHandle();
+  const originalCodex = await codex.elementHandle();
   executeD1(`
     INSERT INTO config (key, value)
     VALUES ('pulse_mint', 'So11111111111111111111111111111111111111112')
     ON CONFLICT(key) DO UPDATE SET value = excluded.value;
     UPDATE config SET value = '1' WHERE key = 'launched';
   `);
-  await expect(page.getByRole("region", { name: "the page" })).toBeVisible({ timeout: 10_000 });
+  await expect(temple).toBeVisible({ timeout: 10_000 });
+  expect(await temple.evaluate((node, original) => node === original, originalTemple)).toBe(true);
+  expect(await body.evaluate((node, original) => node === original, originalBody)).toBe(true);
+  expect(await codex.evaluate((node, original) => node === original, originalCodex)).toBe(true);
   await expect(body).toHaveAttribute("data-arrival", "settled");
   await expect(body).toHaveAttribute("data-arrival-progress", "1.000");
   await page.waitForTimeout(250);
@@ -201,14 +208,14 @@ test("one poll can announce multiple genuine rows exactly once each", async ({ p
   await expect(announcer.locator(`[data-announcement-id="${nextId}"]`)).toHaveCount(1);
 });
 
-test("branch remount resumes one page-view utterance clock and settles toward the current Codex", async ({ page }, testInfo) => {
+test("signed transition preserves one presentation clock and settles toward the current Codex", async ({ page }, testInfo) => {
   test.setTimeout(40_000);
   const runtimeErrors: string[] = [];
   page.on("pageerror", (error) => runtimeErrors.push(`pageerror: ${error.message}`));
   page.on("console", (message) => {
     if (message.type() === "error") runtimeErrors.push(`console: ${message.text()}`);
   });
-  const baselineId = "task6-remount-eye";
+  const baselineId = "task6-transition-eye";
   seedTranscript({
     id: baselineId,
     organ: "EYE",
@@ -230,6 +237,12 @@ test("branch remount resumes one page-view utterance clock and settles toward th
   expect(startedAt).not.toBeNull();
   await expect(phase).toHaveAttribute("data-utterance-phase", "dwelling");
   await page.waitForTimeout(350);
+  const temple = page.getByRole("region", { name: "the temple" });
+  const bodyRenderer = page.locator("[data-body-renderer]").first();
+  const codex = page.getByRole("complementary", { name: "the codex" });
+  const originalTemple = await temple.elementHandle();
+  const originalBody = await bodyRenderer.elementHandle();
+  const originalCodex = await codex.elementHandle();
 
   executeD1(`
     INSERT INTO config (key, value)
@@ -238,8 +251,11 @@ test("branch remount resumes one page-view utterance clock and settles toward th
     UPDATE config SET value = '1' WHERE key = 'launched';
   `);
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await expect(page.getByRole("region", { name: "the page" })).toBeVisible({ timeout: 4_000 });
-  const remount = await page.evaluate(({ commandId }) => {
+  await expect(temple).toBeVisible({ timeout: 4_000 });
+  expect(await temple.evaluate((node, original) => node === original, originalTemple)).toBe(true);
+  expect(await bodyRenderer.evaluate((node, original) => node === original, originalBody)).toBe(true);
+  expect(await codex.evaluate((node, original) => node === original, originalCodex)).toBe(true);
+  const transition = await page.evaluate(({ commandId }) => {
     const selector = `[data-body-utterance][data-command-id="${commandId}"]`;
     const node = document.querySelector<HTMLElement>(selector);
     const evidence = () => {
@@ -323,11 +339,11 @@ test("branch remount resumes one page-view utterance clock and settles toward th
     });
   }, { commandId });
 
-  if (remount.state === "present") {
-    expect(remount.initial.start).toBe(startedAt);
-    expect(remount.initial.phase).not.toBe("developing");
-    expect(remount.initial.direction).toBe(testInfo.project.name === "desktop" ? "right" : "down");
-    const removal = remount.removal;
+  if (transition.state === "present") {
+    expect(transition.initial.start).toBe(startedAt);
+    expect(transition.initial.phase).not.toBe("developing");
+    expect(transition.initial.direction).toBe(testInfo.project.name === "desktop" ? "right" : "down");
+    const removal = transition.removal;
     expect(removal.starts).toEqual([startedAt]);
     expect(removal.removed, JSON.stringify(removal)).toBe(true);
     expect(removal.completionSource).toBe(removal.initiallyConnected ? "mutation" : "initial");
@@ -340,11 +356,11 @@ test("branch remount resumes one page-view utterance clock and settles toward th
     expect(removal.utteranceIds).toEqual([]);
     expect(removal.codexRowIds).toContain(baselineId);
   } else {
-    expect(remount.bodyCommandId).toBeNull();
-    expect(remount.bodyCompletedId).toBe(commandId);
-    expect(remount.bodyCompletionCount).toBe("1");
-    expect(remount.utteranceIds).toEqual([]);
-    expect(remount.codexRowIds).toContain(baselineId);
+    expect(transition.bodyCommandId).toBeNull();
+    expect(transition.bodyCompletedId).toBe(commandId);
+    expect(transition.bodyCompletionCount).toBe("1");
+    expect(transition.utteranceIds).toEqual([]);
+    expect(transition.codexRowIds).toContain(baselineId);
   }
   expect(runtimeErrors).toEqual([]);
   await expect(utterance).toHaveCount(0, { timeout: 2_500 });
@@ -366,7 +382,7 @@ test("route announcer survives a concurrent live row and layout transition and r
   const firstId = "task6-concurrent-eye";
   executeD1(`
     INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
-    VALUES ('${firstId}', 'EYE', 'verse', 'The witness crosses with the page.', NULL, NULL, ${Date.now()});
+    VALUES ('${firstId}', 'EYE', 'verse', 'The witness crosses with the temple.', NULL, NULL, ${Date.now()});
     INSERT INTO config (key, value)
     VALUES ('pulse_mint', 'So11111111111111111111111111111111111111112')
     ON CONFLICT(key) DO UPDATE SET value = excluded.value;
@@ -374,7 +390,7 @@ test("route announcer survives a concurrent live row and layout transition and r
   `);
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 
-  await expect(page.getByRole("region", { name: "the page" })).toBeVisible({ timeout: 4_000 });
+  await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 4_000 });
   await expect(page.locator(`[data-codex-row="${firstId}"]`)).toBeVisible({ timeout: 4_000 });
   expect(await page.evaluate(() => (
     (window as AnnouncementWindow).__pleromaAnnouncer === document.querySelector("[data-codex-announcer]")
@@ -427,9 +443,8 @@ test("reduced motion starts settled and places remembered ink at the sliced SVG 
   await expect(memory).toBeVisible({ timeout: 10_000 });
   await expect(memory.locator("[data-utterance-phase]")).toHaveAttribute("data-utterance-phase", "settled");
   const bodyBox = (await body.boundingBox())!;
-  const expectedY = bodyBox.width > bodyBox.height
-    ? (0.28 * bodyBox.width + (bodyBox.height - bodyBox.width) / 2) / bodyBox.height
-    : 0.28;
+  const side = Math.min(bodyBox.width, bodyBox.height);
+  const expectedY = (bodyBox.height - side + 0.28 * side) / bodyBox.height;
   await expect.poll(async () => Number(await memory.getAttribute("data-anchor-x"))).toBeCloseTo(0.5, 2);
   await expect.poll(async () => Number(await memory.getAttribute("data-anchor-y"))).toBeCloseTo(expectedY, 2);
   await expect(body).toHaveAttribute("data-pipeline", "none");

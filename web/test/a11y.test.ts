@@ -53,4 +53,21 @@ describe("printed-document interaction contract", () => {
   it("carries the active rite ground onto the sticky body sheet", () => {
     expect(styles).toMatch(/\.rite-active\s+\.temple-body-page\s*{[^}]*background:\s*var\(--color-rite-ground\)/s);
   });
+
+  it("remaps the whole printed palette during the rite", () => {
+    expect(styles).toMatch(/body:has\(\.rite-active\)\s*{[^}]*--color-ground:\s*var\(--color-rite-ground\)/s);
+    expect(styles).toMatch(/body:has\(\.rite-active\)\s*{[^}]*--color-ink:\s*var\(--color-rite-ink\)/s);
+    expect(styles).toMatch(/body:has\(\.rite-active\)\s*{[^}]*--color-ground-aged:/s);
+  });
+
+  it("preserves native disclosure and machine typography without coupling targets to display", () => {
+    const targetRule = styles.match(/:where\(a, button, summary, \[role="button"\]\)\s*{([^}]*)}/s)?.[1] ?? "";
+    expect(targetRule).not.toMatch(/display\s*:/);
+    expect(styles).not.toMatch(/button\s*{[^}]*font:\s*inherit/s);
+    expect(styles).toMatch(/:where\([^)]*button[^)]*summary[^)]*\)\s*{[^}]*font-family:\s*var\(--font-machine\)/s);
+  });
+
+  it("disables smooth scrolling when motion is reduced", () => {
+    expect(styles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[^}]*html\s*{[^}]*scroll-behavior:\s*auto/s);
+  });
 });

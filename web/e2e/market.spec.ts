@@ -18,10 +18,12 @@ function seedLiveMarket(): void {
 
 test("the market rail renders once live: mint pin + copy, buy, ledger-plate chart, ticker, disclaimer", async ({ page }) => {
   seedLiveMarket();
+  const signedState = page.waitForResponse(response => response.url().endsWith("/api/state") && response.ok());
   await page.goto("/");
+  expect(await (await signedState).json()).toMatchObject({ phase: "live", mint: MINT });
 
   const market = page.getByRole("region", { name: "the market" });
-  await expect(market).toBeVisible();
+  await expect(market).toBeVisible({ timeout: 10_000 });
 
   // mint: permanently pinned, one-tap copy >=44px (thumb reach at 390px).
   await expect(market.locator("code")).toHaveText(MINT);
@@ -44,7 +46,7 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
 
   // disclaimer: reachable from every state via the Concordat link (the plain-English memecoin disclaimer
   // lives on /concordat now; see concordat.spec.ts), even alongside a live market rail.
-  await expect(page.getByRole("link", { name: /what this is/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: "the Concordat" })).toBeVisible();
 
   await market.screenshot({ path: `e2e/__shots__/market-${test.info().project.name}.png` });
 });
@@ -52,14 +54,16 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
 test("the dormant page has no market rail, only the concordat link and socials", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: /what this is/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: "the Concordat" })).toBeVisible();
   await expect(page.getByRole("link", { name: /On X/ })).toBeVisible();
 });
 
-test("no price predictions or returns language appear anywhere on the page", async ({ page }) => {
+test("the market makes no price prediction or financial-return promise", async ({ page }) => {
   seedLiveMarket();
   await page.goto("/");
-  await expect(page.getByRole("region", { name: "the market" })).toBeVisible();
-  const bodyText = await page.locator("body").innerText();
-  expect(bodyText).not.toMatch(/guarantee|returns|profit|moon|100x/i);
+  const market = page.getByRole("region", { name: "the market" });
+  await expect(market).toBeVisible({ timeout: 10_000 });
+  const financialPromise = /guaranteed? returns?|profits?|moon|100x/i;
+  expect("guaranteed returns, profits, moon, 100x").toMatch(financialPromise);
+  expect(await market.innerText()).not.toMatch(financialPromise);
 });

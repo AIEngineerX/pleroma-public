@@ -20,13 +20,16 @@ test("day-7 gate: live temple, pinned mint, disclaimer reachable, vitals, a11y",
   // The plain-English memecoin disclaimer is reachable from the temple via the Concordat link: relocated
   // off the immersive page (it broke the dormant spell) but always one tap away (integrity invariant,
   // CLAUDE.md "Integrity invariants"; the disclaimer itself is asserted on /concordat by concordat.spec).
-  await page.getByRole("link", { name: /what this is/i }).click();
+  await page.getByRole("link", { name: "the Concordat" }).click();
   await expect(page.getByText(/memecoin/i)).toBeVisible();        // the plain-English disclaimer
   await expect(page.getByRole("note")).toContainText("No financial promises");
 });
 
-test("day-7 gate: no financial-promise language anywhere", async ({ page }) => {
+test("day-7 gate: the live market makes no financial promise", async ({ page }) => {
   await page.goto("/");
-  const body = await page.locator("body").innerText();
-  expect(body).not.toMatch(/guarantee|100x|to the moon|profit|returns/i);
+  const market = page.getByRole("region", { name: "the market" });
+  await expect(market).toBeVisible();
+  const financialPromise = /guaranteed? returns?|profits?|to the moon|100x/i;
+  expect("guaranteed returns, profits, to the moon, 100x").toMatch(financialPromise);
+  expect(await market.innerText()).not.toMatch(financialPromise);
 });

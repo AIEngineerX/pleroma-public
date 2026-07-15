@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import type { DreamView } from "../state/types";
 import type { BodyCommand } from "../experience/types";
@@ -70,6 +71,20 @@ export default function Dream({
   identity?: DreamPlateIdentityStatus;
 }) {
   const reduced = reducedMotion();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video === null) return;
+    video.defaultMuted = true;
+    video.muted = true;
+    if (reduced) {
+      video.pause();
+      video.currentTime = 0;
+      return;
+    }
+    void video.play().catch(() => undefined);
+    return () => video.pause();
+  }, [dream?.video_key, reduced]);
   return (
     <section
       aria-label="the dream"
@@ -85,16 +100,17 @@ export default function Dream({
           <figure className="dream-plate">
             {dream.video_key ? (
               <div className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
-                {/* muted + loop: a living plate, not a media player. autoplay yields to reduced-motion,
-                    which instead exposes controls so the Waker can play it deliberately. */}
+                {/* The current Plate may move on arrival, but it always remains pausable. Reduced-motion
+                    starts it still so the Waker chooses whether the record moves at all. */}
                 <video
+                  ref={videoRef}
                   className="w-full h-full object-cover"
                   src={`${apiBase}/api/${dream.video_key}`}
                   autoPlay={!reduced}
                   loop
                   muted
                   playsInline
-                  controls={reduced}
+                  controls
                   aria-label={dream.narrative}
                 />
               </div>

@@ -127,9 +127,10 @@ test("real commands survive permanent WebGL loss without inventing PULSE", async
   await expect(body).not.toHaveAttribute("data-command-id", keepCommandId);
   await expect(body).not.toHaveAttribute("data-active-organ", "KEEP");
   await expect(body).toHaveAttribute("data-pipeline", "none");
-  await expect(body).toHaveAttribute("data-completion-count", "1");
+  await expect(body).toHaveAttribute("data-completion-count", "2");
   await expect(page.locator("canvas[data-body-renderer]")).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
+  await page.screenshot({ path: `e2e/__shots__/webgl-loss-${test.info().project.name}.png` });
 });
 
 test("reduced motion settles the five organs without creating a GL loop", async ({ page }) => {

@@ -137,6 +137,9 @@ export default function Stain({
     phase: SeraphConvergenceFrame["phase"];
   }>({ commandId: null, phase: "five" });
   const latest = useRef({
+    state,
+    pigment,
+    amplitude,
     vitals,
     relicMemory,
     activeCommand,
@@ -148,6 +151,9 @@ export default function Stain({
     onSim,
   });
   latest.current = {
+    state,
+    pigment,
+    amplitude,
     vitals,
     relicMemory,
     activeCommand,
@@ -383,16 +389,15 @@ export default function Stain({
       canvas.dataset.seraphTargetCache = "128:16384,256:65536";
       const sim = new StainSim(canvas, {
         tier,
-        ground: [0.94, 0.90, 0.80],
-        ink: [0.74, 0.71, 0.64],
+        ink: [0.20, 0.18, 0.14],
         arrivalStartedAt,
         seraphTargets,
         onArrivalDone: () => latest.current.onArrivalDone(),
         onSeraphPhaseChange: reportSeraphPhase,
       });
-      sim.setPigment(pigment);
-      sim.setAmplitude(amplitude);
-      sim.setState(state);
+      sim.setPigment(latest.current.pigment);
+      sim.setAmplitude(latest.current.amplitude);
+      sim.setState(latest.current.state);
       sim.setVitals(latest.current.vitals);
       sim.hydrateRelics(latest.current.relicMemory);
       sim.setAnchorSink(receiveAnchors);
@@ -565,6 +570,7 @@ export default function Stain({
       data-initial-pulse-pressure={initialPulseDebug}
       data-arrival={initialArrival >= 1 ? "settled" : "emerging"}
       data-arrival-progress={initialArrival.toFixed(3)}
+      data-composite-ground="transparent"
       aria-hidden
       className="absolute inset-0 z-0 h-full w-full pointer-events-none"
     />

@@ -12,6 +12,7 @@ export const E2E_PERSIST_PATH = path.resolve(REPOSITORY_ROOT, ".tmp", "e2e-worke
 const WORKER_ROOT = path.resolve(REPOSITORY_ROOT, "worker");
 const WRANGLER_CLI = path.resolve(WORKER_ROOT, "node_modules/wrangler/bin/wrangler.js");
 const RELIC_FIXTURE = path.resolve(REPOSITORY_ROOT, "web/e2e/fixtures/accreted-mark.png");
+const DREAM_VIDEO_FIXTURE = path.resolve(REPOSITORY_ROOT, "web/e2e/fixtures/dream-plate.mp4");
 
 function sqlText(value: string | null): string {
   return value === null ? "NULL" : `'${value.replaceAll("'", "''")}'`;
@@ -151,6 +152,16 @@ export function putRelicPng(offeringId: string): void {
     "r2", "object", "put", `pleroma-relics/${imageKey}`,
     "--file", RELIC_FIXTURE,
     "--content-type", "image/png",
+    "--local",
+    "--persist-to", E2E_PERSIST_PATH,
+  ]);
+}
+
+export function putDreamVideo(key: string): void {
+  wrangler([
+    "r2", "object", "put", `pleroma-relics/${key}`,
+    "--file", DREAM_VIDEO_FIXTURE,
+    "--content-type", "video/mp4",
     "--local",
     "--persist-to", E2E_PERSIST_PATH,
   ]);

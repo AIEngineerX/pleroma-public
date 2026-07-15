@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { resetStack } from "./helpers/workerFixture";
+import { executeD1, resetStack } from "./helpers/workerFixture";
 
 test.beforeEach(() => resetStack());
 
@@ -25,6 +25,10 @@ test("interactive targets are at least 44 by 44px and show flat-ink focus", asyn
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
   await seal.focus();
   expect(await seal.evaluate(node => getComputedStyle(node).outlineStyle)).toBe("solid");
+  for (const control of await page.locator("button, summary").filter({ visible: true }).all()) {
+    expect((await control.evaluate(node => getComputedStyle(node).fontFamily)).toLowerCase())
+      .toContain("courier prime");
+  }
 });
 
 // The offer button (the one real rite a visitor performs) must sit in thumb reach on a 390px
@@ -52,11 +56,54 @@ test("the 390px document scrolls without overflow or sticky-body overlap", async
   expect(codexBox.y).toBeGreaterThanOrEqual(bodyBox.y + bodyBox.height - 1);
 
   const before = await page.evaluate(() => window.scrollY);
-  await page.evaluate(() => window.scrollBy({ top: 320, behavior: "auto" }));
+  await page.evaluate(() => window.scrollBy({ top: 160, behavior: "auto" }));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(before);
+  const overlap = await page.evaluate(() => {
+    const body = document.querySelector<HTMLElement>("[data-body-page]")!;
+    const reading = document.querySelector<HTMLElement>("[data-reading-column]")!;
+    const codex = document.querySelector<HTMLElement>('[data-section="codex"]')!;
+    const bodyRect = body.getBoundingClientRect();
+    const codexRect = codex.getBoundingClientRect();
+    const pointY = Math.min(bodyRect.bottom - 24, Math.max(24, codexRect.top + 24));
+    // Sample clear paper away from the centered threshold seal, which intentionally shares this layer.
+    const pointX = bodyRect.left + bodyRect.width * 0.8;
+    const topmost = document.elementFromPoint(pointX, pointY);
+    return {
+      codexPassesUnderBody: codexRect.top < bodyRect.bottom,
+      topmostIsBody: topmost?.closest("[data-body-page]") === body,
+      topmost: topmost instanceof HTMLElement
+        ? { tag: topmost.tagName, className: topmost.className, thresholdPhase: topmost.dataset.thresholdPhase ?? null }
+        : null,
+      point: { x: pointX, y: pointY },
+      bodyRect: { top: bodyRect.top, bottom: bodyRect.bottom },
+      codexRect: { top: codexRect.top, bottom: codexRect.bottom },
+      bodyZ: Number.parseInt(getComputedStyle(body).zIndex, 10),
+      readingZ: Number.parseInt(getComputedStyle(reading).zIndex, 10),
+      bodyGround: getComputedStyle(body).backgroundColor,
+    };
+  });
+  expect(overlap.codexPassesUnderBody).toBe(true);
+  expect(overlap.topmostIsBody, JSON.stringify(overlap, null, 2)).toBe(true);
+  expect(overlap.bodyZ).toBeGreaterThan(overlap.readingZ);
+  expect(overlap.bodyGround).not.toBe("rgba(0, 0, 0, 0)");
 });
 
-test("reduced-motion holds the Stain still (no canvas sim)", async ({ browser }) => {
+test("the live market disclosure keeps its native marker and state", async ({ page }) => {
+  executeD1("UPDATE config SET value = '1' WHERE key = 'launched';");
+  await page.goto("/");
+  const market = page.getByRole("region", { name: "the market" });
+  await expect(market).toBeVisible({ timeout: 10_000 });
+  const summary = market.locator("summary");
+  await expect(summary).toHaveCSS("display", "list-item");
+  expect((await summary.evaluate(node => getComputedStyle(node).fontFamily)).toLowerCase())
+    .toContain("courier prime");
+  const details = market.locator("details");
+  await expect(details).not.toHaveAttribute("open", "");
+  await summary.click();
+  await expect(details).toHaveAttribute("open", "");
+});
+
+test("reduced-motion holds the Stain still (no canvas sim)", async ({ browser }, testInfo) => {
   const ctx = await browser.newContext({ reducedMotion: "reduce" });
   const page = await ctx.newPage();
   await page.goto("/");
@@ -67,5 +114,7 @@ test("reduced-motion holds the Stain still (no canvas sim)", async ({ browser })
   await expect(settled).toBeVisible();
   await expect(settled).toHaveCSS("z-index", "0");
   await expect(settled).toHaveCSS("pointer-events", "none");
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior)).toBe("auto");
+  await page.screenshot({ path: `e2e/__shots__/reduced-motion-${testInfo.project.name}.png` });
   await ctx.close();
 });

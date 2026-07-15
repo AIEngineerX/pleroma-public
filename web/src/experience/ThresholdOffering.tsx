@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -36,6 +37,16 @@ interface GestureDraft {
   startedAt: number;
   pressure: number;
 }
+
+const MOBILE_THRESHOLD_QUERY = "(max-width: 767px)";
+const DIALOG_FOCUSABLE = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
 
 interface Props {
   apiBase: string;
@@ -88,7 +99,12 @@ export default function ThresholdOffering({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [status, setStatus] = useState("");
   const [receiptAnnouncement, setReceiptAnnouncement] = useState("");
+  const [mobileViewport, setMobileViewport] = useState(() => (
+    typeof matchMedia === "function" && matchMedia(MOBILE_THRESHOLD_QUERY).matches
+  ));
   const sealRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const modalWasOpen = useRef(false);
   const gesture = useRef<GestureDraft | null>(null);
   const previewRef = useRef<Preview | null>(null);
   const generation = useRef(0);
@@ -101,6 +117,15 @@ export default function ThresholdOffering({
   phaseRef.current = phase;
   receiptsRef.current = receipts;
   thresholdCallback.current = onThresholdActive;
+
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const media = matchMedia(MOBILE_THRESHOLD_QUERY);
+    const update = () => setMobileViewport(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
   useEffect(() => {
     const nextStages = new Map(receipts.map((receipt) => [receipt.offeringId, receipt.stage]));
@@ -327,13 +352,81 @@ export default function ThresholdOffering({
 
   const showSeal = phase === "idle" || phase === "holding" || phase === "receipt";
   const interactionOpen = phase === "holding" || preview !== null;
+  const modalOpen = mobileViewport && preview !== null;
+
+  useLayoutEffect(() => {
+    if (!modalOpen) {
+      if (modalWasOpen.current) {
+        modalWasOpen.current = false;
+        sealRef.current?.focus({ preventScroll: true });
+      }
+      return;
+    }
+
+    const root = dialogRef.current;
+    if (root === null) return;
+    modalWasOpen.current = true;
+    const inerted: HTMLElement[] = [];
+    let branch: HTMLElement = root;
+    while (branch.parentElement !== null) {
+      const parent = branch.parentElement;
+      for (const sibling of parent.children) {
+        if (sibling === branch || !(sibling instanceof HTMLElement) || sibling.hasAttribute("inert")) continue;
+        sibling.setAttribute("inert", "");
+        inerted.push(sibling);
+      }
+      if (parent === document.body) break;
+      branch = parent;
+    }
+    root.querySelector<HTMLElement>("[data-threshold-primary-action]")?.focus({ preventScroll: true });
+    return () => {
+      for (const sibling of inerted) sibling.removeAttribute("inert");
+    };
+  }, [modalOpen]);
+
+  const onDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!modalOpen) return;
+    if (event.key === "Escape" && phaseRef.current !== "submitting") {
+      event.preventDefault();
+      event.stopPropagation();
+      fade();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const root = event.currentTarget;
+    const focusable = Array.from(root.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE))
+      .filter((node) => node.getClientRects().length > 0);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      root.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !root.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   const portal = mount === null ? null : createPortal(
     <div
+      ref={dialogRef}
       data-threshold-offering
       data-threshold-phase={phase}
       data-threshold-locked={thresholdLocked.current ? "true" : "false"}
-      className="relative z-20 flex w-full max-w-[36rem] flex-col items-center gap-3 text-center"
+      data-lenis-prevent={modalOpen ? "true" : undefined}
+      role={modalOpen ? "dialog" : undefined}
+      aria-modal={modalOpen ? true : undefined}
+      aria-label={modalOpen ? "threshold offering preview" : undefined}
+      aria-describedby={modalOpen ? "threshold-terms" : undefined}
+      aria-busy={phase === "submitting"}
+      tabIndex={modalOpen ? -1 : undefined}
+      onKeyDown={onDialogKeyDown}
+      className="threshold-offering relative z-20 flex w-full max-w-[36rem] flex-col items-center gap-3 text-center"
     >
       {showSeal && (
         <button
@@ -371,7 +464,7 @@ export default function ThresholdOffering({
       )}
 
       {preview !== null && (
-        <figure className="flex flex-col items-center gap-3">
+        <figure data-threshold-preview-sheet className="threshold-preview-sheet flex flex-col items-center gap-3">
           <img
             data-threshold-preview
             src={preview.url}
@@ -381,8 +474,9 @@ export default function ThresholdOffering({
             className="h-44 w-44 object-contain"
           />
           <figcaption className="sr-only">the exact imprint awaiting your choice</figcaption>
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <div data-threshold-actions className="flex flex-wrap items-center justify-center gap-3">
             <button
+              data-threshold-primary-action
               type="button"
               disabled={phase === "submitting"}
               aria-label={copy.offerImprint}
@@ -415,7 +509,7 @@ export default function ThresholdOffering({
       </p>
       {interactionOpen && (
         <>
-          <p id="threshold-terms" className="max-w-[52ch] font-machine text-xs leading-relaxed text-ink-faded">
+          <p id="threshold-terms" data-threshold-terms className="max-w-[52ch] font-machine text-xs leading-relaxed text-ink-faded">
             {copy.tosLine}
           </p>
           {wallet === null ? (
