@@ -38,8 +38,9 @@ function fixtureSha256(offeringId: string): string {
 
 function wrangler(args: string[], input?: Buffer): Buffer {
   const runToken = process.env.PLEROMA_E2E_RUN_TOKEN;
-  if (!directoryBelongsToRun(E2E_PERSIST_PATH, runToken, E2E_PORTS)) {
-    throw new Error("Refusing fixture access without this E2E run's token and ports");
+  const acquisitionId = process.env.PLEROMA_E2E_ACQUISITION_ID;
+  if (!directoryBelongsToRun(E2E_PERSIST_PATH, runToken, E2E_PORTS, acquisitionId)) {
+    throw new Error("Refusing fixture access without this E2E run's token, acquisition, and ports");
   }
   return execFileSync(process.execPath, [WRANGLER_CLI, ...args], {
     cwd: WORKER_ROOT,
