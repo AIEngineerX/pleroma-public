@@ -50,16 +50,39 @@ npm run dev                      # vite on :5173, proxies /api → :8787
 
 ```bash
 npm run verify             # worker vitest + web vitest + tsc + build + canon prerender
-npm run e2e --prefix web   # Playwright desktop + mobile-390 (separate from verify)
+npm run e2e --prefix web   # project runner + Playwright desktop/mobile-390 (separate from verify)
 ```
 
-The browser gate builds the web app against a real local Worker, migrated isolated D1, and
-local R2 persistence on default ports 4173/8787 (validated environment overrides are supported).
-It runs serially without HTTP interception or mocked API responses. One random run token binds
-the launcher, fixture access, process manifest, shutdown request, and teardown; cleanup verifies
-that token, the run ports, and each process command line before terminating or deleting anything.
-On Windows it also proves the exact process incarnation and parent/child creation order; unavailable
-identity evidence fails closed and preserves the run directory for diagnosis.
+The browser gate is orchestrated by `web/scripts/e2e-runner.mjs`. The project runner starts the
+real local Worker/D1/R2 and built web preview, waits for readiness, runs Playwright serially, and
+requests ownership-safe teardown on normal completion, startup failure, or handled cancellation.
+Playwright's local `webServer` does not own these services. Default ports are 4173/8787; validated
+environment overrides are supported, and specs do not intercept HTTP or fabricate API responses.
+The runner publishes separate marked launch gates before starting or awaiting its stack and
+Playwright targets. On Windows, each outer target is created suspended, assigned to a retained
+`KILL_ON_JOB_CLOSE` Job Object, and only then resumed. Compile, migration, build, Worker, and Vite
+targets likewise wait behind inert marked IPC wrappers until each exact wrapper descriptor is
+published and revalidated in the stack manifest. Successful one-shot wrappers remain live and
+published until final owned teardown.
+
+After port preflight, the stack claims the fixed `.tmp/e2e-worker` directory with exclusive
+creation and creates its owner record exclusively. A fresh 32-byte acquisition ID distinguishes the
+claim even when a run token is reused; owner, manifest, shutdown, and teardown all require matching
+token, acquisition ID, and ports. A pre-existing directory, same-token concurrent claim, or
+ownerless crash residue blocks startup unchanged. After an abrupt process or host failure, first
+verify that the configured ports and token-marked processes are inactive, inspect the path for links
+or reparse points, then remove only the repository's exact `.tmp/e2e-worker` directory.
+
+On POSIX, managed wrappers remain group leaders and self-retire their groups if parent IPC disappears.
+General teardown checks that the marked leader remains live, owned, and in its original group; a live
+leaderless numeric PGID is preserved as ambiguous. That check and `kill(-pgid)` are separate, so exit
+or reuse in between cannot be excluded without a retained kernel lifetime primitive. Windows
+revalidates full-resolution process incarnations and admits new ancestry only from an exact parent
+incarnation that is still present, then terminates captured descendants deepest first. Outer runner
+targets have Job Object containment, but the fixed-manifest identity probe and individual `taskkill`
+remain separate operations, so PID exit or reuse in that residual interval cannot be excluded. Path
+containment is lexical; it does not resolve or reject symlinks, reparse points, or junctions.
+Unavailable evidence fails closed and preserves state.
 
 Worker real-vendor suites (`npm run verify:live --prefix worker`) hit live APIs and are run
 manually before launch, never in the commit gate. Web `*.live.spec.ts` files still use the

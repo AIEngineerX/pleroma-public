@@ -296,6 +296,12 @@ every browser request: Tallies polls `/api/tallies` every 15 seconds, the archiv
 `/api/dreams` on mount/pagination, `Temple` performs one current-Dream identity confirmation, and
 submission alone requests a nonce and posts an offering.
 
+Reliquary reads reject non-success HTTP responses, invalid JSON, and malformed pages. Tallies retain
+the last successful array only while the requested date is unchanged; a date transition renders an
+empty roll until that date succeeds. DREAM archive requests use a five-second transport timeout.
+Concurrent consumers share one request, but each keeps its own cancellation lifetime; the transport
+is aborted and the cache entry evicted when the last consumer leaves before settlement.
+
 - State and Codex poll immediately and then every 5 seconds, accelerating to 2 seconds while a
   non-terminal rite is active. Relics poll every 5 seconds during accretion, while a receipt under
   24 hours remains unresolved, or while a new live DREAM awaits relic truth; otherwise every 30
@@ -352,8 +358,8 @@ configured production Worker origin in production, and same-origin in developmen
 | `npm run verify` (root) | both | `worker verify` + `web verify` — the commit gate |
 | `worker: verify` | worker | `compile:doctrine && vitest run` (excludes `*.live.test.ts`) |
 | `worker: verify:live` | worker | real-vendor suite (`test/live/`) — manual, pre-launch only |
-| `web: verify` | web | harness-ownership test + vitest + TypeScript + Vite build + Canon prerender + public-content guard |
-| `web: e2e` | web | serial Playwright desktop + mobile-390 against built Vite and real isolated local Worker/D1/R2 — **separate**, not in `verify` |
+| `web: verify` | web | cross-platform harness-ownership suites + real-browser Tallies effect check + vitest + TypeScript + Vite build + Canon prerender + public-content guard |
+| `web: e2e` | web | project-owned Node runner + serial Playwright desktop/mobile-390 against built Vite and real isolated local Worker/D1/R2 — **separate**, not in `verify` |
 | `worker: deploy` / `deploy:prod` | worker | `compile:doctrine && wrangler deploy [--env production]` |
 | `worker: migrate:local` / `migrate:prod` | worker | `wrangler d1 migrations apply …` |
 | web deploy | web | **runbook only** — `npx wrangler pages deploy dist --project-name pleroma-web` (no npm script) |
@@ -363,19 +369,47 @@ the Worker compiles it to `src/doctrine.generated.ts` (`compile:doctrine`); the 
 imports it `?raw` at runtime (`canonParse.ts`) and re-parses it at build time (`build-canon.mjs`) —
 the regex logic is duplicated in those two files and kept in sync by hand.
 
-The E2E stack preflights its validated Worker/web ports (8787/4173 by default) before touching
-isolated `.tmp/e2e-worker` persistence, applies all local D1 migrations, starts Wrangler with real
-local D1/R2, builds the web app against that Worker, and serves the built output. Specs mutate the
-same D1/R2 through Wrangler; they do not intercept HTTP or fabricate API responses. One random token
-binds launcher arguments, ports, fixture access, directory owner, process manifest, shutdown request,
-and teardown. Cleanup verifies the token and each recorded process command line before signaling,
-terminating, or deleting. A live manifest PID that fails the token/role proof blocks persistence
-deletion for that teardown attempt even if the process exits while teardown waits. Real-process
-ownership tests prove foreign directories and PID-reused processes survive another run's teardown
-while the owning run still cleans deterministically. On Windows, a proof also records the process's
-full-resolution creation time and admits descendants only when their creation time follows every
-parent edge. Proven descendants are terminated individually before the root; missing or ambiguous
-identity preserves persistence instead of widening kill authority.
+`web/scripts/e2e-runner.mjs` owns local browser-gate lifecycle instead of Playwright `webServer`.
+It starts the stack, waits for the real Worker/D1/R2 and built preview, invokes serial Playwright,
+and requests teardown on normal completion, startup failure, or handled cancellation. Specs mutate
+the same D1/R2 through Wrangler; they do not intercept HTTP or fabricate API responses.
+The runner gives the harness and Playwright separate marked-tree ownership records and publishes each
+synchronously before returning control to cancellation. Playwright retirement is awaited before stack
+teardown begins. On Windows, each outer target is created suspended, assigned to a retained
+`KILL_ON_JOB_CLOSE` Job Object, and only then resumed; the gate and Job host remain alive until owned
+teardown, so a descendant cannot escape merely because an intermediate process exits. On every
+platform, compile, migration, build, Worker, and Vite targets wait behind inert marked IPC wrappers.
+The stack waits for wrapper readiness, publishes and revalidates the exact wrapper descriptor, and
+only then authorizes the target to start. Successful one-shot wrappers remain live and published until
+final teardown instead of leaving a leaderless descendant tree.
+
+The stack preflights its validated Worker/web ports (8787/4173 by default), exclusively creates the
+fixed `.tmp/e2e-worker` directory, and creates `run-owner.json` with exclusive file creation. A fresh
+32-byte acquisition ID distinguishes one persistence claim from another even if a run token is
+reused; owner record, manifest, shutdown request, and teardown must match token, acquisition ID, and
+ports. The stack never takes over or automatically reclaims an existing path. A crash between
+directory and owner publication therefore leaves ownerless residue that blocks the next run
+unchanged, and a same-token concurrent or pre-existing claim is left untouched. After an abrupt
+process or host failure, an operator must verify the configured ports and token-marked processes are
+inactive, inspect the path for links or reparse points, and remove only the repository's exact
+`.tmp/e2e-worker` directory.
+
+Token, acquisition ID, port, owner, and manifest checks gate every signal and deletion. POSIX managed
+wrappers are retained process-group leaders; if their parent IPC disappears, a started wrapper retires
+its own group. General POSIX teardown still checks that a marked leader is live, owned, and remains
+that group's leader immediately before signaling. If the leader is already absent while the numeric
+group remains live, PGID continuity is ambiguous and state is preserved without signaling. The
+leader/PGID checks and `kill(-pgid)` remain separate operations, so exit or reuse in that interval
+cannot be excluded without a retained kernel lifetime primitive. Windows teardown records
+full-resolution creation identity and admits a newly observed descendant only while the exact parent
+incarnation is still present and the child has strictly later creation ticks. Already captured
+descendants are terminated deepest first; a late orphan, PID reuse, or unavailable evidence preserves
+state instead of widening kill authority. The outer runner tree has the Job Object containment
+described above, but fixed-manifest cleanup still performs a final identity probe followed by an
+individual `taskkill /PID /F`; those are separate operations, so PID exit or reuse in that residual
+interval cannot be excluded. Filesystem containment uses lexical `path.resolve` checks only; it does
+not resolve or reject symlinks, Windows reparse points, or junctions and is not a hostile-filesystem
+boundary.
 
 **Env & secrets** (Worker `Env`): non-secret vars in `wrangler.toml` (`ENVIRONMENT`, `CORS_ORIGIN`,
 `VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `PULSE_MINT`, `PULSE_POOLS`); secrets via `wrangler secret put`
