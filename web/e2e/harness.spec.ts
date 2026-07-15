@@ -2,15 +2,17 @@ import { expect, test } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { E2E_PERSIST_PATH as STACK_PERSIST_PATH } from "../scripts/e2e-stack.mjs";
-import { E2E_PERSIST_PATH as FIXTURE_PERSIST_PATH } from "./helpers/workerFixture";
+import {
+  E2E_ORIGINS,
+  E2E_PERSIST_PATH as FIXTURE_PERSIST_PATH,
+} from "./helpers/workerFixture";
 
-const WORKER_ORIGIN = "http://127.0.0.1:8787";
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const EXPECTED_PERSIST_PATH = path.resolve(REPOSITORY_ROOT, ".tmp", "e2e-worker");
 
 test("harness smoke serves the built site through the real Worker", async ({ page }) => {
   await page.goto("/");
-  expect(new URL(page.url()).origin).toBe("http://localhost:4173");
+  expect(new URL(page.url()).origin).toBe(E2E_ORIGINS.web);
 
   const responses = await page.evaluate(async (workerOrigin) => {
     const [healthResponse, stateResponse] = await Promise.all([
@@ -24,7 +26,7 @@ test("harness smoke serves the built site through the real Worker", async ({ pag
       stateContentType: stateResponse.headers.get("content-type"),
       state: await stateResponse.json(),
     };
-  }, WORKER_ORIGIN);
+  }, E2E_ORIGINS.worker);
 
   expect(responses.healthOk).toBe(true);
   expect(responses.health).toMatchObject({ ok: true });

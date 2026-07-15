@@ -54,8 +54,10 @@ npm run e2e --prefix web   # Playwright desktop + mobile-390 (separate from veri
 ```
 
 The browser gate builds the web app against a real local Worker, migrated isolated D1, and
-local R2 persistence on ports 4173/8787. It runs serially without HTTP interception or mocked
-API responses, then terminates the owned processes and removes the isolated persistence.
+local R2 persistence on default ports 4173/8787 (validated environment overrides are supported).
+It runs serially without HTTP interception or mocked API responses. One random run token binds
+the launcher, fixture access, process manifest, shutdown request, and teardown; cleanup verifies
+that token, the run ports, and each process command line before terminating or deleting anything.
 
 Worker real-vendor suites (`npm run verify:live --prefix worker`) hit live APIs and are run
 manually before launch, never in the commit gate. Web `*.live.spec.ts` files still use the

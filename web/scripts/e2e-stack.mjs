@@ -1,39 +1,72 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  E2E_PERSIST_PATH,
+  E2E_TMP_ROOT,
+  REPOSITORY_ROOT,
+  assertRunToken,
+  assertSafePersistencePath,
+  directoryBelongsToRun,
+  e2eOrigins,
+  processIdentityMarker,
+  readE2EPorts,
+  shutdownRequestedFor,
+  terminateOwnedProcess,
+  writeRunManifest,
+  writeRunOwner,
+} from "./e2e-run-ownership.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
-export const REPOSITORY_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "../..");
-export const E2E_TMP_ROOT = path.resolve(REPOSITORY_ROOT, ".tmp");
-export const E2E_PERSIST_PATH = path.resolve(E2E_TMP_ROOT, "e2e-worker");
+export { REPOSITORY_ROOT, E2E_TMP_ROOT, E2E_PERSIST_PATH, assertSafePersistencePath };
 export const TEST_PULSE_MINT = "9C6hybhQ6Aycep9jaUnP6uL9ZYvDjUp1aSkFWPUFJtpj";
 
-const PROCESS_MANIFEST_PATH = path.resolve(E2E_PERSIST_PATH, "stack-processes.json");
-const SHUTDOWN_REQUEST_PATH = path.resolve(E2E_PERSIST_PATH, "shutdown-requested");
 const WORKER_ROOT = path.resolve(REPOSITORY_ROOT, "worker");
 const WEB_ROOT = path.resolve(REPOSITORY_ROOT, "web");
 const WRANGLER_CLI = path.resolve(WORKER_ROOT, "node_modules/wrangler/bin/wrangler.js");
 const VITE_CLI = path.resolve(WEB_ROOT, "node_modules/vite/bin/vite.js");
+const TEST_ULID_MODULE = path.resolve(WEB_ROOT, "e2e/fixtures/worker-ulid.mjs");
 const managedChildren = [];
 let shuttingDown = false;
 let cleanupComplete = false;
-let ownsPersistence = false;
 let shutdownWatcher;
+let activeRunToken = null;
+let activePorts = null;
 
-function comparablePath(value) {
-  const resolved = path.resolve(value);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+function oneArgument(argv, name) {
+  const prefix = `--${name}=`;
+  const matches = argv.filter((value) => value.startsWith(prefix));
+  if (matches.length !== 1) throw new Error(`E2E launcher requires one ${name} argument`);
+  return matches[0].slice(prefix.length);
 }
 
-export function assertSafePersistencePath(candidate = E2E_PERSIST_PATH) {
-  const tmpPrefix = `${comparablePath(E2E_TMP_ROOT)}${path.sep}`;
-  if (!comparablePath(candidate).startsWith(tmpPrefix)) {
-    throw new Error(`Refusing to clean persistence outside ${E2E_TMP_ROOT}: ${candidate}`);
+export function launcherRunConfiguration(argv = process.argv, env = process.env) {
+  const ownerArguments = argv.filter((value) => value.startsWith("--pleroma-e2e-owner="));
+  const roleArguments = argv.filter((value) => value.startsWith("--pleroma-e2e-role="));
+  if (ownerArguments.length !== 1 || roleArguments.length !== 1) {
+    throw new Error("E2E launcher requires one ownership token and the harness role");
   }
-  return path.resolve(candidate);
+  if (roleArguments[0] !== "--pleroma-e2e-role=harness") {
+    throw new Error("E2E launcher role must be harness");
+  }
+  const argumentToken = assertRunToken(ownerArguments[0].slice("--pleroma-e2e-owner=".length));
+  const environmentToken = assertRunToken(env.PLEROMA_E2E_RUN_TOKEN);
+  if (argumentToken !== environmentToken) {
+    throw new Error("E2E launcher ownership token does not match its environment");
+  }
+  const environmentPorts = readE2EPorts(env);
+  const argumentPorts = readE2EPorts({
+    PLEROMA_E2E_WEB_PORT: oneArgument(argv, "pleroma-e2e-web-port"),
+    PLEROMA_E2E_WORKER_PORT: oneArgument(argv, "pleroma-e2e-worker-port"),
+  });
+  if (
+    argumentPorts.web !== environmentPorts.web
+    || argumentPorts.worker !== environmentPorts.worker
+  ) throw new Error("E2E launcher port configuration does not match its environment");
+  return { runToken: argumentToken, ports: argumentPorts };
 }
 
 function npmCliPath() {
@@ -59,38 +92,28 @@ function runCommand(label, cwd, command, args, env = process.env) {
 }
 
 function writeProcessManifest() {
-  writeFileSync(PROCESS_MANIFEST_PATH, JSON.stringify({
-    harnessPid: process.pid,
+  if (activeRunToken === null) return;
+  if (activePorts === null) return;
+  writeRunManifest(E2E_PERSIST_PATH, activeRunToken, {
+    harness: { pid: process.pid, role: "harness", tree: false },
     children: managedChildren
-      .filter((child) => child.pid && child.exitCode === null)
-      .map((child) => child.pid),
-  }));
-}
-
-function terminateTree(child) {
-  if (!child.pid || child.exitCode !== null) return;
-  if (process.platform === "win32") {
-    spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    return;
-  }
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch (error) {
-    if (error?.code !== "ESRCH") throw error;
-  }
+      .filter(({ child }) => child.pid && child.exitCode === null)
+      .map(({ descriptor }) => descriptor),
+  }, activePorts);
 }
 
 function cleanup() {
   if (cleanupComplete) return;
   cleanupComplete = true;
   if (shutdownWatcher) clearInterval(shutdownWatcher);
-  for (const child of managedChildren.reverse()) terminateTree(child);
-  if (ownsPersistence) {
-    rmSync(assertSafePersistencePath(), { recursive: true, force: true });
-    ownsPersistence = false;
+  if (
+    activeRunToken !== null
+    && activePorts !== null
+    && directoryBelongsToRun(E2E_PERSIST_PATH, activeRunToken, activePorts)
+  ) {
+    for (const { descriptor } of [...managedChildren].reverse()) {
+      terminateOwnedProcess(E2E_PERSIST_PATH, activeRunToken, descriptor, activePorts);
+    }
   }
 }
 
@@ -104,16 +127,23 @@ function shutdown(exitCode) {
   }
 }
 
-function spawnManaged(label, cwd, command, args, env = process.env) {
+function spawnManaged(label, role, cwd, script, args, env = process.env) {
+  if (activeRunToken === null) throw new Error("E2E run ownership is not initialized");
   console.log(`[e2e-stack] starting ${label}`);
-  const child = spawn(command, args, {
+  const child = spawn(process.execPath, [
+    `--title=${processIdentityMarker(activeRunToken, role)}`,
+    script,
+    ...args,
+  ], {
     cwd,
     env,
     detached: process.platform !== "win32",
     stdio: "inherit",
     windowsHide: true,
   });
-  managedChildren.push(child);
+  if (!child.pid) throw new Error(`${label} did not receive a process ID`);
+  const descriptor = { pid: child.pid, role, tree: true };
+  managedChildren.push({ child, descriptor });
   writeProcessManifest();
   child.once("error", (error) => {
     if (shuttingDown) return;
@@ -170,20 +200,30 @@ async function waitForResponse(url, timeoutMs, validate) {
 }
 
 async function main() {
+  const configuration = launcherRunConfiguration();
+  activeRunToken = configuration.runToken;
+  activePorts = configuration.ports;
+  const origins = e2eOrigins(activePorts);
   process.once("SIGINT", () => shutdown(0));
   process.once("SIGTERM", () => shutdown(0));
   process.once("exit", cleanup);
 
-  await requireFreePort("127.0.0.1", 8787);
-  await requireFreePort("localhost", 4173);
+  await requireFreePort("127.0.0.1", activePorts.worker);
+  await requireFreePort("localhost", activePorts.web);
 
   const persistencePath = assertSafePersistencePath();
-  rmSync(persistencePath, { recursive: true, force: true });
+  if (existsSync(persistencePath)) {
+    throw new Error(`Refusing to replace E2E persistence without this run's owner token: ${persistencePath}`);
+  }
   mkdirSync(persistencePath, { recursive: true });
-  ownsPersistence = true;
+  writeRunOwner(persistencePath, activeRunToken, activePorts);
   writeProcessManifest();
   shutdownWatcher = setInterval(() => {
-    if (existsSync(SHUTDOWN_REQUEST_PATH)) shutdown(0);
+    if (
+      activeRunToken !== null
+      && activePorts !== null
+      && shutdownRequestedFor(persistencePath, activeRunToken, activePorts)
+    ) shutdown(0);
   }, 100);
 
   const npmCli = npmCliPath();
@@ -203,20 +243,21 @@ async function main() {
   const childEnv = { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" };
   spawnManaged(
     "local Worker",
+    "worker",
     WORKER_ROOT,
-    process.execPath,
+    WRANGLER_CLI,
     [
-      WRANGLER_CLI,
       "dev",
       "--local",
-      "--port", "8787",
+      "--port", String(activePorts.worker),
       "--persist-to", persistencePath,
-      "--var", "CORS_ORIGIN:http://localhost:4173",
+      "--var", `CORS_ORIGIN:${origins.web}`,
       "--var", `PULSE_MINT:${TEST_PULSE_MINT}`,
+      "--alias", `ulid=${TEST_ULID_MODULE}`,
     ],
     childEnv,
   );
-  await waitForResponse("http://127.0.0.1:8787/api/health", 60_000, async (response) => {
+  await waitForResponse(`${origins.worker}/api/health`, 60_000, async (response) => {
     const body = await response.json();
     return body?.ok === true;
   });
@@ -226,16 +267,17 @@ async function main() {
     REPOSITORY_ROOT,
     process.execPath,
     [npmCli, "run", "build", "--prefix", WEB_ROOT],
-    { ...process.env, VITE_API_BASE: "http://127.0.0.1:8787" },
+    { ...process.env, VITE_API_BASE: origins.worker },
   );
   spawnManaged(
     "Vite preview",
+    "web",
     WEB_ROOT,
-    process.execPath,
-    [VITE_CLI, "preview", "--host", "localhost", "--port", "4173", "--strictPort"],
+    VITE_CLI,
+    ["preview", "--host", "localhost", "--port", String(activePorts.web), "--strictPort"],
     process.env,
   );
-  await waitForResponse("http://localhost:4173/", 60_000, async () => true);
+  await waitForResponse(`${origins.web}/`, 60_000, async () => true);
   console.log("[e2e-stack] Worker, D1, R2, and built web preview are ready");
   await new Promise(() => {});
 }

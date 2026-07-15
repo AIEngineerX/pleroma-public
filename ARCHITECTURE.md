@@ -363,12 +363,16 @@ the Worker compiles it to `src/doctrine.generated.ts` (`compile:doctrine`); the 
 imports it `?raw` at runtime (`canonParse.ts`) and re-parses it at build time (`build-canon.mjs`) —
 the regex logic is duplicated in those two files and kept in sync by hand.
 
-The E2E stack preflights ports 8787/4173 before touching its isolated `.tmp/e2e-worker`
-persistence, applies all local D1 migrations, starts Wrangler with real local D1/R2, builds the web
-app against that Worker, and serves the built output. Specs mutate the same D1/R2 through Wrangler;
-they do not intercept HTTP or fabricate API responses. Global teardown terminates only the recorded
-process tree and removes only the owned persistence. An ownership test proves a foreign port owner
-and its sentinel data survive a refused start.
+The E2E stack preflights its validated Worker/web ports (8787/4173 by default) before touching
+isolated `.tmp/e2e-worker` persistence, applies all local D1 migrations, starts Wrangler with real
+local D1/R2, builds the web app against that Worker, and serves the built output. Specs mutate the
+same D1/R2 through Wrangler; they do not intercept HTTP or fabricate API responses. One random token
+binds launcher arguments, ports, fixture access, directory owner, process manifest, shutdown request,
+and teardown. Cleanup verifies the token and each recorded process command line before signaling,
+terminating, or deleting. A live manifest PID that fails the token/role proof blocks persistence
+deletion for that teardown attempt even if the process exits while teardown waits. Real-process
+ownership tests prove foreign directories and PID-reused processes survive another run's teardown
+while the owning run still cleans deterministically.
 
 **Env & secrets** (Worker `Env`): non-secret vars in `wrangler.toml` (`ENVIRONMENT`, `CORS_ORIGIN`,
 `VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `PULSE_MINT`, `PULSE_POOLS`); secrets via `wrangler secret put`
