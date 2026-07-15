@@ -18,6 +18,7 @@ export type DreamArchiveRiteResult =
 
 const IDENTITY_RETRY_INITIAL_MS = 500;
 const IDENTITY_RETRY_MAX_MS = 5_000;
+export const DREAM_REQUEST_TIMEOUT_MS = 5_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -87,15 +88,53 @@ export async function retryUnavailableDreamArchiveRite(
   return { status: "unavailable" };
 }
 
+export interface DreamFetchOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+function boundedRequestSignal(
+  parent: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal; cleanup(): void } {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("Dream request timeout must be a positive finite number");
+  }
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(parent?.reason);
+  if (parent?.aborted) relayAbort();
+  else parent?.addEventListener("abort", relayAbort, { once: true });
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException("Dream request timed out", "TimeoutError"));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    cleanup() {
+      clearTimeout(timer);
+      parent?.removeEventListener("abort", relayAbort);
+    },
+  };
+}
+
 export async function fetchDreams(
-  apiBase: string, cursor: string | null,
+  apiBase: string,
+  cursor: string | null,
+  options: DreamFetchOptions = {},
 ): Promise<DreamPage> {
   const q = cursor && CURSOR.test(cursor) ? `?cursor=${encodeURIComponent(cursor)}` : "";
-  const response = await fetch(`${apiBase}/api/dreams${q}`);
-  if (!response.ok) throw new Error(`dreams fetch failed: ${response.status}`);
-  const page: unknown = await response.json();
-  if (!isDreamPage(page)) throw new Error("dreams fetch returned an invalid page");
-  return page;
+  const request = boundedRequestSignal(
+    options.signal,
+    options.timeoutMs ?? DREAM_REQUEST_TIMEOUT_MS,
+  );
+  try {
+    const response = await fetch(`${apiBase}/api/dreams${q}`, { signal: request.signal });
+    if (!response.ok) throw new Error(`dreams fetch failed: ${response.status}`);
+    const page: unknown = await response.json();
+    if (!isDreamPage(page)) throw new Error("dreams fetch returned an invalid page");
+    return page;
+  } finally {
+    request.cleanup();
+  }
 }
 
 type LiveConvergence = Extract<BodyCommand, { kind: "converge" }>;
@@ -191,26 +230,70 @@ export async function resolveDreamArchiveRite(
   }
 }
 
-export type DreamPageLoader = (apiBase: string, cursor: null) => Promise<DreamPage>;
+export type DreamPageLoader = (
+  apiBase: string,
+  cursor: null,
+  signal: AbortSignal,
+) => Promise<DreamPage>;
+
+interface DreamPageCacheEntry {
+  controller: AbortController;
+  consumers: Set<symbol>;
+  promise: Promise<unknown>;
+  settled: boolean;
+}
+
+type DreamConfirmationCacheEntry = DreamPlateIdentityResult | Promise<DreamPlateIdentityResult>;
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("Dream request aborted", "AbortError");
+}
+
+function consumeWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(abortReason(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function loadDreamPage(apiBase: string, cursor: null, signal: AbortSignal): Promise<DreamPage> {
+  return fetchDreams(apiBase, cursor, { signal });
+}
 
 export class DreamPlateIdentityCache {
-  private readonly confirmations = new Map<string, Promise<DreamPlateIdentityResult>>();
-  private readonly pages = new Map<string, Promise<unknown>>();
+  private readonly confirmations = new Map<string, DreamConfirmationCacheEntry>();
+  private readonly pages = new Map<string, DreamPageCacheEntry>();
 
-  constructor(private readonly load: DreamPageLoader = fetchDreams) {}
+  constructor(private readonly load: DreamPageLoader = loadDreamPage) {}
 
   identifyCurrentRite(
     apiBase: string,
     dream: DreamView | null,
+    signal?: AbortSignal,
   ): Promise<DreamArchiveRiteResult> {
     if (dream === null) return Promise.resolve({ status: "mismatch" });
-    return resolveDreamArchiveRite(dream, this.pageForDream(apiBase, dream));
+    return resolveDreamArchiveRite(dream, this.pageForDream(apiBase, dream, signal));
   }
 
   confirm(
     apiBase: string,
     dream: DreamView | null,
     command: BodyCommand | null,
+    signal?: AbortSignal,
   ): Promise<DreamPlateIdentityResult> {
     const tuple = dreamPlateIdentityKey(dream, command);
     if (tuple === null) return Promise.resolve("mismatch");
@@ -218,32 +301,72 @@ export class DreamPlateIdentityCache {
     if (dream === null || convergence === null) return Promise.resolve("mismatch");
     const key = `${apiBase}\u0000${tuple}`;
     const cached = this.confirmations.get(key);
-    if (cached !== undefined) return cached;
-    const page = this.pageForDream(apiBase, dream);
+    if (typeof cached === "string") return Promise.resolve(cached);
+    if (cached !== undefined) {
+      if (signal === undefined) return cached;
+      return consumeWithSignal(cached, signal).catch(() => "unavailable");
+    }
+    const page = this.pageForDream(apiBase, dream, signal);
     const confirmation = resolveDreamPlateIdentity(dream, convergence, page);
-    this.confirmations.set(key, confirmation);
+    if (signal === undefined) this.confirmations.set(key, confirmation);
     void confirmation.then((result) => {
-      if (result === "unavailable" && this.confirmations.get(key) === confirmation) {
-        this.confirmations.delete(key);
+      if (result === "unavailable") {
+        if (this.confirmations.get(key) === confirmation) this.confirmations.delete(key);
+      } else {
+        this.confirmations.set(key, result);
       }
     });
     return confirmation;
   }
 
-  private pageForDream(apiBase: string, dream: DreamView): Promise<unknown> {
+  private pageForDream(
+    apiBase: string,
+    dream: DreamView,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (signal?.aborted) return Promise.reject(abortReason(signal));
     const key = `${apiBase}\u0000${dreamArchiveIdentityKey(dream)}`;
-    const cached = this.pages.get(key);
-    if (cached !== undefined) return cached;
-    const page = Promise.resolve().then(() => this.load(apiBase, null));
-    this.pages.set(key, page);
-    void page.then(
-      (result) => {
-        if (!isDreamPage(result) && this.pages.get(key) === page) this.pages.delete(key);
-      },
-      () => {
-        if (this.pages.get(key) === page) this.pages.delete(key);
-      },
-    );
-    return page;
+    let entry = this.pages.get(key);
+    if (entry === undefined) {
+      const controller = new AbortController();
+      const promise = Promise.resolve().then(() => this.load(apiBase, null, controller.signal));
+      entry = {
+        controller,
+        consumers: new Set(),
+        promise,
+        settled: false,
+      };
+      this.pages.set(key, entry);
+      const createdEntry = entry;
+      void promise.then(
+        (result) => {
+          createdEntry.settled = true;
+          if (!isDreamPage(result) && this.pages.get(key) === createdEntry) {
+            this.pages.delete(key);
+          }
+        },
+        () => {
+          createdEntry.settled = true;
+          if (this.pages.get(key) === createdEntry) this.pages.delete(key);
+        },
+      );
+    }
+
+    const consumer = Symbol("dream-page-consumer");
+    entry.consumers.add(consumer);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      entry.consumers.delete(consumer);
+      if (!entry.settled && entry.consumers.size === 0) {
+        if (this.pages.get(key) === entry) this.pages.delete(key);
+        entry.controller.abort(new DOMException("Dream page has no consumers", "AbortError"));
+      }
+    };
+    const page = signal === undefined
+      ? entry.promise
+      : consumeWithSignal(entry.promise, signal);
+    return page.finally(release);
   }
 }

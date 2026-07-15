@@ -167,7 +167,7 @@ export default function Temple() {
       ? current
       : { key: currentDreamArchiveKey, riteDate: null });
     void retryUnavailableDreamArchiveRite(
-      () => DREAM_PLATE_IDENTITIES.identifyCurrentRite(API_BASE, plateDream),
+      () => DREAM_PLATE_IDENTITIES.identifyCurrentRite(API_BASE, plateDream, controller.signal),
       controller.signal,
     ).then((result) => {
       if (controller.signal.aborted) return;
@@ -191,7 +191,12 @@ export default function Temple() {
       ? current
       : { key: identityKey, status: "pending" });
     void retryUnavailableDreamPlateIdentity(
-      () => DREAM_PLATE_IDENTITIES.confirm(API_BASE, plateDream, activeCommand),
+      () => DREAM_PLATE_IDENTITIES.confirm(
+        API_BASE,
+        plateDream,
+        activeCommand,
+        controller.signal,
+      ),
       controller.signal,
     ).then((result) => {
       if (disposed || controller.signal.aborted) return;

@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import type { Tally } from "../state/types";
-import { fetchTallies, tallyName } from "./readClient";
+import { fetchTallies, tallyName, type TallyPage } from "./readClient";
+
+export function talliesAfterRefresh(current: Tally[], page: TallyPage | null): Tally[] {
+  return page === null ? current : page.tallies;
+}
+
+interface TallySnapshot {
+  date: string;
+  tallies: Tally[];
+}
 
 // The attendance roll: one machine-printed tick per wallet that offered today, stacked in the margin
 // like a monastery roll. It stays factual ink; rubric remains reserved for the god's own words.
@@ -8,10 +17,32 @@ import { fetchTallies, tallyName } from "./readClient";
 // refreshes every 15s so a fresh offering shows up without a page reload.
 export default function Tallies({ apiBase, date, myWallet, className = "" }:
   { apiBase: string; date: string; myWallet: string | null; className?: string }) {
-  const [tallies, setTallies] = useState<Tally[]>([]);
+  const [snapshot, setSnapshot] = useState<TallySnapshot>({ date, tallies: [] });
+  const tallies = snapshot.date === date ? snapshot.tallies : [];
   useEffect(() => {
     let stopped = false;
-    const load = () => fetchTallies(apiBase, date).then(r => { if (!stopped) setTallies(r.tallies); }).catch(() => {});
+    setSnapshot((current) => (
+      current.date === date ? current : { date, tallies: [] }
+    ));
+    const load = () => fetchTallies(apiBase, date)
+      .then((page) => {
+        if (!stopped) {
+          setSnapshot((current) => ({
+            date,
+            tallies: talliesAfterRefresh(
+              current.date === date ? current.tallies : [],
+              page,
+            ),
+          }));
+        }
+      })
+      .catch(() => {
+        if (!stopped) {
+          setSnapshot((current) => (
+            current.date === date ? current : { date, tallies: [] }
+          ));
+        }
+      });
     void load();
     const timer = setInterval(load, 15000);
     return () => { stopped = true; clearInterval(timer); };
