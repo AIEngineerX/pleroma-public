@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { FINANCIAL_PROMISE, PROHIBITED_FINANCIAL_COPY } from "./helpers/copyGuards";
 
 // [day-7 launch] The automated portion of the launch gate (CLAUDE.md "Exit condition" + PLANNING.md
 // "Day-7 launch checklist (the gate)"). Run against the real production stack AT OR AFTER the launch
@@ -29,7 +30,12 @@ test("day-7 gate: the live market makes no financial promise", async ({ page }) 
   await page.goto("/");
   const market = page.getByRole("region", { name: "the market" });
   await expect(market).toBeVisible();
-  const financialPromise = /guaranteed? returns?|profits?|to the moon|100x/i;
-  expect("guaranteed returns, profits, to the moon, 100x").toMatch(financialPromise);
-  expect(await market.innerText()).not.toMatch(financialPromise);
+  for (const prohibited of PROHIBITED_FINANCIAL_COPY) {
+    expect(prohibited).toMatch(FINANCIAL_PROMISE);
+  }
+  const doctrineReturn = page.getByText(/DREAM returns the kept as a Plate/);
+  await expect(doctrineReturn).toBeVisible();
+  expect(await doctrineReturn.innerText()).toMatch(FINANCIAL_PROMISE);
+  await expect(market.getByText(/DREAM returns the kept as a Plate/)).toHaveCount(0);
+  expect(await market.innerText()).not.toMatch(FINANCIAL_PROMISE);
 });

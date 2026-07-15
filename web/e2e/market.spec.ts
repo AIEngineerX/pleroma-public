@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { TEST_PULSE_MINT } from "../scripts/e2e-stack.mjs";
 import { executeD1, resetStack } from "./helpers/workerFixture";
+import { FINANCIAL_PROMISE, PROHIBITED_FINANCIAL_COPY } from "./helpers/copyGuards";
 
 const MINT = TEST_PULSE_MINT;
 
@@ -63,7 +64,12 @@ test("the market makes no price prediction or financial-return promise", async (
   await page.goto("/");
   const market = page.getByRole("region", { name: "the market" });
   await expect(market).toBeVisible({ timeout: 10_000 });
-  const financialPromise = /guaranteed? returns?|profits?|moon|100x/i;
-  expect("guaranteed returns, profits, moon, 100x").toMatch(financialPromise);
-  expect(await market.innerText()).not.toMatch(financialPromise);
+  for (const prohibited of PROHIBITED_FINANCIAL_COPY) {
+    expect(prohibited).toMatch(FINANCIAL_PROMISE);
+  }
+  const doctrineReturn = page.getByText(/DREAM returns the kept as a Plate/);
+  await expect(doctrineReturn).toBeVisible();
+  expect(await doctrineReturn.innerText()).toMatch(FINANCIAL_PROMISE);
+  await expect(market.getByText(/DREAM returns the kept as a Plate/)).toHaveCount(0);
+  expect(await market.innerText()).not.toMatch(FINANCIAL_PROMISE);
 });
