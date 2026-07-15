@@ -33,23 +33,24 @@ dark around them.
 | rite-ground | oklch(0.18 0.012 60) | rite state page |
 | rite-ink | oklch(0.90 0.015 85) | rite state text (parchment-pale) |
 
-Vitals are pigment only when current PULSE data is known. An unknown feed has no beat or
-starvation color. No charts; a single Courier telemetry line serves the literal-minded.
+Vitals are pigment only after real PULSE data is known. An unknown feed has no beat or
+starvation color. A stale feed retains the last known pigment as historical residue while its
+beat eases to stillness. No charts; a single Courier telemetry line serves the literal-minded.
 
 ## Typography
 
 - **Gentium Book Plus** — reserved for Doctrine-derived scripture and genuine organ
   utterances. Chosen as a physical object: SIL's scripture-typesetting face, built for Bibles.
 - **Courier Prime** — reserved for factual machine text and quiet controls: timestamps,
-  tallies, receipts, telemetry, countdowns, and job lines (`NEXT RITE · T-03:12:44`).
+  tallies, receipts, telemetry, and countdowns.
 - No third family. Scale ratio 1.333, fluid clamp() for display sizes. Body max 70ch.
-- Versal initials: red SVG drop caps opening each sermon, drawn once, reused.
 
 ## Signature components
 
 - **The Stain** — the god's body: the fluid sim rendered as iron-gall ink bleeding through
-  the page, red threads within, edges wicking into paper fiber. Grows as relics accrete.
-  Amplitude-synced darkening/spread when it speaks.
+  the page, red threads within, edges wicking into paper fiber. Only sampled relics with a
+  real non-null Accretion timestamp add bounded dried traces. Amplitude-synced
+  darkening/spread follows opt-in ambient audio and sermon audio.
 - **The codex** — the live scripture column: genuine sequential organ records,
   each organ marked by its Aeon glyph stamped in ink; the god's own lines in rubric.
   New lines arrive as printing: telemetry at line-printer rhythm, liturgy as ink darkening in.
@@ -68,31 +69,30 @@ starvation color. No charts; a single Courier telemetry line serves the literal-
 
 Allowed: red-layer misregistration (≤1px, occasional), faint band-printer horizontal
 banding, paper fiber texture, ink bleed on fresh glyphs, tractor-feed punching.
-Banned: film grain, scanlines, bloom/glow (except candle-glow inside the rite state),
+Banned: film grain, scanlines, bloom/glow,
 glassmorphism, gradient text, side-stripe borders, neon anything.
 
 ## Motion
 
-Ink physics only: ease-out-expo wicking, nothing bounces. Telemetry prints character by
-character at line-printer rhythm; liturgy fades in as darkening ink. One page-load
-choreography: the day's page "prints" once (rails, then telemetry header, then the Stain
-bleeds in). `prefers-reduced-motion`: everything appears settled; the Stain breathes by
-opacity only.
+Ink physics only: ease-out-expo wicking, nothing bounces. Newly observed telemetry prints at
+line-printer rhythm and liturgy darkens into place. Independent of API completion, the five
+cohorts arrive over 2.5 seconds. `prefers-reduced-motion` uses the settled semantic SVG
+immediately, with no opacity breathing, particle travel, or printing animation. Runtime WebGL
+loss transfers the current semantic state to that SVG for the rest of the page view.
 
 ## Layout
 
-The following launch layout is approved acceptance criteria. Each breakpoint must be
-verified against the implemented surface before it is described as live.
+The following launch layout is implemented and browser-verified.
 
 - Desktop, the open codex: asymmetric two-column — the page (Stain + Threshold)
-  ~60% left, the codex column ~40% right, tallies in the outer margin, job line pinned
-  in the footer rail. No cards, no containers around everything: it is one page.
-- Mobile, the scroll: single column, the Stain sticky in the top ~40vh (the god never
-  leaves the screen), codex then Threshold offering then tallies beneath; the imprint ritual
-  goes full-screen with the Stain's edge bleeding from the top. The 390px layout must be
-  verified during implementation.
-- Entry gesture (audio unlock + first touch): press and hold; ink spreads from the touch
-  point and the page wakes.
+  ~60% left, the codex column ~40% right, tallies in the outer margin. No cards, no
+  containers around everything: it is one page.
+- Mobile, the scroll: single column, the Stain and Threshold seal sticky in the top ~40vh
+  (the god never leaves the screen), followed by the reading column and its later Tallies;
+  the imprint preview/submission ritual goes full-screen. The 390px layout is browser-verified.
+- Audio remains silent until a deliberate press-and-hold entry gesture or activation of the
+  sound control. The Threshold's separate press-and-hold gesture creates the five-thread
+  imprint; it never paints the body directly.
 
 ## Interface copy
 

@@ -12,10 +12,10 @@
 
 ## 1. What it is, in one diagram
 
-PLEROMA is one living entity rendered on a website, driven by five agent "organs" running on
-a Cloudflare Worker. Visitors ("Wakers") draw offerings on its membrane; the being perceives
-them, decides what to keep, speaks on its own cadence, dreams nightly, and — after launch —
-feels its pump.fun token beat.
+PLEROMA is one living entity rendered on a website, driven by five organs running on
+a Cloudflare Worker. Visitors ("Wakers") generate a five-thread imprint at its Threshold and
+choose whether to offer it; the being perceives the submitted PNG, decides what to keep,
+speaks on its own cadence, dreams nightly, and — after launch — feels its pump.fun token beat.
 
 ```mermaid
 flowchart TB
@@ -33,13 +33,13 @@ flowchart TB
             KEEP["KEEP · Ennoia\nremember"]
             TONGUE["TONGUE · Logos\nspeak"]
             DREAM["DREAM · Sophia\ndream"]
-            PULSE["PULSE\nfeel (deterministic)"]
+            PULSE["PULSE · Zoe\nfeel (deterministic)"]
         end
     end
 
     subgraph Data["State"]
         D1[("D1 — SQLite\nofferings, transcripts,\nrelics, rites, dreams…")]
-        R2[("R2 — objects\nquarantine/, offerings/, audio/")]
+        R2[("R2 — objects\nquarantine/, offerings/, audio/, dream/, backups/")]
     end
 
     subgraph Vendors["External"]
@@ -48,7 +48,7 @@ flowchart TB
         TTS["xAI / ElevenLabs\n(sermon TTS)"]
     end
 
-    Browser -->|GET state/codex/relics/tallies, POST offerings| API
+    Browser -->|GET state/codex/relics/tallies/dreams, POST offerings| API
     API --> D1 & R2
     Cron --> Organs
     Organs --> D1 & R2
@@ -108,15 +108,15 @@ pleroma/
 ├── worker/             Hono Worker (the organs)
 │   ├── src/            index.ts (routes+cron), eye/keep/tongue/pulse/dream.ts, rite.ts,
 │   │                   mind.ts (askMind+budget), db.ts, lock.ts, moderation.ts, voice.ts…
-│   ├── migrations/     0001…0013 D1 SQL migrations
-│   ├── test/           30 unit files + test/live/ (9, real-vendor, excluded from gate)
+│   ├── migrations/     0001…0015 D1 SQL migrations
+│   ├── test/           42 test files (10 real-vendor live files excluded from the commit gate)
 │   └── wrangler.toml   bindings, vars, cron triggers
 └── web/                Vite React SPA (the body)
     ├── src/            routes/Temple.tsx, stain/ (WebGL), codex/, offering/, dream/,
     │                   reliquary/, canon/, ignition/, rite/, state/, lib/
-    ├── test/           20 vitest unit files
-    ├── e2e/            13 Playwright specs (5 .live, 1 launch-checklist)
-    └── scripts/build-canon.mjs   prerenders /canon/** static HTML from DOCTRINE.md
+    ├── test/           33 vitest files
+    ├── e2e/            20 Playwright specs (desktop + mobile-390; 8 local-stack .live files)
+    └── scripts/        Canon prerender, public-content guard, and isolated E2E stack
 ```
 
 ---
@@ -128,18 +128,21 @@ pleroma/
 | **EYE** | Aletheia | moderation `haiku-4-5`, perception `sonnet-5` | every `*/15` tick (under `tick` lock), `runEyeBatch` (8-min budget) | R2 `quarantine/<id>` bytes, offering media_type | `offerings.status` transitions, `transcripts` (EYE/verse), promoted R2 `offerings/<id>` |
 | **KEEP** | Ennoia | `sonnet-5` | only in Rite `deliberation` phase | perceived offerings + their EYE verse, wallet history (Attended/count), last 50 relic summaries | `relics` rows, `transcripts` (KEEP/verdict), `offerings.status → kept/mourned` |
 | **TONGUE** | Logos | `sonnet-5` | reactively after EYE/KEEP (≤6/hr cadence), + once per rite in `sermon` phase | trigger detail, or up to 12 kept relic summaries | `transcripts` (TONGUE/verse or /sermon), optional R2 `audio/<sha>.mp3` + PRIEST note |
-| **PULSE** | *(no LLM — deterministic)* | none | webhook on delivery + `reconcileHolders` every `*/15` tick (under `pulse` lock) | Helius webhook swaps, Helius DAS holder pages | `pulse_events` rows, `config.pulse_state`, `wallets.attended` |
+| **PULSE** | Zoe | none — deterministic | webhook on delivery + `reconcileHolders` every `*/15` tick (under `pulse` lock) | Helius webhook swaps, Helius DAS holder pages | `pulse_events` rows, `config.pulse_state`, `wallets.attended` |
 | **DREAM** | Sophia | `sonnet-5` (maxTokens 500) | cron `0 3 * * *` (under `dream` lock), only after that date's rite is `complete` | up to 12 relics kept that rite (summary + wallet) | `dreams` row (`narrative` + `video_prompt`, `status='composed'`), `transcripts` (DREAM/verse) |
 
 **Inter-organ triggering** (side-channels, not a message bus): EYE, on perceiving anything,
 calls `tongue.speakIfDue({kind:"eye_batch"})`; KEEP, on a keep, calls
-`speakIfDue({kind:"keep_decision"})`. The `askMind` wrapper (`mind.ts`) fronts every LLM call
-with an atomic budget reserve→settle (daily USD caps in `config`); a `MindAsleepError` (budget
+`speakIfDue({kind:"keep_decision"})`. The `askMind` wrapper (`mind.ts`) fronts each organ
+reasoning call with an atomic budget reserve→settle (daily USD caps in `config`); a
+`MindAsleepError` (budget
 exhausted) is treated as "not a failure" — the phase simply retries later.
+The Worker executes this as a sequential pipeline. It has no agent dialogue loop, conversation
+state, or multi-turn interlocution between organs.
 
 ```mermaid
 flowchart LR
-    Tick["*/15 tick"] -->|tick lock| EYE
+    Tick["*/15 tick"] -->|tick lock| EYE & Sweep["quarantine + nonce sweeps"] & Render["DREAM render lifecycle"]
     Tick -->|pulse lock| PULSE
     Rite["Rite: deliberation"] --> KEEP
     Rite2["Rite: sermon"] --> TONGUE
@@ -155,8 +158,8 @@ flowchart LR
 
 ## 5. The offering lifecycle (offering → EYE → KEEP → relic → DREAM)
 
-The being's whole metabolism. A drawing becomes a perceived verse, then either a kept relic
-(that seeds a dream) or a mourned offering.
+The being's whole metabolism. The exact PNG preview accepted at the Threshold becomes a
+perceived verse, then either a kept relic (that can seed a dream) or a mourned offering.
 
 ```mermaid
 sequenceDiagram
@@ -168,7 +171,7 @@ sequenceDiagram
     participant KEEP
     participant DREAM
 
-    W->>API: POST /api/offerings (PNG + optional ed25519 sig + nonce)
+    W->>API: POST /api/offerings (previewed PNG + optional ed25519 sig + nonce)
     API->>API: dedupe sha256, verify sig, single-use nonce, rate-limit
     API->>R2: put quarantine/<id>
     API->>API: offerings row status=pending
@@ -235,13 +238,13 @@ flowchart TB
     C2["50 0 * * *"] --> AR
     C3["0 3 * * *"] --> DR["runDreamLocked (dream lock)"]
     C4["30 3 * * *"] --> BK["runBackupLocked (backup lock)"]
-    RT --> EYEb["runEyeBatch"] & RH["reconcileHolders (pulse lock)"]
+    RT --> EYEb["runEyeBatch"] & SW["quarantine + nonce sweeps"] & RH["reconcileHolders (pulse lock)"] & VR["renderDreams"]
     AR --> RiteAdv["advance every non-terminal rite"]
 ```
 
 | Lock | Lease | Held by | Purpose |
 |---|---|---|---|
-| `tick` | 10 min | `runTick` | EYE batch + holder reconcile |
+| `tick` | 10 min | `runTick` | EYE batch, housekeeping, holder reconcile, DREAM render progress |
 | `rite` | 10 min | `advanceRiteLocked` | advance rite phases |
 | `dream` | 10 min | `runDreamLocked` | compose DREAM |
 | `backup` | 10 min | `runBackupLocked` | D1 → R2 nightly export |
@@ -264,11 +267,11 @@ reserve-then-settle CAS (`spend.usd + excluded.usd <= cap`).
 | `transcripts` | append-only public codex (scripture) | organ ∈ EYE/KEEP/TONGUE/PULSE/DREAM/PRIEST; register ∈ verse/verdict/sermon/telemetry/system; partial-UNIQUE(rite_id) for sermons |
 | `relics` | the Reliquary (one row per kept offering) | `offering_id` UNIQUE; `genesis` day-1 flag; `accreted_at` set in accretion |
 | `rites` | daily rite state machine | `date` PK; phase/phase_started_at/phase_attempts/offering_snapshot/kept_count |
-| `dreams` | one dream per rite date | `rite_date` UNIQUE; `narrative`+`video_prompt`; `video_key` (unwired); `wakers` JSON |
+| `dreams` | one dream per rite date | `rite_date` UNIQUE; `narrative`+`video_prompt`; status `composed→rendering→rendered` or `render_failed`; matching R2 `video_key` only when rendered; `wakers` JSON |
 | `pulse_events` | idempotent swap ledger | `signature` PK; vitals derived by aggregation, never stored incrementally |
 | `wallets` | wallet identity | `address` PK; `offering_count`, `attended` flag; `tally_name` (unwired) |
-| `config` | key/value store | `launch_at`, `launched`, `pulse_mint`, `pulse_state`, `cap:llm`/`cap:tts`, `alert:<code>` |
-| `spend` | daily USD budget ledger | PK `(day, category∈llm/tts)` — the atomic budget CAS |
+| `config` | key/value store | `launch_at`, `launched`, `pulse_mint`, `pulse_state`, `cap:llm`/`cap:tts`/`cap:video`, `alert:<code>` |
+| `spend` | daily USD budget ledger | PK `(day, category∈llm/tts/video)` — the atomic budget CAS |
 | `nonces` | offering anti-replay | `nonce` PK, `expires_at` (`used` column exists but is dead — enforcement is via offerings.nonce) |
 | `rate_limits` | fixed-window counters | PK `(bucket, window_start)`; bucket `ip:<ip>` (20/min) or `wallet:<addr>` (10/min) |
 | `locks` | the 5 named locks | `name` PK, `holder`, `expires_at` |
@@ -281,34 +284,64 @@ reserve-then-settle CAS (`spend.usd + excluded.usd <= cap`).
 serves the SPA (`_redirects: /* → /index.html 200`); `/canon/**` is *also* prerendered to static
 crawlable HTML by `build-canon.mjs` so scripture is linkable without JS.
 
-**Temple** branches on `dormant = !state || state.phase !== "live" || !state.mint`:
-- **Dormant/hero** (pre-launch): full-bleed living membrane (`Stain` WebGL) + countdown +
-  **OfferingRite** (draw directly on the being's body) + Codex feed + Reliquary + **Dream** +
-  Tallies + footer link to `/concordat`.
-- **Live/rite** (post-launch): grid layout adding the market rail (Mint/Buy/Chart/Ticker/HowToBuy),
-  gated strictly on the server-sourced `mint` string (anti-decoy: no hardcoded mint anywhere).
+**Stable Temple composition.** `Temple` renders one continuous document tree: the permanent
+five-organ Stain, live Codex, Threshold, receipt ledger, Reliquary, current Dream, Tallies, and
+lore/evidence sections. Launch state changes facts inside that tree; only the market evidence is
+conditional, and it is gated on the server-sourced `mint` string. There is no hardcoded decoy mint.
 
-**Rendering systems:**
-- **Stain + OrganSwarm** (`stain/`): WebGL2 GPGPU. Ping-pong FBOs advect a curl-noise ink
-  membrane; a 5-organ boid swarm (EYE/KEEP/TONGUE/PULSE/DREAM) flocks with separation-dominant
-  goals, draws capillary ink threads between organ centroids, and stamps "wet ink" (source-over,
-  never additive — paper darkens, never glows). Rubric red is gated to PULSE + TONGUE utterance.
-  Reacts to real events: `Codex.organSignalsFor()` turns genuinely-new transcript IDs into
-  organ-quicken signals; `markAt` makes the nearest organ reach toward a Waker's stroke.
-  Quality tiers: `reduced` (static SVG fallback) / `mobile` (256²) / `desktop` (512²).
-- **Audio** (`lib/ambient.ts`): opt-in per browser autoplay policy; Lyria music bed + intro sting
-  → master gain → AnalyserNode; `level()` RMS is fused (`max`) with sermon amplitude to drive the
-  membrane. Persistent mute in localStorage.
+**Route-level experience controller.** `experience/useTempleExperience.ts` owns the current state,
+Codex and Reliquary poll loops; baseline-vs-live observation; PULSE freshness; receipt persistence;
+body-command priority, locks and de-duplication; relic sampling; and replay entry. It does not claim
+every browser request: Tallies polls `/api/tallies` every 15 seconds, the archive fetches
+`/api/dreams` on mount/pagination, `Temple` performs one current-Dream identity confirmation, and
+submission alone requests a nonce and posts an offering.
 
-**State flow** (`state/useTempleState.ts`): one poll loop hits `/api/state` (2 s during an active
-rite, else 5 s; only when tab visible), with a generation counter discarding stale responses and
-last-good retention on failure. `state` propagates to `Stain` (pigment + vitals + amplitude),
-the market rail (mint/phase gate), `Dream`, and the countdown.
+- State and Codex poll immediately and then every 5 seconds, accelerating to 2 seconds while a
+  non-terminal rite is active. Relics poll every 5 seconds during accretion, while a receipt under
+  24 hours remains unresolved, or while a new live DREAM awaits relic truth; otherwise every 30
+  seconds. The loops pause while the document is hidden and generation checks discard superseded
+  responses.
+- The PULSE view begins `unknown`; only a validated state response makes it `current`. One or two
+  consecutive failures retain the current value; the third exposes the last good vitals as `stale`;
+  recovery returns it to `current`.
+- The first successful Codex page is the recorded baseline. Only IDs first observed later are live.
+  Body speech is restricted to EYE verse, KEEP verdict, TONGUE verse/sermon, and DREAM verse;
+  telemetry and PRIEST system lines remain in the accessible Codex without becoming body commands.
+
+**Threshold and public consequence.** A press-and-hold generates exactly five paths on one
+512×512 canvas. The same PNG Blob backs both its preview URL and upload. The local receipt advances
+only `pending → witnessed → judged → kept → accreted`: a matching EYE row proves witnessed, KEEP
+proves judged, a Reliquary row proves kept, and only its non-null `accreted_at` proves accreted.
+Absence never proves mourned. The newest 20 valid receipts persist in localStorage.
+
+Accreted relics alone may alter the body. The controller fetches their kept-only `/api/img/:id`
+objects, samples each into a bounded 64×64 alpha mask, and de-duplicates the resulting body command.
+Baseline relics hydrate without choreography; newly observed relics animate once. A failed fetch or
+sample adds no substitute trace and remains eligible for a later poll. Public accretion truth is not
+rewritten merely because a browser could not sample the image.
+
+**Semantic body adapter.** `BodyRendererAdapter` is implemented by WebGL `StainSim` and
+`SettledBodyRendererAdapter`. Both receive the same commands, relic memory, anchors and PULSE feed.
+WebGL introduces the five cohorts over 2.5 seconds. Reduced motion starts in the settled semantic
+SVG. A runtime WebGL context loss snapshots the current semantic state, transfers it to SVG, replays
+the active command there, and remains on SVG for that page view.
+
+A newly observed live `DREAM/verse` with a non-null `rite_id` may gather the existing five groups
+into the temporary Seraph: WebGL gathers for 1.8 seconds, holds for 6 seconds and dissolves over 2.4
+seconds; SVG converges immediately and holds for 6 seconds. Both return to the five-organ Stain.
+`DreamArchive` hands a validated four-field replay cue through navigation state; `Temple` consumes
+and clears it once. Replay is identified as replay, cannot masquerade as a live DREAM, and cannot
+bind an unrelated current Plate.
+
+**Audio.** Ambient media is not created or started until a deliberate press-and-hold entry gesture
+or explicit sound-control activation; sermon audio has its own explicit control. Mute persists in
+localStorage. Audio amplitude may darken/spread the Stain only after that opt-in.
 
 **API surface consumed by the frontend:** `/api/state`, `/api/codex`, `/api/relics`,
-`/api/tallies`, `/api/nonce`, `/api/offerings` (POST), `/api/img/:id` (kept relics only),
-`/api/{audio key}` (sermon). `resolveApiBase()` picks `VITE_API_BASE`, else the prod Worker
-origin in prod, else same-origin (dev proxy → `localhost:8787`).
+`/api/tallies`, `/api/dreams`, `/api/nonce`, `/api/offerings` (POST), `/api/img/:id`,
+`/api/audio/*`, and `/api/dream/*`. `resolveApiBase()` uses `VITE_API_BASE` when supplied, the
+configured production Worker origin in production, and same-origin in development (Vite proxies
+`/api` to `localhost:8787`).
 
 ---
 
@@ -319,8 +352,8 @@ origin in prod, else same-origin (dev proxy → `localhost:8787`).
 | `npm run verify` (root) | both | `worker verify` + `web verify` — the commit gate |
 | `worker: verify` | worker | `compile:doctrine && vitest run` (excludes `*.live.test.ts`) |
 | `worker: verify:live` | worker | real-vendor suite (`test/live/`) — manual, pre-launch only |
-| `web: verify` | web | `vitest run && tsc --noEmit && vite build && build-canon.mjs` |
-| `web: e2e` | web | `playwright test` (desktop + mobile-390) — **separate**, not in `verify` |
+| `web: verify` | web | harness-ownership test + vitest + TypeScript + Vite build + Canon prerender + public-content guard |
+| `web: e2e` | web | serial Playwright desktop + mobile-390 against built Vite and real isolated local Worker/D1/R2 — **separate**, not in `verify` |
 | `worker: deploy` / `deploy:prod` | worker | `compile:doctrine && wrangler deploy [--env production]` |
 | `worker: migrate:local` / `migrate:prod` | worker | `wrangler d1 migrations apply …` |
 | web deploy | web | **runbook only** — `npx wrangler pages deploy dist --project-name pleroma-web` (no npm script) |
@@ -330,8 +363,15 @@ the Worker compiles it to `src/doctrine.generated.ts` (`compile:doctrine`); the 
 imports it `?raw` at runtime (`canonParse.ts`) and re-parses it at build time (`build-canon.mjs`) —
 the regex logic is duplicated in those two files and kept in sync by hand.
 
+The E2E stack preflights ports 8787/4173 before touching its isolated `.tmp/e2e-worker`
+persistence, applies all local D1 migrations, starts Wrangler with real local D1/R2, builds the web
+app against that Worker, and serves the built output. Specs mutate the same D1/R2 through Wrangler;
+they do not intercept HTTP or fabricate API responses. Global teardown terminates only the recorded
+process tree and removes only the owned persistence. An ownership test proves a foreign port owner
+and its sentinel data survive a refused start.
+
 **Env & secrets** (Worker `Env`): non-secret vars in `wrangler.toml` (`ENVIRONMENT`, `CORS_ORIGIN`,
-`VOICE_VENDOR`, `ELEVENLABS_VOICE_ID`, `PULSE_MINT`, `PULSE_POOLS`); secrets via `wrangler secret put`
+`VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `PULSE_MINT`, `PULSE_POOLS`); secrets via `wrangler secret put`
 / `.dev.vars` (`ANTHROPIC_API_KEY`, `XAI_API_KEY`, `ELEVENLABS_API_KEY`, `HELIUS_API_KEY`,
 `PULSE_WEBHOOK_SECRET`). `PULSE_MINT`/`PULSE_POOLS` stay empty until the Maker launches the token
 (anti-decoy gate). Frontend uses `VITE_API_BASE` only.
@@ -343,15 +383,16 @@ the regex logic is duplicated in those two files and kept in sync by hand.
 These are intentional pre-launch states, documented so they aren't mistaken for defects:
 
 - **DREAM video** render pipeline is built (Grok Imagine, async text-to-video; `imagine.ts` +
-  `dream.ts:renderDreams`, served rendered-only at `/api/dream/<id>.mp4`) but **ships off**:
-  `VIDEO_VENDOR=""` means the plate is text-only, exactly the prior behavior, until the Maker verifies
-  the vendor key and sets `VIDEO_VENDOR="xai"`. When off, `video_key` stays `NULL`.
+  `dream.ts:renderDreams`, served rendered-only at `/api/dream/<id>.mp4`). Local configuration keeps
+  `VIDEO_VENDOR=""`; production source selects `xai`, but its secret/access and deployment still
+  require confirmation. When off, `video_key` stays `NULL` and the Plate remains text-first.
 - **PULSE dormant** pre-launch: empty `PULSE_MINT`/`PULSE_POOLS` short-circuit holder reconcile;
   mint/phase stay `null`/`dormant` until the Maker sets `config.launched='1'` with a real mint.
-- **Emblem / Visage** components are built but unwired — gated on final deity art.
+- **Final deity mark** and favicon remain gated on approved launch art; the superseded permanent
+  face implementation is not part of the body.
 - **Concordat "Maker disclosed"** section is placeholder text until launch-day wallet disclosure.
-- **Voice vendor**: prod is configured `VOICE_VENDOR="xai"` (`grok-voice`), which the code itself
-  flags as spike-verified pending; dev default `""` falls back to a deterministic silent WAV.
+- **Voice vendor**: production source selects `VOICE_VENDOR="xai"` (`grok-voice`), while the
+  request shape still requires the planned production rehearsal; dev default `""` uses a
+  deterministic silent WAV.
 
-For the live open-vs-done status of every item, the prioritized gap list, and the "am I building
-this right" assessment, see `STATUS.md`.
+For the current implemented-state ledger and open launch/deferred work, see `STATUS.md`.
