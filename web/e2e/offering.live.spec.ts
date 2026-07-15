@@ -121,7 +121,7 @@ test("keyboard hold creates a preview and letting it fade releases the threshold
   await expect(seal).toBeVisible();
 });
 
-test("announces one genuine receipt transition while launch replaces the portal host", async ({ page }) => {
+test("announces one genuine receipt transition without replacing the stable receipt ledger", async ({ page }) => {
   executeD1("UPDATE config SET value = '0' WHERE key = 'launched';");
   const offeringId = "portal-receipt-offering";
   await page.addInitScript(({ id, submittedAt }) => {
@@ -140,6 +140,7 @@ test("announces one genuine receipt transition while launch replaces the portal 
   await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
   const receipt = page.locator(`[data-offering-id="${offeringId}"]`);
   await expect(receipt).toHaveAttribute("data-receipt-stage", "pending");
+  const originalReceipt = await receipt.elementHandle();
   await expect(receipt).toContainText("awaiting the Eye");
   await expect(page.locator('p[role="status"]').filter({ hasText: "witnessed by the Eye" })).toHaveCount(0);
 
@@ -173,6 +174,7 @@ test("announces one genuine receipt transition while launch replaces the portal 
 
   await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
   await expect(receipt).toHaveAttribute("data-receipt-stage", "witnessed", { timeout: 10_000 });
+  expect(await receipt.evaluate((node, original) => node === original, originalReceipt)).toBe(true);
   await expect(receipt).toContainText("witnessed by the Eye");
   await expect(page.locator('p[role="status"]').filter({ hasText: "witnessed by the Eye" }))
     .toHaveText("witnessed by the Eye");
@@ -181,7 +183,7 @@ test("announces one genuine receipt transition while launch replaces the portal 
   ))).toBe(1);
 });
 
-test("does not repeat a witnessed announcement when a later launch replaces the portal host", async ({ page }) => {
+test("does not repeat a witnessed announcement when later launch state changes", async ({ page }) => {
   executeD1("UPDATE config SET value = '0' WHERE key = 'launched';");
   const offeringId = "sequential-portal-receipt";
   await page.addInitScript(({ id, submittedAt }) => {
@@ -251,13 +253,14 @@ test("does not repeat a witnessed announcement when a later launch replaces the 
   ))).toBe(1);
 });
 
-test("cancels an active keyboard hold when launch replaces the portal host", async ({ page }) => {
+test("preserves an active keyboard hold when launch state changes", async ({ page }) => {
   executeD1("UPDATE config SET value = '0' WHERE key = 'launched';");
   await page.goto("/");
   await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
 
   const threshold = page.locator("[data-threshold-offering]");
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
+  const originalSeal = await seal.elementHandle();
   await seal.focus();
   await page.keyboard.down("Space");
   await expect(threshold).toHaveAttribute("data-threshold-phase", "holding");
@@ -266,17 +269,11 @@ test("cancels an active keyboard hold when launch replaces the portal host", asy
   executeD1("UPDATE config SET value = '1' WHERE key = 'launched';");
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
+  await expect(threshold).toHaveAttribute("data-threshold-phase", "holding");
+  await expect(threshold).toHaveAttribute("data-threshold-locked", "true");
+  expect(await seal.evaluate((node, original) => node === original, originalSeal)).toBe(true);
   await page.keyboard.up("Space");
 
-  await expect(threshold).toHaveAttribute("data-threshold-phase", "idle");
-  await expect(threshold).toHaveAttribute("data-threshold-locked", "false");
-  await expect(page.locator("img[data-threshold-preview]")).toHaveCount(0);
-
-  const replacementSeal = page.getByRole("button", { name: "hold the threshold seal" });
-  await replacementSeal.focus();
-  await page.keyboard.down("Enter");
-  await page.waitForTimeout(120);
-  await page.keyboard.up("Enter");
   await expect(page.locator("img[data-threshold-preview]")).toBeVisible();
 });
 

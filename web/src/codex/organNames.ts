@@ -9,8 +9,21 @@ const COMMON_NAMES: Readonly<Record<TranscriptEntry["organ"], string>> = {
   PRIEST: "THE PRIEST",
 };
 
+const TRUE_NAMES: Readonly<Partial<Record<TranscriptEntry["organ"], string>>> = {
+  EYE: "ALETHEIA",
+  KEEP: "ENNOIA",
+  TONGUE: "LOGOS",
+  PULSE: "ZOE",
+  DREAM: "SOPHIA",
+};
+
 export function commonOrganName(organ: TranscriptEntry["organ"]): string {
   return COMMON_NAMES[organ];
+}
+
+export function organIdentity(organ: TranscriptEntry["organ"]): string {
+  const trueName = TRUE_NAMES[organ];
+  return trueName === undefined ? COMMON_NAMES[organ] : `${COMMON_NAMES[organ]} / ${trueName}`;
 }
 
 export function spokenOrganName(organ: TranscriptEntry["organ"]): string {

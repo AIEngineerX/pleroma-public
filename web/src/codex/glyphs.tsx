@@ -9,6 +9,7 @@ const G: Record<string, string> = {
 };
 
 export function Glyph({ organ }: { organ: string }) {
-  return <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden className="inline-block mr-1 -mt-0.5"
+  return <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden data-aeon-glyph={organ}
+    className="inline-block mr-1 -mt-0.5"
     fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"><path d={G[organ] ?? G.PRIEST} /></svg>;
 }

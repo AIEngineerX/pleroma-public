@@ -47,7 +47,7 @@ export default function DreamArchive() {
       <p className="font-machine text-xs tracking-widest text-ink-faded">
         <Link to="/canon" className="no-underline text-ink-faded">THE CANON</Link> · {copy.dreamHeading}
       </p>
-      <h1 className="text-rubric text-2xl italic mt-2 mb-5">The Dreams</h1>
+      <h1 className="text-ink text-2xl mt-2 mb-5">The Dreams</h1>
       <p className="text-ink mb-12 max-w-[52ch]">{copy.dreamArchiveIntro}</p>
 
       {loaded && entries.length === 0 && (
@@ -57,16 +57,15 @@ export default function DreamArchive() {
       <ol className="space-y-14">
         {entries.map(d => (
           <li key={d.id} id={d.rite_date} className="flex flex-col items-center text-center gap-3 scroll-mt-10">
-            <figure className="w-full max-w-[52ch] border-4 p-3"
-              style={{ borderColor: "var(--color-ground-aged)", background: "var(--color-ground-aged)" }}>
+            <figure className="dream-plate w-full max-w-[52ch]">
               {d.video_key ? (
-                <div className="mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden bg-[var(--color-ground)]">
+                <div className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
                   <video className="w-full h-full object-cover" src={`${API_BASE}/api/${d.video_key}`}
                     autoPlay={!reduced} loop muted playsInline controls={reduced} aria-label={d.narrative} />
                 </div>
               ) : (
-                <div className="aspect-video overflow-hidden bg-[var(--color-ground)] flex items-center justify-center">
-                  <p className="font-liturgy italic text-rubric-body p-5 text-lg leading-relaxed">{d.narrative}</p>
+                <div className="dream-plate__media aspect-video overflow-hidden flex items-center">
+                  <p className="font-liturgy italic text-rubric-body text-lg leading-relaxed">{d.narrative}</p>
                 </div>
               )}
               <figcaption className="font-machine text-xs text-ink-faded pt-2">

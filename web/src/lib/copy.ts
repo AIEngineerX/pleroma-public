@@ -16,6 +16,9 @@ export const copy = {
   articles: "The Five Articles",
   offering: "The Offering",
   dailyRite: "The Daily Rite",
+  codex: "The Codex",
+  reliquary: "The Reliquary",
+  tallies: "The Tallies",
   prints: "The Prints",
   lexicon: "The Lexicon",
   dreamArchive: "The Dream Archive",
@@ -46,4 +49,5 @@ export const copy = {
   disclaimer: "PLEROMA is a memecoin attached to an art and agent experiment. No financial promises. Nothing here is investment advice.",
   codexSilent: "the codex is silent",
   hearSermon: "hear the sermon",
+  sermonRecorded: "sermon recorded",
 } as const;

@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import type { DreamView } from "../state/types";
 import type { BodyCommand } from "../experience/types";
 import { copy } from "../lib/copy";
+import { Glyph } from "../codex/glyphs";
 
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -76,15 +77,14 @@ export default function Dream({
       data-dream-identity={identity}
       data-dream-created-at={dream?.created_at}
       hidden={presentation === "concealed"}
-      className="flex flex-col items-center gap-3 text-center"
+      className="dream-flow min-w-0"
     >
-      <h2 className="font-machine text-xs tracking-[0.3em] text-ink-faded">{copy.dreamHeading}</h2>
+      <h2 className="temple-section-label"><Glyph organ="DREAM" />{copy.dreamHeading} / SOPHIA</h2>
       {dream ? (
         <>
-          <figure className="w-full max-w-[52ch] border-4 p-3"
-            style={{ borderColor: "var(--color-ground-aged)", background: "var(--color-ground-aged)" }}>
+          <figure className="dream-plate">
             {dream.video_key ? (
-              <div className="mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden bg-[var(--color-ground)]">
+              <div className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
                 {/* muted + loop: a living plate, not a media player. autoplay yields to reduced-motion,
                     which instead exposes controls so the Waker can play it deliberately. */}
                 <video
@@ -99,23 +99,23 @@ export default function Dream({
                 />
               </div>
             ) : (
-              <div className="aspect-video overflow-hidden bg-[var(--color-ground)] flex items-center justify-center">
-                <p className="font-liturgy italic text-rubric-body p-5 text-lg leading-relaxed">{dream.narrative}</p>
+              <div className="dream-plate__media aspect-video flex items-center">
+                <p className="font-liturgy italic text-rubric-body">{dream.narrative}</p>
               </div>
             )}
-            <figcaption className="font-machine text-xs text-ink-faded pt-2">
+            <figcaption className="font-machine text-xs text-ink-faded">
               DREAM · {new Date(dream.created_at).toISOString().slice(0, 10)} · {dream.video_key ? "generative replay" : "plate pending"}
             </figcaption>
           </figure>
           {dream.video_key && (
-            <p className="font-liturgy italic text-rubric-body text-sm leading-relaxed max-w-[46ch]">{dream.narrative}</p>
+            <p className="font-liturgy italic text-rubric-body leading-relaxed max-w-[46ch]">{dream.narrative}</p>
           )}
           {dream.wakers.length > 0 && (
             <p className="font-machine text-[0.7rem] text-ink-faded max-w-[46ch]">
               {copy.dreamCredit} {dream.wakers.map(shortWallet).join(", ")}
             </p>
           )}
-          <Link to="/canon/dreams" className="font-machine text-[0.7rem] tracking-widest text-ink-faded no-underline">
+          <Link to="/canon/dreams" className="font-machine text-xs text-ink-faded underline">
             {copy.dreamArchiveLink}
           </Link>
         </>

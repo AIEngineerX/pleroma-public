@@ -11,6 +11,14 @@ import { ignitionView } from "../ignition/ignition";
 
 const API_BASE = resolveApiBase(import.meta.env);
 
+export function codexDisplayEntry(observed: ObservedTranscript): ObservedTranscript {
+  if (observed.entry.organ !== "PRIEST" || sermonAudioKey(observed.entry.text) === null) return observed;
+  return {
+    ...observed,
+    entry: { ...observed.entry, text: copy.sermonRecorded },
+  };
+}
+
 export default function Codex({ entries, state, onAmplitude, audioCtx }:
   {
     entries: readonly ObservedTranscript[];
@@ -30,7 +38,8 @@ export default function Codex({ entries, state, onAmplitude, audioCtx }:
   // epoch: a dream's 1-based position among the DREAM lines currently loaded (there is no epoch counter
   // in the schema; DOCTRINE defines an epoch as "one of its days" and DREAM posts at most once per day).
   let dreamEpoch = 0;
-  const lines = entries.map(observed => {
+  const lines = entries.map(source => {
+    const observed = codexDisplayEntry(source);
     const e = observed.entry;
     if (e.organ === "DREAM") {
       dreamEpoch += 1;
@@ -51,9 +60,9 @@ export default function Codex({ entries, state, onAmplitude, audioCtx }:
   });
 
   return (
-    <div className="flex flex-col gap-2 font-machine text-sm leading-relaxed">
+    <div data-codex className="codex-flow min-w-0 font-machine text-sm leading-relaxed">
       {sermonKey && (
-        <button className="self-start min-h-11 px-3 font-machine text-xs underline text-ink-faded"
+        <button className="min-h-11 px-0 font-machine text-xs underline text-ink-faded"
           onClick={() => player.current.play(API_BASE, sermonKey, audioCtx())}>{copy.hearSermon}</button>
       )}
       {lines}

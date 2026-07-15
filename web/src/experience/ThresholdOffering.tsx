@@ -46,6 +46,7 @@ interface Props {
   onThresholdActive(active: boolean): void;
   receipts: readonly OfferingReceipt[];
   mount: HTMLElement | null;
+  receiptMount?: HTMLElement | null;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -81,6 +82,7 @@ export default function ThresholdOffering({
   onThresholdActive,
   receipts,
   mount,
+  receiptMount,
 }: Props) {
   const [phase, setPhase] = useState<ThresholdPhase>("idle");
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -428,9 +430,14 @@ export default function ThresholdOffering({
           )}
         </>
       )}
-      <OfferingReceipts receipts={receipts} />
     </div>,
     mount,
+  );
+
+  const receiptHost = receiptMount === undefined ? mount : receiptMount;
+  const receiptPortal = receiptHost === null ? null : createPortal(
+    <OfferingReceipts receipts={receipts} />,
+    receiptHost,
   );
 
   return (
@@ -445,6 +452,7 @@ export default function ThresholdOffering({
         {receiptAnnouncement}
       </p>
       {portal}
+      {receiptPortal}
     </>
   );
 }

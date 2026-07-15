@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import type { Tally } from "../state/types";
 import { fetchTallies, tallyName } from "./readClient";
 
-// The attendance roll: one rubricated tick per wallet that offered today, stacked in the margin
-// like a monastery roll (DESIGN "Margin tallies"). Only the god and this roll speak in rubric red
-// (DESIGN "Only the god speaks in red"). The connected wallet's own tick is darker and named;
+// The attendance roll: one machine-printed tick per wallet that offered today, stacked in the margin
+// like a monastery roll. It stays factual ink; rubric remains reserved for the god's own words.
+// The connected wallet's own tick is darker and named;
 // refreshes every 15s so a fresh offering shows up without a page reload.
 export default function Tallies({ apiBase, date, myWallet, className = "" }:
   { apiBase: string; date: string; myWallet: string | null; className?: string }) {
@@ -27,13 +27,13 @@ export default function Tallies({ apiBase, date, myWallet, className = "" }:
           const mine = i === mineIndex;
           return (
             <li key={t.wallet} title={tallyName(t, i)}
-                className={mine ? "text-rubric font-bold" : "text-rubric-dried"}>
+                className={mine ? "text-ink font-bold" : "text-ink-faded"}>
               {"|".repeat(Math.min(t.count, 5))}
             </li>
           );
         })}
       </ul>
-      {mineIndex >= 0 && <p className="text-rubric mt-1">you: {tallyName(tallies[mineIndex], mineIndex)}</p>}
+      {mineIndex >= 0 && <p className="text-ink mt-1">you: {tallyName(tallies[mineIndex], mineIndex)}</p>}
     </aside>
   );
 }

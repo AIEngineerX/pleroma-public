@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { contrastRatio } from "../src/lib/a11y";
+
+const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const dreamArchive = readFileSync(new URL("../src/canon/DreamArchive.tsx", import.meta.url), "utf8");
+const riteInversion = readFileSync(new URL("../src/rite/RiteInversion.tsx", import.meta.url), "utf8");
 
 // EXTERNAL GROUND TRUTH (not self-consistency): these two contrast values are published WCAG facts, so a
 // wrong matrix or a wrong luminance formula fails here even though it might pass the token-pair thresholds.
@@ -24,5 +29,28 @@ describe("token contrast on parchment (WCAG AA)", () => {
   });
   it("bright rubric is reserved for display sizes (large-text AA >=3)", () => {
     expect(contrastRatio("oklch(0.55 0.20 32)", ground)).toBeGreaterThanOrEqual(3.0);
+  });
+});
+
+describe("printed-document interaction contract", () => {
+  it("gives every action one global flat-ink focus treatment", () => {
+    expect(styles).toMatch(/:where\([^)]*(?:a|button)[^)]*\):focus-visible/);
+    expect(styles).toMatch(/outline:\s*1px\s+solid\s+currentColor/);
+    expect(styles).toMatch(/focus-visible[^}]*box-shadow:\s*none/s);
+  });
+
+  it("sets the global visible-action floor to 44 by 44 pixels", () => {
+    expect(styles).toMatch(/min-block-size:\s*44px/);
+    expect(styles).toMatch(/min-inline-size:\s*44px/);
+  });
+
+  it("keeps archive plates and factual rite status in their printed roles", () => {
+    expect(dreamArchive).not.toContain("border-4");
+    expect(dreamArchive).not.toMatch(/<h1[^>]*text-rubric/);
+    expect(riteInversion).not.toContain("font-liturgy");
+  });
+
+  it("carries the active rite ground onto the sticky body sheet", () => {
+    expect(styles).toMatch(/\.rite-active\s+\.temple-body-page\s*{[^}]*background:\s*var\(--color-rite-ground\)/s);
   });
 });

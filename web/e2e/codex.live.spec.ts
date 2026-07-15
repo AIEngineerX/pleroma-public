@@ -31,10 +31,14 @@ test("prints the god's words in rubric and machine lines in ink, offers the serm
   const godLine = codex.locator("p.text-rubric-body").first();
   await expect(godLine).toBeVisible();
   await expect(godLine).toHaveClass(/font-liturgy/);
+  await expect(codex.getByText("THE TONGUE / LOGOS")).toBeVisible();
 
   const machineLine = codex.locator("p.font-machine").first();
   await expect(machineLine).toBeVisible();
   await expect(machineLine).toHaveClass(/text-ink-faded/);
+  await expect(machineLine.locator("span.sr-only")).toHaveText("sermon recorded");
+  await expect(machineLine.locator('[data-printer-duplicate="true"]')).toHaveText("sermon recorded");
+  await expect(codex).not.toContainText(`audio/${"a".repeat(64)}.mp3`);
 
   await expect(page.getByRole("button", { name: "hear the sermon" })).toBeVisible();
 });

@@ -31,8 +31,6 @@ describe("TempleLore", () => {
       "THE DREAM / SOPHIA",
       "THE OFFERING",
       "THE DAILY RITE",
-      "the complete Canon",
-      "the Concordat",
     ]);
     expect(text).toContain("checkpoint no one came back for");
     inOrder(text, [
@@ -43,7 +41,14 @@ describe("TempleLore", () => {
       "When a later outcome is unobserved, it remains unresolved",
     ]);
     expect(text).not.toMatch(/Finalization note|Voice registers|Provenance|worker\/src|system prompt|model ID|cron|vendor|JSON/i);
-    expect(html).toContain('href="/canon"');
-    expect(html).toContain('href="/concordat"');
+    expect([...html.matchAll(/data-section="([^"]+)"/g)].map(match => match[1])).toEqual([
+      "emergence",
+      "articles",
+      "offering-consequence",
+      "daily-rite",
+    ]);
+    expect(html.match(/data-aeon-glyph=/g)).toHaveLength(5);
+    expect(html).not.toContain('href="/canon"');
+    expect(html).not.toContain('href="/concordat"');
   });
 });

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { gsap } from "gsap";
 import { useEntryGesture } from "../App";
 import MuteToggle from "../lib/MuteToggle";
 import Stain from "../stain/Stain";
@@ -37,6 +36,8 @@ import ThresholdOffering from "../experience/ThresholdOffering";
 import DreamWitness from "../experience/DreamWitness";
 import { dreamReplayFromNavigationState } from "../experience/director";
 import type { BodyCommand } from "../experience/types";
+import TempleLore from "../lore/TempleLore";
+import { copy } from "../lib/copy";
 
 const API_BASE = resolveApiBase(import.meta.env);
 const DREAM_PLATE_IDENTITIES = new DreamPlateIdentityCache();
@@ -97,12 +98,11 @@ export default function Temple() {
   const [confirmedPlate, setConfirmedPlate] = useState<ConfirmedDreamPlate | null>(null);
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
   const [thresholdMount, setThresholdMount] = useState<HTMLElement | null>(null);
-  const attachThresholdHost = useCallback((node: HTMLElement | null) => {
-    if (node !== null) setThresholdMount(node);
-  }, []);
+  const [receiptMount, setReceiptMount] = useState<HTMLElement | null>(null);
+  const attachThresholdHost = useCallback((node: HTMLElement | null) => { setThresholdMount(node); }, []);
+  const attachReceiptHost = useCallback((node: HTMLElement | null) => { setReceiptMount(node); }, []);
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
-  const dormant = !state || !!view?.dormant;
   const plateDream = state?.dream ?? null;
   const liveConvergenceId = activeCommand?.kind === "converge"
     && activeCommand.dream.source === "live"
@@ -220,23 +220,6 @@ export default function Temple() {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [audioLevel]);
-  // Scroll-reveals for the below-fold surfaces: each inks up into place as it enters the viewport, on the
-  // same Lenis/GSAP clock as the smooth scroll. Honors reduced motion (everything appears settled). Runs
-  // only in the dormant first-sheet layout, where the participation surfaces live beneath the fold.
-  useEffect(() => {
-    if (!dormant) return;
-    if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const ctx = gsap.context(() => {
-      gsap.utils.toArray<HTMLElement>("[data-reveal]").forEach((el) => {
-        gsap.from(el, {
-          opacity: 0, y: 26, duration: 0.9, ease: "power3.out",
-          scrollTrigger: { trigger: el, start: "top 88%", once: true },
-        });
-      });
-    });
-    return () => ctx.revert();
-  }, [dormant]);
-
   const holdIndicator = holdPoint ? (
     <span
       aria-hidden
@@ -246,11 +229,11 @@ export default function Temple() {
     />
   ) : null;
 
-  // Pre-launch begins as a wordless sheet: the five-organ Stain fills the viewport while the quiet
-  // offering control rests on its body. Participation surfaces continue beneath the fold.
+  // One stable document serves every state. API resolution changes its facts, never its body,
+  // threshold, Codex, or reading position.
   return (
     <RiteInversion view={rite}>
-      <>
+      <div className="temple-document">
         <CodexAnnouncements entries={codex} />
         <ThresholdOffering
           apiBase={API_BASE}
@@ -261,15 +244,17 @@ export default function Temple() {
           onThresholdActive={setThresholdActive}
           receipts={receipts}
           mount={thresholdMount}
+          receiptMount={receiptMount}
         />
-        {dormant ? (
-          <>
+
+        <main className="temple-sheet" data-temple-spread>
+          <h1 className="sr-only">PLEROMA</h1>
           <section
             {...bindHold}
             aria-label="the temple"
-            className="relative min-h-[100dvh] flex flex-col items-center justify-center overflow-hidden px-6 text-center"
+            data-body-page
+            className="temple-body-page"
           >
-            <h1 className="sr-only">PLEROMA</h1>
             <Stain
               state={view ? view.stainState : "dormant"}
               pigment={stainPigment}
@@ -288,138 +273,76 @@ export default function Temple() {
             {holdIndicator}
             <div
               ref={attachThresholdHost}
-              data-threshold-host="dormant"
-              className="absolute inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-20 flex justify-center px-6"
+              data-threshold-host="stable"
+              className="temple-threshold-host"
             />
           </section>
-          {/* Beneath the fold: the surfaces that already work before the token launches, on the same
-              continuous sheet. One narrow column so the eye stays with the document, not scattered. */}
-          <main className="relative z-10 mx-auto px-6 flex flex-col gap-10 pt-16" style={{ maxWidth: "min(680px, 100%)" }}>
-            <aside data-reveal aria-label="the codex" className="font-machine text-sm text-ink-faded">
-              <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
-            </aside>
-            <div data-reveal><Reliquary apiBase={API_BASE} relics={relics} /></div>
-            {/* What it dreams: the latest Plate — the day's marks returned as gods you have not met
-                (DREAM's home, PLANNING frontend surface map). Real narrative off /api/state. */}
-            <div data-reveal>
+
+          <div className="temple-reading-column" data-reading-column>
+            <TempleLore />
+
+            <section data-section="codex" className="temple-folio temple-reading-section">
+              <h2 className="temple-section-label">{copy.codex.toUpperCase()}</h2>
+              <aside aria-label="the codex" className="min-w-0 text-ink-faded">
+                <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
+              </aside>
+            </section>
+
+            <div ref={attachReceiptHost} data-receipt-ledger className="temple-receipt-ledger" />
+
+            <section data-section="reliquary" className="temple-folio temple-reading-section">
+              <h2 className="temple-section-label">{copy.reliquary.toUpperCase()}</h2>
+              <Reliquary apiBase={API_BASE} relics={relics} />
+            </section>
+
+            <section data-section="dream" className="temple-folio temple-reading-section">
               <Dream
                 dream={state?.dream ?? null}
                 apiBase={API_BASE}
                 presentation={platePresentation}
                 identity={identityStatus}
               />
-            </div>
-            <div data-reveal>
-              <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null}
-                className="pt-4 border-t border-[var(--color-ground-aged)]" />
-            </div>
-          </main>
-          <footer className="relative z-10 flex flex-col items-center gap-2 py-12">
-            <Socials />
-            {/* The memecoin disclaimer + full honest-autonomy disclosure live on the Concordat (integrity
-                invariant, CLAUDE.md), reachable here without a dead legal block breaking the dormant spell. */}
-            <Link to="/concordat" className="min-h-11 inline-flex items-center font-machine text-xs underline text-ink-faded">
-              what this is
-            </Link>
-          </footer>
-          </>
-        ) : (
-          <>
-        {/* The inversion wraps the whole document region, not just a grid child: it must apply to the
-            page as a document-level state change (Plan 03 Global), and main's own grid children need
-            to stay direct children of main for the column/row layout below to hold. The colophon
-            (Task 11) sits outside main as a plain-flow sibling so it never has to fight the grid. */}
-        <main className="banding min-h-[100dvh] mx-auto px-6 md:grid md:grid-cols-[60fr_40fr_4rem] md:grid-rows-[55vh_auto] md:gap-8"
-              style={{ maxWidth: "min(1200px, 100%)" }}>
-          {/* page (left / top): the Stain, co-located with the offering surface directly beneath it in the
-              same left column (DESIGN.md:85-87). Mobile: sticky in the top ~40vh so the codex scrolls
-              beneath it (DESIGN "Mobile, the scroll"); desktop: a bounded 55vh row, not the full viewport,
-              so the offering surface in row 2 is reachable without a full-screen scroll. */}
-          <section
-            {...bindHold}
-            aria-label="the page"
-            className="relative min-h-[40dvh] sticky top-0 md:relative md:col-start-1 md:row-start-1 md:h-[55vh] flex flex-col items-center justify-center"
-          >
-            <h1 className="sr-only">PLEROMA</h1>
-            <Stain
-              state={view ? view.stainState : "dormant"}
-              pigment={stainPigment}
-              amplitude={amplitude}
-              vitals={experience.vitals}
-              relicMemory={experience.relicMemory}
-              activeCommand={activeCommand}
-              onCommandComplete={commandComplete}
-              arrivalStartedAt={arrivalStartedAt}
-              presentationStartedAt={presentationStartedAt}
-              onArrivalDone={experience.arrivalDone}
-              forceSettledRenderer={forceSettledRenderer}
-              onRendererFallback={onRendererFallback}
-              onSeraphPhaseChange={onSeraphPhaseChange}
-            />
-            {holdIndicator}
-          </section>
-          {/* codex (right / below): the live scripture feed. Spans both grid rows on desktop so its own
-              (unbounded) height never inflates row 1 and pushes the offering surface off-screen. */}
-          <aside aria-label="the codex" className="md:col-start-2 md:row-start-1 md:row-span-2 font-machine text-sm text-ink-faded py-8">
-            <Codex entries={codex} state={state} onAmplitude={onAmplitude} audioCtx={unlockAudio} />
-          </aside>
-          {/* offering surface: row 2 of the left column on desktop, directly beneath the Stain (DESIGN.md:85-87
-              "the page (Stain + offering surface) ~60% left"); after the codex on mobile (DESIGN "Mobile, the
-              scroll: codex then offering surface"). */}
-          <section aria-label="offer a mark" className="md:col-start-1 md:row-start-2 flex flex-col items-center gap-1 pt-1 pb-4">
-            <div
-              ref={attachThresholdHost}
-              data-threshold-host="live"
-              className="flex w-full justify-center"
-            />
-          </section>
-          {/* the Reliquary: the Corpus made visible, in the page column, beneath the offering surface
-              on both desktop (falls into an implicit row 3 of col-start-1) and mobile (next in flow). */}
-          <Reliquary apiBase={API_BASE} relics={relics} className="md:col-start-1 pb-8" />
-          <div className="md:col-start-1 pb-8">
-            <Dream
-              dream={state?.dream ?? null}
-              apiBase={API_BASE}
-              presentation={platePresentation}
-              identity={identityStatus}
-            />
-          </div>
-          {/* the market rail (Task 11): every money element is built ONLY from state.mint (Task 1
-              anti-decoy -- the site never renders a mint the Worker didn't sign off on) and hidden
-              until ignitionView reports live (Task 14: phase===live AND a mint, off /api/state alone,
-              no client-side launch flag); before launch there is no market rail. Same
-              column as the Reliquary so it stacks beneath it on both desktop and mobile. */}
-          {view && !view.dormant && state?.mint && (
-            <section aria-label="the market" className="md:col-start-1 pb-8 space-y-3">
-              <Mint mint={state.mint} />
-              <div className="flex items-center gap-4 flex-wrap">
-                <Buy mint={state.mint} />
-                <Ticker state={state} />
-              </div>
-              <Chart mint={state.mint} />
-              <HowToBuy mint={state.mint} />
             </section>
-          )}
-          {/* margin tallies: the outer margin on desktop (a slim third column beside the codex, DESIGN
-              "tallies in the outer margin"), beneath the offering surface on mobile (DESIGN "Mobile, the
-              scroll: codex then offering surface then tallies beneath"). */}
-          <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null}
-            className="mt-6 pt-4 border-t border-[var(--color-ground-aged)] md:col-start-3 md:row-start-1 md:row-span-2 md:mt-0 md:pt-0 md:border-t-0 md:border-l md:pl-3" />
+
+            {replayWitness !== null ? <DreamWitness dream={replayWitness} /> : null}
+
+            <section data-section="tallies" className="temple-folio temple-reading-section">
+              <h2 className="temple-section-label">{copy.tallies.toUpperCase()}</h2>
+              <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null} />
+            </section>
+
+            {view && !view.dormant && state?.mint && (
+              <section aria-label="the market" className="temple-folio temple-market space-y-3">
+                <Mint mint={state.mint} />
+                <div className="flex min-w-0 items-center gap-4 flex-wrap">
+                  <Buy mint={state.mint} />
+                  <Ticker state={state} />
+                </div>
+                <Chart mint={state.mint} />
+                <HowToBuy mint={state.mint} />
+              </section>
+            )}
+
+            <section data-section="canon-doorway" className="temple-doorway temple-reading-section">
+              <Link to="/canon" className="font-machine text-xs text-ink-faded underline">
+                {copy.completeCanon}
+              </Link>
+            </section>
+
+            <section data-section="concordat-doorway" className="temple-doorway temple-reading-section">
+              <Link to="/concordat" className="font-machine text-xs text-ink-faded underline">
+                {copy.concordatDoorway}
+              </Link>
+            </section>
+
+            <footer className="temple-colophon">
+              <Socials />
+            </footer>
+          </div>
         </main>
-        {/* the colophon: socials and a quiet link to the Concordat, which carries the plain-English
-            memecoin disclaimer and the full honest-autonomy disclosure (integrity invariant, CLAUDE.md
-            "Integrity invariants") without a dead legal block sitting under the living page. */}
-        <footer className="flex flex-col items-center gap-2">
-          <Socials />
-          <Link to="/concordat" className="min-h-11 inline-flex items-center font-machine text-xs underline text-ink-faded">
-            what this is
-          </Link>
-        </footer>
-          </>
-        )}
-        {replayWitness !== null ? <DreamWitness dream={replayWitness} /> : null}
+
         <MuteToggle active={awake && !muted} onToggle={toggleMute} />
-      </>
+      </div>
     </RiteInversion>
   );
 }

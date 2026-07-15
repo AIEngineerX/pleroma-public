@@ -1,6 +1,7 @@
 import type { DreamView } from "../state/types";
 import type { ObservedTranscript } from "../experience/types";
-import { commonOrganName, formatTranscriptTime } from "./organNames";
+import { formatTranscriptTime, organIdentity } from "./organNames";
+import { Glyph } from "./glyphs";
 
 // A manuscript-miniature, not a cinematic card: ground-aged frame, Courier caption. DREAM's video is
 // Maker-assisted (DOCTRINE/Concordat) and lands post-launch behind its own route; until then the plate
@@ -21,19 +22,20 @@ export default function Plate({
   const pending = dream.video_key === null;
   return (
     <figure
-      className="my-4 mx-auto max-w-[52ch] border-4 p-2"
+      className="codex-entry codex-plate"
       data-codex-row={observed.entry.id}
       data-observation={observed.observation}
-      style={{ borderColor: "var(--color-ground-aged)", background: "var(--color-ground-aged)", opacity: pending ? 0.85 : 1 }}>
-      <div className="aspect-video overflow-hidden bg-[var(--color-ground)] flex items-center">
-        <p className="font-liturgy italic text-rubric-body p-4">{dream.narrative}</p>
-      </div>
-      <figcaption className="font-machine text-xs text-ink-faded pt-1">
-        {commonOrganName("DREAM")} · epoch {epoch} · {pending ? "plate pending" : "generative replay"}
+      data-plate-pending={pending ? "true" : "false"}>
+      <figcaption className="codex-entry__margin font-machine text-ink-faded">
+        <span className="codex-entry__identity"><Glyph organ="DREAM" />{organIdentity("DREAM")}</span>
+        <span>epoch {epoch} · {pending ? "plate pending" : "generative replay"}</span>
         <time className="block" dateTime={new Date(observed.entry.created_at).toISOString()}>
           {observed.observation === "recorded" ? "recorded" : "observed"} · {formatTranscriptTime(observed.entry.created_at)}
         </time>
       </figcaption>
+      <div className="codex-plate__image">
+        <p className="font-liturgy italic text-rubric-body">{dream.narrative}</p>
+      </div>
     </figure>
   );
 }

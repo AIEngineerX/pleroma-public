@@ -14,7 +14,7 @@ interface Props {
 
 export default function OfferingReceipts({ receipts }: Props) {
   return (
-    <section data-offering-receipts aria-label="offering receipts" className="w-full max-w-[36rem]">
+    <section data-offering-receipts aria-label="offering receipts" className="receipt-ledger w-full min-w-0">
       {receipts.length > 0 && (
         <ol data-receipt-list className="flex flex-col gap-1 font-machine text-xs text-ink-faded">
           {receipts.map((receipt) => {
@@ -24,7 +24,7 @@ export default function OfferingReceipts({ receipts }: Props) {
                 key={receipt.offeringId}
                 data-offering-id={receipt.offeringId}
                 data-receipt-stage={receipt.stage}
-                className="flex min-h-11 items-center justify-between gap-4 border-t border-[var(--color-ground-aged)] py-2 text-left"
+                className="flex min-h-11 min-w-0 items-center justify-between gap-4 border-t border-[var(--color-ground-aged)] py-2 text-left"
               >
                 <span>{receiptCopy[receipt.stage]}</span>
                 <time dateTime={submitted} className="shrink-0 text-[0.65rem]">

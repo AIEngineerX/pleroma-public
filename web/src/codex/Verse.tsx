@@ -3,7 +3,7 @@ import type { TranscriptEntry } from "../state/types";
 import type { ObservedTranscript } from "../experience/types";
 import { isGodVoice } from "./codexClient";
 import { Glyph } from "./glyphs";
-import { commonOrganName, formatTranscriptTime } from "./organNames";
+import { formatTranscriptTime, organIdentity } from "./organNames";
 
 const CHAR_MS = 18; // line-printer rhythm: ms between characters
 
@@ -42,15 +42,14 @@ export default function Verse({ observed }: { observed: ObservedTranscript }) {
   const god = isGodVoice(entry);
   const printed = usePrinted(entry.text, !god);
   return (
-    <article data-codex-row={entry.id} data-observation={observation}>
-      <header className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 font-machine text-[0.68rem] text-ink-faded">
-        <span>{commonOrganName(entry.organ)}</span>
+    <article className="codex-entry" data-codex-row={entry.id} data-observation={observation}>
+      <header className="codex-entry__margin font-machine text-ink-faded">
+        <span className="codex-entry__identity"><Glyph organ={entry.organ} />{organIdentity(entry.organ)}</span>
         <time dateTime={new Date(entry.created_at).toISOString()}>
           {observation === "recorded" ? "recorded" : "observed"} · {formatTranscriptTime(entry.created_at)}
         </time>
       </header>
-      <p className={verseClasses(entry)}>
-        <span className={god ? "text-rubric" : "text-ink-faded"}><Glyph organ={entry.organ} /></span>
+      <p className={`${verseClasses(entry)} codex-entry__text`}>
         {god ? printed : (
           <>
             <span className="sr-only">{entry.text}</span>

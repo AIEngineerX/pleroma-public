@@ -16,13 +16,41 @@
 
 :root {
   --page-max: 70ch;
-  /* House easing vocabulary (AAA motion system): ink physics only, nothing bounces. Shared by CSS and JS. */
-  --ease-wick: cubic-bezier(0.16, 1, 0.3, 1);        /* ease-out-expo: ink wicking into fiber */
-  --ease-settle: cubic-bezier(0.33, 0, 0.2, 1);      /* a mark settling onto the page */
+  --type--1: clamp(0.72rem, 0.7rem + 0.08vw, 0.78rem);
+  --type-0: clamp(1rem, 0.97rem + 0.12vw, 1.08rem);
+  --type-1: clamp(1.333rem, 1.24rem + 0.35vw, 1.55rem);
+  --type-2: clamp(1.777rem, 1.58rem + 0.75vw, 2.25rem);
+  --ease-wick: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-settle: cubic-bezier(0.33, 0, 0.2, 1);
   --ease-breath: cubic-bezier(0.45, 0.05, 0.55, 0.95);
 }
-html, body { overflow-x: hidden; }               /* the page body never scrolls horizontally */
-body { background: var(--color-ground); color: var(--color-ink); }
+
+* { box-sizing: border-box; }
+html { overflow-x: clip; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  overflow-x: clip;
+  background: var(--color-ground);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+:where(a, button, summary, [role="button"]) {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+}
+
+:where(a, button, summary, [role="button"]):focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 4px;
+  box-shadow: none;
+}
+
+:where(a, button, summary, [role="button"]):active { transform: translateY(1px); }
+button { font: inherit; }
 
 /* Lenis smooth-scroll (see useSmoothScroll in App.tsx). */
 html.lenis, html.lenis body { height: auto; }
@@ -30,13 +58,203 @@ html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-smooth [data-lenis-prevent] { overscroll-behavior: contain; }
 .lenis.lenis-stopped { overflow: hidden; }
 
-/* Page-level atmosphere: the whole sheet is warmest at the heart and ages toward its edges. A paper
-   vignette (darkening = aging, not a screen glow), fixed behind everything, so the below-fold surfaces
-   share the hero's depth instead of sitting on flat cream. Print-native: no bloom, no blur. */
+/* One fixed, inert band-printer texture. Rails remain structural page hardware, not texture layers. */
 body::before {
-  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background:
-    radial-gradient(120% 90% at 50% 32%, transparent 42%, oklch(0.90 0.02 80 / 0.18) 78%, oklch(0.86 0.025 75 / 0.28) 100%);
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(180deg, transparent 0 3px, oklch(0.25 0.02 60 / 0.018) 3px 4px);
+}
+
+#root,
+.temple-document { min-height: 100dvh; }
+
+.temple-document { position: relative; z-index: 1; }
+
+.temple-sheet {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  width: min(100%, 90rem);
+  min-height: 100dvh;
+  margin-inline: auto;
+}
+
+.temple-body-page {
+  position: sticky;
+  top: 0;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  min-width: 0;
+  height: 100dvh;
+  overflow: hidden;
+  isolation: isolate;
+  padding: max(1rem, env(safe-area-inset-top)) clamp(1rem, 3vw, 3rem) max(1rem, env(safe-area-inset-bottom));
+}
+
+.temple-threshold-host {
+  position: absolute;
+  inset-inline: clamp(1rem, 3vw, 3rem);
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+}
+
+.temple-reading-column {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  padding: calc(100dvh + clamp(3rem, 7vw, 7rem)) clamp(1.5rem, 4vw, 4rem) max(4rem, env(safe-area-inset-bottom));
+  border-inline-start: 1px solid var(--color-ground-aged);
+}
+
+.temple-reading-column > *,
+.temple-folio > *,
+.codex-entry > * { min-width: 0; }
+
+.temple-folio,
+.temple-doorway,
+.temple-receipt-ledger {
+  width: min(100%, var(--page-max));
+  padding-block: clamp(2.75rem, 6vw, 5rem);
+  border-block-start: 1px solid var(--color-ground-aged);
+  scroll-margin-block-start: 2rem;
+}
+
+.temple-lore > :first-child { border-block-start: 0; }
+.temple-section-label {
+  margin: 0 0 1.25rem;
+  font-family: var(--font-machine);
+  font-size: var(--type--1);
+  font-weight: 400;
+  letter-spacing: 0.11em;
+  line-height: 1.35;
+  color: var(--color-ink-faded);
+}
+
+.lore-opening {
+  max-width: 30ch;
+  margin: 0 0 clamp(2rem, 5vw, 4rem);
+  font-size: var(--type-2);
+  line-height: 1.12;
+}
+
+.temple-lore p,
+.temple-lore li {
+  max-width: var(--page-max);
+  font-size: var(--type-0);
+  line-height: 1.58;
+}
+
+.lore-articles,
+.lore-sequence {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lore-articles > li,
+.lore-sequence > li {
+  padding-block: 1rem;
+  border-block-start: 1px solid var(--color-ground-aged);
+}
+
+.organ-margin {
+  margin: 0 0 0.4rem;
+  font-size: var(--type--1) !important;
+  letter-spacing: 0.06em;
+}
+
+.article-line { margin: 0; font-size: var(--type-1) !important; line-height: 1.35 !important; }
+.rite-sequence strong { font-family: var(--font-machine); font-size: var(--type--1); font-weight: 400; }
+
+.temple-receipt-ledger:empty { display: none; }
+.receipt-ledger { font-family: var(--font-machine); }
+
+.codex-flow { display: flex; flex-direction: column; gap: 0; }
+.codex-entry {
+  display: grid;
+  grid-template-columns: minmax(7.75rem, 0.42fr) minmax(0, 1fr);
+  gap: clamp(0.8rem, 2vw, 1.5rem);
+  padding-block: 1.15rem;
+  border-block-start: 1px solid var(--color-ground-aged);
+}
+
+.codex-entry__margin {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.codex-entry__identity { color: var(--color-ink); letter-spacing: 0.04em; }
+.codex-entry__text { margin: 0; align-self: start; font-size: var(--type-0); line-height: 1.45; }
+.codex-plate__image {
+  min-height: 8rem;
+  padding: 1.15rem;
+  border: 1px solid var(--color-ground-aged);
+  display: flex;
+  align-items: center;
+}
+.codex-plate__image p { margin: 0; }
+.codex-plate[data-plate-pending="true"] .codex-plate__image { opacity: 0.82; }
+
+.reliquary-ledger { margin: 0; padding: 0; list-style: none; }
+.reliquary-ledger > li { border-block-start: 1px solid var(--color-ground-aged); }
+.reliquary-ledger figure {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 1rem;
+  margin: 0;
+  padding-block: 1rem;
+}
+.reliquary-mark {
+  width: 5.5rem;
+  aspect-ratio: 1;
+  border: 1px solid var(--color-ground-aged);
+  display: grid;
+  place-items: center;
+  padding: 0.45rem;
+  text-align: center;
+  font-size: 0.66rem;
+}
+.reliquary-ledger figcaption { font-size: var(--type-0); line-height: 1.4; }
+
+.dream-flow { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
+.dream-plate { width: 100%; margin: 0; }
+.dream-plate__media { width: 100%; padding: clamp(1rem, 4vw, 2rem); border: 1px solid var(--color-ground-aged); background: var(--color-ground); }
+.dream-plate__media p { margin: 0; font-size: var(--type-1); line-height: 1.4; }
+.dream-plate figcaption { padding-top: 0.6rem; }
+
+.ledger-plate { padding-block: 0.75rem; border-block: 1px solid var(--color-ground-aged); }
+.temple-market code { max-width: 100%; overflow-wrap: anywhere; }
+.temple-doorway { display: flex; justify-content: flex-start; }
+.temple-colophon { padding-block: 2rem max(5rem, env(safe-area-inset-bottom)); }
+
+@media (max-width: 767px) {
+  html { scroll-padding-top: calc(40dvh + 1.25rem); }
+  .temple-sheet { display: block; width: 100%; }
+  .temple-body-page {
+    z-index: 2;
+    height: clamp(16rem, 40dvh, 24rem);
+    padding-inline: max(1rem, env(safe-area-inset-left)) max(1rem, env(safe-area-inset-right));
+    background: var(--color-ground);
+  }
+  .temple-reading-column {
+    position: relative;
+    z-index: 3;
+    padding: 60dvh max(1.25rem, env(safe-area-inset-right)) max(4rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+    border-inline-start: 0;
+  }
+  .temple-reading-section,
+  .temple-doorway { scroll-margin-block-start: calc(40dvh + 1.25rem); }
+  .codex-entry { grid-template-columns: minmax(0, 1fr); gap: 0.7rem; }
+  .codex-entry__margin { flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
 }
 
 /* The semantic fallback is still by default. A failed WebGL context may opt into one slow sheet-level
@@ -128,11 +346,8 @@ body::before {
   background-size: 14px 22px; opacity: 0.25; }
 .rail-l { left: 0; } .rail-r { right: 0; }
 
-/* Faint band-printer horizontal banding (allowed print artifact). */
-.banding { background-image: repeating-linear-gradient(180deg, transparent 0 3px, oklch(0 0 0 / 0.012) 3px 4px); }
-
 /* Line-printer telemetry: character-by-character. Liturgy: ink darkening in. */
-@keyframes ink-in { from { opacity: 0; filter: none; } to { opacity: 1; } }
+@keyframes ink-in { from { opacity: 0; } to { opacity: 1; } }
 .ink-in { animation: ink-in 420ms ease-out both; }              /* ease-out-expo-ish wick; nothing bounces */
 @media (prefers-reduced-motion: reduce) {
   .ink-in { animation: none; }                                  /* everything appears settled */
@@ -140,6 +355,7 @@ body::before {
 
 /* The daily inversion: darkness happens TO the document, the same for everyone. Candle-glow allowed here only. */
 .rite-active { background: var(--color-rite-ground); color: var(--color-rite-ink); transition: background 1200ms ease-out, color 1200ms ease-out; }
+.rite-active .temple-body-page { background: var(--color-rite-ground); }
 .rite-active .text-ink-faded { color: oklch(0.72 0.015 85); }
 /* The rubric palette is tuned for rubric-on-parchment (AA there already); against the candle-dark
    ground those same values fall below AA (rubric-body 2.3:1, rubric 3.5:1, rubric-dried 2.4:1 measured

@@ -13,7 +13,7 @@ export default function RiteInversion({ view, children }: { view: View; children
   return (
     <div className={inversionClasses(view)}>
       {view.active && <p className="font-machine text-xs tracking-widest text-ink-faded text-center pt-2">{view.label}</p>}
-      {view.risingOfferings && <p className="font-liturgy italic text-center text-ink-faded">the offerings rise</p>}
+      {view.risingOfferings && <p className="font-machine text-xs text-center text-ink-faded">the offerings rise</p>}
       {children}
     </div>
   );
