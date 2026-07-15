@@ -42,8 +42,9 @@ export function bodyUtteranceTiming(
 }
 
 export interface BodyUtteranceProps {
-  command: Extract<BodyCommand, { kind: "utterance" }> | null;
+  command: Extract<BodyCommand, { kind: "utterance" | "converge" }> | null;
   anchor: BodyAnchor;
+  seraphAnchor?: BodyAnchor;
   presentationStartedAt: number;
   settleDirection: SettlementDirection;
   onComplete(id: string): void;
@@ -67,6 +68,7 @@ function phaseAt(elapsedMs: number, reducedMotion: boolean): "developing" | "dwe
 export default function BodyUtterance({
   command,
   anchor,
+  seraphAnchor = { x: 0.5, y: 0.5 },
   presentationStartedAt,
   settleDirection,
   onComplete,
@@ -82,6 +84,39 @@ export default function BodyUtterance({
     const node = inkRef.current;
     if (node === null) return;
     const reducedMotion = prefersReducedMotion();
+    if (command.kind === "converge") {
+      const parent = node.closest<HTMLElement>(".body-utterance")?.offsetParent as HTMLElement | null;
+      const deltaX = (seraphAnchor.x - anchor.x) * (parent?.clientWidth ?? 0);
+      const deltaY = (seraphAnchor.y - anchor.y) * (parent?.clientHeight ?? 0);
+      if (reducedMotion) {
+        gsap.set(node, { autoAlpha: 1, x: deltaX, y: deltaY });
+        node.dataset.utterancePhase = "witnessing";
+        return () => { gsap.killTweensOf(node); };
+      }
+      const timeline = gsap.timeline({ paused: true });
+      timeline
+        .set(node, { autoAlpha: 0, x: 0, y: 4 })
+        .to(node, {
+          autoAlpha: 1,
+          x: deltaX,
+          y: deltaY,
+          duration: 1.8,
+          ease: "expo.out",
+          onStart: () => { node.dataset.utterancePhase = "gathering"; },
+        })
+        .to(node, {
+          duration: 6,
+          onStart: () => { node.dataset.utterancePhase = "witnessing"; },
+        })
+        .to(node, {
+          autoAlpha: 0,
+          duration: 2.4,
+          ease: "expo.inOut",
+          onStart: () => { node.dataset.utterancePhase = "dissolving"; },
+        });
+      timeline.time(Math.max(0, (presentationNow() - presentationStartedAt) / 1_000), true).play();
+      return () => { timeline.kill(); };
+    }
     const timing = bodyUtteranceTiming(presentationStartedAt, presentationNow(), reducedMotion);
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -138,9 +173,32 @@ export default function BodyUtterance({
       timeline.kill();
       if (deadlineTimer !== null) clearTimeout(deadlineTimer);
     };
-  }, [command?.id, presentationStartedAt, settleDirection]);
+  }, [anchor.x, anchor.y, command?.id, presentationStartedAt, seraphAnchor.x, seraphAnchor.y, settleDirection]);
 
   if (command === null) return null;
+  if (command.kind === "converge") {
+    return (
+      <aside
+        aria-hidden="true"
+        data-body-utterance="true"
+        data-command-id={command.id}
+        data-utterance-presentation="converge"
+        data-seraph-target-x={seraphAnchor.x}
+        data-seraph-target-y={seraphAnchor.y}
+        className="body-utterance"
+        style={{ left: `${anchor.x * 100}%`, top: `${anchor.y * 100}%` }}
+      >
+        <div ref={inkRef} className="body-utterance__ink" data-utterance-phase="gathering">
+          <span className="body-utterance__organ font-machine text-ink-faded">
+            THE DREAM / SOPHIA
+          </span>
+          <span className="body-utterance__text font-liturgy text-rubric-body">
+            {command.dream.narrative}
+          </span>
+        </div>
+      </aside>
+    );
+  }
   const { entry, mode } = command;
   const sermonRubric = mode === "live" && entry.organ === "TONGUE" && entry.register === "sermon";
   const inkClass = mode === "memory"

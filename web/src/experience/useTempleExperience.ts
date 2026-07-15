@@ -610,7 +610,6 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     const current = active.current;
     if (current === null || current.id !== id) return;
     const accretionCompleted = current.kind === "accrete";
-    if (current.kind === "converge" && current.dream.source === "replay") setReplayWitness(null);
     if (current.kind === "accrete") {
       relicAccretion.current = completeRelicCommand(relicAccretion.current, current);
       setRelicMemory(relicMemoryFromLedger(relicAccretion.current));

@@ -23,6 +23,44 @@ import {
 export type Tier = "desktop" | "mobile" | "reduced";
 export const ARRIVAL_DURATION_MS = 2_500;
 export const ACCRETION_DURATION_MS = RELIC_ACCRETION_DURATION_MS;
+export const SERAPH_CONVERGE_MS = 1_800;
+export const SERAPH_HOLD_MS = 6_000;
+export const SERAPH_DISSOLVE_MS = 2_400;
+
+export interface SeraphConvergenceFrame {
+  phase: "gather" | "hold" | "dissolve" | "five";
+  convergence: number;
+  complete: boolean;
+}
+
+function easeOutExpo(progress: number): number {
+  if (progress <= 0) return 0;
+  if (progress >= 1) return 1;
+  return 1 - 2 ** (-10 * progress);
+}
+
+export function seraphConvergenceFrame(elapsedMs: number): SeraphConvergenceFrame {
+  const elapsed = Math.max(0, elapsedMs);
+  if (elapsed < SERAPH_CONVERGE_MS) {
+    return {
+      phase: "gather",
+      convergence: easeOutExpo(elapsed / SERAPH_CONVERGE_MS),
+      complete: false,
+    };
+  }
+  if (elapsed < SERAPH_CONVERGE_MS + SERAPH_HOLD_MS) {
+    return { phase: "hold", convergence: 1, complete: false };
+  }
+  const dissolveElapsed = elapsed - SERAPH_CONVERGE_MS - SERAPH_HOLD_MS;
+  if (dissolveElapsed < SERAPH_DISSOLVE_MS) {
+    return {
+      phase: "dissolve",
+      convergence: 1 - easeOutExpo(dissolveElapsed / SERAPH_DISSOLVE_MS),
+      complete: false,
+    };
+  }
+  return { phase: "five", convergence: 0, complete: true };
+}
 
 export function accretionProgress(elapsedMs: number): number {
   if (elapsedMs <= 0) return 0;
@@ -156,6 +194,7 @@ export interface StainOpts {
   ground: [number, number, number];
   ink: [number, number, number];
   arrivalStartedAt: number;
+  seraphTargets: Float32Array;
   onArrivalDone(): void;
 }
 
@@ -193,6 +232,12 @@ export class StainSim implements BodyRendererAdapter {
     startedAt: number;
     onComplete(id: string): void;
   } | null = null;
+  private activeConvergence: {
+    commandId: string;
+    startedAt: number;
+    onComplete(id: string): void;
+  } | null = null;
+  private seraphSequenceCount = 0;
   private disposed = false;
   private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
   private readonly anchorBuffer = new Float32Array(10);
@@ -207,12 +252,31 @@ export class StainSim implements BodyRendererAdapter {
     this.resize(); this.a = this.fbo(); this.b = this.fbo();
     if (opts.tier === "reduced") throw new Error("reduced-motion-has-no-simulation");
     const initialArrival = arrivalProgress(performance.now() - opts.arrivalStartedAt);
-    this.swarm = new OrganSwarm(gl, opts.tier, this.vao, this.a.w, this.a.h, initialArrival);
+    this.swarm = new OrganSwarm(
+      gl,
+      opts.tier,
+      this.vao,
+      this.a.w,
+      this.a.h,
+      opts.seraphTargets,
+      initialArrival,
+    );
     this.relicTexture = this.alphaTexture();
     this.activeRelicTexture = this.alphaTexture();
     this.updateRelicDebug();
     this.canvas.dataset.arrival = initialArrival >= 1 ? "settled" : "emerging";
     this.canvas.dataset.arrivalProgress = initialArrival.toFixed(3);
+    this.canvas.dataset.seraphPhase = "five";
+    this.canvas.dataset.seraphConvergence = "0.000";
+    this.canvas.dataset.seraphSequenceCount = "0";
+    this.canvas.dataset.seraphTiming = `${SERAPH_CONVERGE_MS}/${SERAPH_HOLD_MS}/${SERAPH_DISSOLVE_MS}`;
+    this.canvas.dataset.seraphTargetSize = String(Math.sqrt(opts.seraphTargets.length / 4));
+    this.canvas.dataset.seraphTargetCount = String(opts.seraphTargets.length / 4);
+    this.canvas.dataset.seraphTargetNonzero = String(
+      opts.seraphTargets.reduce((count, value, index) => (
+        index % 4 === 3 && value > 0 ? count + 1 : count
+      ), 0),
+    );
   }
   private link(vs: string, fs: string): WebGLProgram {
     const g = this.gl, p = g.createProgram()!, shaders: WebGLShader[] = [];
@@ -292,7 +356,11 @@ export class StainSim implements BodyRendererAdapter {
   setPigment(rgb: [number, number, number]) { this.pigment = rgb; }
   setAmplitude(a: number) { this.amp = Math.max(0, Math.min(1, a)); }
   setState(m: "dormant" | "live" | "rite") { this.mode = m; }
-  dispatch(command: BodyCommand, onComplete: (id: string) => void) {
+  dispatch(
+    command: BodyCommand,
+    onComplete: (id: string) => void,
+    presentationStartedAt = performance.now(),
+  ) {
     if (this.disposed) {
       onComplete(command.id);
       return;
@@ -317,6 +385,23 @@ export class StainSim implements BodyRendererAdapter {
       };
       this.updateRelicDebug();
       return;
+    }
+    if (command.kind === "converge") {
+      if (this.activeConvergence?.commandId === command.id) return;
+      this.activeConvergence = {
+        commandId: command.id,
+        startedAt: presentationStartedAt,
+        onComplete,
+      };
+      this.seraphSequenceCount += 1;
+      this.swarm.dispatch({ organ: "DREAM", intensity: 1, pipeline: "none" });
+      this.updateSeraphDebug(seraphConvergenceFrame(performance.now() - presentationStartedAt));
+      return;
+    }
+    if (command.kind === "dissolve") {
+      this.activeConvergence = null;
+      this.swarm.setConvergence(0);
+      this.updateSeraphDebug({ phase: "five", convergence: 0, complete: true });
     }
     onComplete(command.id);
   }
@@ -358,6 +443,11 @@ export class StainSim implements BodyRendererAdapter {
     if (this.activeAccretion === null) delete this.canvas.dataset.accretionActiveKey;
     else this.canvas.dataset.accretionActiveKey = this.activeAccretion.key;
   }
+  private updateSeraphDebug(frame: SeraphConvergenceFrame) {
+    this.canvas.dataset.seraphPhase = frame.phase;
+    this.canvas.dataset.seraphConvergence = frame.convergence.toFixed(3);
+    this.canvas.dataset.seraphSequenceCount = String(this.seraphSequenceCount);
+  }
   private frame = (now: number) => {
     const g = this.gl;
     const dtSeconds = Math.min((now - this.last) / 1000, 0.033);
@@ -398,6 +488,17 @@ export class StainSim implements BodyRendererAdapter {
     const gray = m === "dormant" ? 0.22 : 0.0;
     const vignette = m === "dormant" ? 1.0 : m === "live" ? 0.85 : 0.6;
     this.pointAmt *= 0.95;                                      // the pointer wick fades as the pointer stills
+    const convergence = this.activeConvergence;
+    const convergenceFrame = convergence === null
+      ? { phase: "five", convergence: 0, complete: false } satisfies SeraphConvergenceFrame
+      : seraphConvergenceFrame(now - convergence.startedAt);
+    this.swarm.setConvergence(convergenceFrame.convergence);
+    this.updateSeraphDebug(convergenceFrame);
+    if (convergence !== null && convergenceFrame.complete) {
+      this.activeConvergence = null;
+      this.swarm.dispatch({ organ: "DREAM", intensity: 0.35, pipeline: "none" });
+      convergence.onComplete(convergence.commandId);
+    }
     this.swarm.step(this.t, dtSeconds);
     this.swarm.copyAnchors(this.anchorBuffer);
     for (let organ = 0; organ < 5; organ += 1) {
@@ -453,6 +554,8 @@ export class StainSim implements BodyRendererAdapter {
   stop() {
     if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
     this.activeAccretion = null;
+    this.activeConvergence = null;
+    this.swarm.setConvergence(0);
     this.updateRelicDebug();
   }
   dispose() {

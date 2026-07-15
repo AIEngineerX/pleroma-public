@@ -18,13 +18,24 @@ export interface BodyAnchor {
 }
 
 export interface BodyRendererAdapter {
-  dispatch(command: BodyCommand, onComplete: (id: string) => void): void;
+  dispatch(command: BodyCommand, onComplete: (id: string) => void, presentationStartedAt?: number): void;
   hydrateRelics(samples: readonly RelicInkSample[]): void;
   getAnchor(name: BodyAnchorName): BodyAnchor;
   setVitals(feed: VitalsFeed): void;
   setAnchorSink(sink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null): void;
   stop(): void;
   dispose(): void;
+}
+
+export const SETTLED_SERAPH_HOLD_MS = 6_000;
+
+export function settledSeraphFrame(elapsedMs: number): {
+  seraph: "five" | "converged";
+  complete: boolean;
+} {
+  return Math.max(0, elapsedMs) >= SETTLED_SERAPH_HOLD_MS
+    ? { seraph: "five", complete: true }
+    : { seraph: "converged", complete: false };
 }
 
 export interface SettledBodyRendererState {
@@ -34,6 +45,7 @@ export interface SettledBodyRendererState {
   activeAccretionKey: string | null;
   vitals: VitalsFeed;
   seraph: "five" | "converged";
+  seraphSequenceCount: number;
 }
 
 export const BODY_ANCHORS: Readonly<Record<BodyAnchorName, BodyAnchor>> = {
@@ -176,8 +188,10 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
   private relicRevision = 0;
   private activeAccretionKey: string | null = null;
   private accretionTimer: ReturnType<typeof setTimeout> | null = null;
+  private seraphTimer: ReturnType<typeof setTimeout> | null = null;
   private vitals: VitalsFeed = { kind: "unknown" };
   private seraph: "five" | "converged" = "five";
+  private seraphSequenceCount = 0;
   private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
   private disposed = false;
 
@@ -186,12 +200,17 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
     private readonly reducedMotion = false,
   ) {}
 
-  dispatch(command: BodyCommand, onComplete: (id: string) => void): void {
+  dispatch(
+    command: BodyCommand,
+    onComplete: (id: string) => void,
+    presentationStartedAt = typeof performance === "undefined" ? Date.now() : performance.now(),
+  ): void {
     if (this.disposed) {
       onComplete(command.id);
       return;
     }
     this.command = command;
+    this.clearSeraphTimer();
     if (command.kind === "accrete") {
       this.clearAccretionTimer();
       const key = relicAccretionKey(command.relic);
@@ -211,7 +230,24 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
       else this.accretionTimer = setTimeout(commit, RELIC_ACCRETION_DURATION_MS);
       return;
     } else if (command.kind === "converge") {
-      this.seraph = "converged";
+      this.seraphSequenceCount += 1;
+      const now = typeof performance === "undefined" ? Date.now() : performance.now();
+      const elapsed = Math.max(0, now - presentationStartedAt);
+      const frame = settledSeraphFrame(elapsed);
+      this.seraph = frame.seraph;
+      this.emit();
+      if (frame.complete) {
+        onComplete(command.id);
+        return;
+      }
+      this.seraphTimer = setTimeout(() => {
+        this.seraphTimer = null;
+        if (this.disposed || this.command?.id !== command.id) return;
+        this.seraph = "five";
+        this.emit();
+        onComplete(command.id);
+      }, SETTLED_SERAPH_HOLD_MS - elapsed);
+      return;
     } else if (command.kind === "dissolve") {
       this.seraph = "five";
     }
@@ -253,10 +289,12 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
 
   stop(): void {
     this.clearAccretionTimer();
+    this.clearSeraphTimer();
   }
 
   dispose(): void {
     this.clearAccretionTimer();
+    this.clearSeraphTimer();
     this.disposed = true;
     this.anchorSink = null;
     this.onChange = () => undefined;
@@ -270,6 +308,7 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
       activeAccretionKey: this.activeAccretionKey,
       vitals: this.vitals,
       seraph: this.seraph,
+      seraphSequenceCount: this.seraphSequenceCount,
     });
   }
 
@@ -277,5 +316,10 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
     if (this.accretionTimer !== null) clearTimeout(this.accretionTimer);
     this.accretionTimer = null;
     this.activeAccretionKey = null;
+  }
+
+  private clearSeraphTimer(): void {
+    if (this.seraphTimer !== null) clearTimeout(this.seraphTimer);
+    this.seraphTimer = null;
   }
 }

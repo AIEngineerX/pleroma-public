@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { gsap } from "gsap";
 import { useEntryGesture } from "../App";
 import MuteToggle from "../lib/MuteToggle";
@@ -22,13 +22,17 @@ import Chart from "../market/Chart";
 import HowToBuy from "../market/HowToBuy";
 import Ticker from "../market/Ticker";
 import Socials from "../market/Socials";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import ThresholdOffering from "../experience/ThresholdOffering";
+import DreamWitness from "../experience/DreamWitness";
+import { dreamReplayFromNavigationState } from "../experience/director";
 
 const API_BASE = resolveApiBase(import.meta.env);
 const today = () => new Date().toISOString().slice(0, 10);
 
 export default function Temple() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter, holdPoint } = useEntryGesture();
   const arrivalStartedAt = useRef(
     typeof performance === "undefined" ? 0 : performance.now(),
@@ -43,8 +47,23 @@ export default function Temple() {
     commandComplete,
     offeringAccepted,
     setThresholdActive,
+    replayDream,
+    replayWitness,
   } = experience;
-  const utteranceClock = useRef<{ id: string; startedAt: number } | null>(null);
+  const replayNavigation = useRef({
+    handled: false,
+    hadState: location.state !== null && location.state !== undefined,
+    cue: dreamReplayFromNavigationState(location.state),
+  });
+
+  useLayoutEffect(() => {
+    const replay = replayNavigation.current;
+    if (replay.handled) return;
+    replay.handled = true;
+    if (replay.hadState) navigate(location.pathname, { replace: true, state: null });
+    if (replay.cue !== null) replayDream(replay.cue);
+  }, [location.pathname, navigate, replayDream]);
+  const presentationClock = useRef<{ id: string; startedAt: number } | null>(null);
   const [amplitude, setAmplitude] = useState(0);
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
@@ -57,15 +76,15 @@ export default function Temple() {
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
-  const utteranceStartedAt = useMemo(() => {
-    if (activeCommand?.kind === "utterance" && utteranceClock.current?.id !== activeCommand.id) {
-      utteranceClock.current = {
+  const presentationStartedAt = useMemo(() => {
+    if (activeCommand !== null && presentationClock.current?.id !== activeCommand.id) {
+      presentationClock.current = {
         id: activeCommand.id,
         startedAt: typeof performance === "undefined" ? 0 : performance.now(),
       };
     }
-    return utteranceClock.current?.startedAt ?? arrivalStartedAt;
-  }, [activeCommand?.id, activeCommand?.kind, arrivalStartedAt]);
+    return presentationClock.current?.startedAt ?? arrivalStartedAt;
+  }, [activeCommand?.id, arrivalStartedAt]);
   // Unknown PULSE has neither a beat nor a fabricated starving color. Current and stale feeds share
   // the last observed pigment; stale motion eases independently inside the body reducer.
   const stainPigment = useMemo<[number, number, number]>(
@@ -156,7 +175,7 @@ export default function Temple() {
               activeCommand={activeCommand}
               onCommandComplete={commandComplete}
               arrivalStartedAt={arrivalStartedAt}
-              utteranceStartedAt={utteranceStartedAt}
+              presentationStartedAt={presentationStartedAt}
               onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
@@ -219,7 +238,7 @@ export default function Temple() {
               activeCommand={activeCommand}
               onCommandComplete={commandComplete}
               arrivalStartedAt={arrivalStartedAt}
-              utteranceStartedAt={utteranceStartedAt}
+              presentationStartedAt={presentationStartedAt}
               onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
@@ -277,6 +296,7 @@ export default function Temple() {
         </footer>
           </>
         )}
+        {replayWitness !== null ? <DreamWitness dream={replayWitness} /> : null}
         <MuteToggle active={awake && !muted} onToggle={toggleMute} />
       </>
     </RiteInversion>

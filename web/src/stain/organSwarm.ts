@@ -26,11 +26,13 @@ in vec2 v_uv;
 out vec4 fragColor;
 uniform sampler2D u_pos;
 uniform sampler2D u_vel;
+uniform sampler2D u_seraphTargets;
 uniform ivec2 u_size;
 uniform vec2 u_goals[5];
 uniform float u_activity[5];
 uniform float u_time;
 uniform float u_dt;
+uniform float u_convergence;
 
 float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
 float noise(vec2 p){
@@ -77,15 +79,18 @@ void main(){
   vec2 align=count>0.0?heading-vel:vec2(0);
   float activity=u_activity[organ];
   // Separation is deliberately dominant: the five organs cohere without collapsing into dots.
-  vec2 flock=(sep*1.75+coh*.9+align*1.0)*.022;
-  vec2 goal=(u_goals[organ]-pos)*(.19+activity*.08);
-  vec2 flow=curl(pos*5.2+vec2(u_time*.035,float(organ)*2.17))*(.016+activity*.052);
+  vec2 flock=(sep*1.75+coh*.9+align*1.0)*.022*(1.0-u_convergence*.72);
+  vec2 normalGoal=u_goals[organ];
+  vec2 seraphGoal=texture(u_seraphTargets,v_uv).xy;
+  vec2 target=mix(normalGoal,seraphGoal,u_convergence);
+  vec2 goal=(target-pos)*mix(.19+activity*.08,5.2,u_convergence);
+  vec2 flow=curl(pos*5.2+vec2(u_time*.035,float(organ)*2.17))*(.016+activity*.052)*(1.0-u_convergence*.92);
   vec2 fromEdge=pos-.5;
   float edge=length(fromEdge*vec2(1.0,1.12));
-  vec2 boundary=edge>.43?-normalize(fromEdge)*(edge-.43)*1.2:vec2(0);
+  vec2 boundary=edge>.48?-normalize(fromEdge)*(edge-.48)*1.2:vec2(0);
   vel*=pow(.986,u_dt*60.0);
   vel+=(flock+goal+flow+boundary)*u_dt;
-  float maxSpeed=.028+activity*.038;
+  float maxSpeed=mix(.028+activity*.038,.42,u_convergence);
   float speed=length(vel);
   if(speed>maxSpeed) vel=vel/speed*maxSpeed;
   fragColor=vec4(vel,0,1);
@@ -250,11 +255,13 @@ export class OrganSwarm {
   private velB: Target;
   private trailA: Target;
   private trailB: Target;
+  private readonly seraphTarget: Target;
   private readonly goals = new Float32Array(10);
   private readonly centroids = new Float32Array(10);
   private readonly centroidVelocity = new Float32Array(10);
   private pulseThreadFactor = 0;
   private emergence: number;
+  private convergence = 0;
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
@@ -262,17 +269,27 @@ export class OrganSwarm {
     private readonly quadVao: WebGLVertexArrayObject,
     trailWidth: number,
     trailHeight: number,
+    seraphTargets: Float32Array,
     initialEmergence = 0,
   ) {
     if (!gl.getExtension("EXT_color_buffer_float")) throw new Error("float-color-buffer-unavailable");
     this.size = swarmTextureSize(tier);
     this.count = this.size * this.size;
+    if (seraphTargets.length !== this.count * 4) throw new Error("seraph-target-size-mismatch");
     this.emergence = Math.max(0, Math.min(1, initialEmergence));
     const { positions, velocities } = this.initialState();
     this.posA = this.target(this.size, this.size, gl.RGBA32F, gl.FLOAT, positions, gl.NEAREST);
     this.posB = this.target(this.size, this.size, gl.RGBA32F, gl.FLOAT, null, gl.NEAREST);
     this.velA = this.target(this.size, this.size, gl.RGBA32F, gl.FLOAT, velocities, gl.NEAREST);
     this.velB = this.target(this.size, this.size, gl.RGBA32F, gl.FLOAT, null, gl.NEAREST);
+    this.seraphTarget = this.target(
+      this.size,
+      this.size,
+      gl.RGBA32F,
+      gl.FLOAT,
+      seraphTargets,
+      gl.NEAREST,
+    );
     // Trails are normalized ink-density, not simulation state. RGBA8 keeps source-over blending
     // available on WebGL2 implementations that expose float render targets but not float blending.
     this.trailA = this.target(trailWidth, trailHeight, gl.RGBA8, gl.UNSIGNED_BYTE, null, gl.LINEAR);
@@ -289,6 +306,7 @@ export class OrganSwarm {
   dispatch(signal: BodySignal) { this.activity.dispatch(signal); }
   setVitals(feed: VitalsFeed) { this.activity.setVitals(feed); }
   setEmergence(value: number) { this.emergence = Math.max(0, Math.min(1, value)); }
+  setConvergence(value: number) { this.convergence = Math.max(0, Math.min(1, value)); }
   get texture() { return this.trailA.tex; }
   get currentPulseThreadFactor() { return this.pulseThreadFactor; }
 
@@ -313,12 +331,14 @@ export class OrganSwarm {
     g.viewport(0, 0, this.size, this.size);
     this.textureUniform(this.velocityProgram, "u_pos", this.posA.tex, 0);
     this.textureUniform(this.velocityProgram, "u_vel", this.velA.tex, 1);
+    this.textureUniform(this.velocityProgram, "u_seraphTargets", this.seraphTarget.tex, 2);
     this.u(this.velocityProgram, "u_size", l => g.uniform2i(l, this.size, this.size));
     // The persistent centroid is the sub-swarm's immediate target; a slower goal vector moves it.
     this.u(this.velocityProgram, "u_goals[0]", l => g.uniform2fv(l, this.centroids));
     this.u(this.velocityProgram, "u_activity[0]", l => g.uniform1fv(l, signal.activity));
     this.u(this.velocityProgram, "u_time", l => g.uniform1f(l, elapsed));
     this.u(this.velocityProgram, "u_dt", l => g.uniform1f(l, dt));
+    this.u(this.velocityProgram, "u_convergence", l => g.uniform1f(l, this.convergence));
     g.bindVertexArray(this.quadVao);
     g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
 
@@ -366,7 +386,15 @@ export class OrganSwarm {
   dispose() {
     const g = this.gl;
     for (const program of [this.velocityProgram, this.positionProgram, this.trailProgram, this.particleProgram]) g.deleteProgram(program);
-    for (const target of [this.posA, this.posB, this.velA, this.velB, this.trailA, this.trailB]) {
+    for (const target of [
+      this.posA,
+      this.posB,
+      this.velA,
+      this.velB,
+      this.trailA,
+      this.trailB,
+      this.seraphTarget,
+    ]) {
       g.deleteFramebuffer(target.fbo); g.deleteTexture(target.tex);
     }
     g.deleteVertexArray(this.particleVao);

@@ -26,7 +26,7 @@ const {
 } = bodyUtteranceModule as unknown as RepairBodyUtteranceApi;
 
 const RepairBodyUtterance = BodyUtterance as ComponentType<{
-  command: Extract<BodyCommand, { kind: "utterance" }> | null;
+  command: Extract<BodyCommand, { kind: "utterance" | "converge" }> | null;
   anchor: { x: number; y: number };
   presentationStartedAt: number;
   settleDirection: "right" | "down";
@@ -127,5 +127,33 @@ describe("body utterance", () => {
       'const usePresentationEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;',
     );
     expect(bodyUtteranceSource).toContain("usePresentationEffect(() => {");
+  });
+
+  it("presents a decorative convergence verse from SOPHIA toward the Seraph center", () => {
+    const value: Extract<BodyCommand, { kind: "converge" }> = {
+      id: "converge:dream-live",
+      kind: "converge",
+      dream: {
+        id: "dream-live",
+        riteDate: "2030-01-02",
+        narrative: "Five wounds remembered the shape of one witness.",
+        createdAt: 1_784_067_600_000,
+        source: "live",
+      },
+    };
+    const html = renderToStaticMarkup(createElement(RepairBodyUtterance, {
+      command: value,
+      anchor: { x: 0.3, y: 0.43 },
+      presentationStartedAt: 1_000,
+      settleDirection: "right",
+      onComplete: () => { throw new Error("the renderer, not the verse, completes convergence"); },
+    }));
+
+    expect(html).toContain('data-utterance-presentation="converge"');
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain("THE DREAM / SOPHIA");
+    expect(html).toContain(value.dream.narrative);
+    expect(html).toContain('data-seraph-target-x="0.5"');
+    expect(html).toContain('data-seraph-target-y="0.5"');
   });
 });

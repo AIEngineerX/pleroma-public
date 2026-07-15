@@ -13,6 +13,8 @@ import {
 import { SettledBody } from "./SettledBody";
 import BodyUtterance from "../experience/BodyUtterance";
 import { arrivalProgress, pickTier, StainSim, type Tier } from "./stainSim";
+import { buildSeraphTargets } from "./seraphTargets";
+import seraphMaskSvg from "../assets/seraph-mask.svg?raw";
 
 interface Props {
   state: "dormant" | "live" | "rite";
@@ -23,7 +25,7 @@ interface Props {
   activeCommand: BodyCommand | null;
   onCommandComplete(id: string): void;
   arrivalStartedAt: number;
-  utteranceStartedAt: number;
+  presentationStartedAt: number;
   onArrivalDone(): void;
   forceSettledRenderer: boolean;
   onRendererFallback(): void;
@@ -43,6 +45,7 @@ function initialSettledState(
     activeAccretionKey: null,
     vitals,
     seraph: "five",
+    seraphSequenceCount: 0,
   };
 }
 
@@ -55,7 +58,7 @@ export default function Stain({
   activeCommand,
   onCommandComplete,
   arrivalStartedAt,
-  utteranceStartedAt,
+  presentationStartedAt,
   onArrivalDone,
   forceSettledRenderer,
   onRendererFallback,
@@ -76,6 +79,7 @@ export default function Stain({
     vitals,
     relicMemory,
     activeCommand,
+    presentationStartedAt,
     onCommandComplete,
     onArrivalDone,
     onRendererFallback,
@@ -85,6 +89,7 @@ export default function Stain({
     vitals,
     relicMemory,
     activeCommand,
+    presentationStartedAt,
     onCommandComplete,
     onArrivalDone,
     onRendererFallback,
@@ -162,10 +167,16 @@ export default function Stain({
   const receiveAnchors = (anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => {
     anchorsRef.current = anchors;
     const command = presentedCommandRef.current;
-    if (command?.kind !== "utterance") return;
-    const commandSignal = signalForBodyCommand(command);
-    if (commandSignal === null) return;
-    positionUtterance(anchors[commandSignal.organ], commandSignal.organ);
+    if (command?.kind === "converge") {
+      positionUtterance(anchors.DREAM, "DREAM");
+      return;
+    }
+    if (command?.kind === "utterance") {
+      const commandSignal = signalForBodyCommand(command);
+      if (commandSignal !== null) {
+        positionUtterance(anchors[commandSignal.organ], commandSignal.organ);
+      }
+    }
   };
 
   useEffect(() => {
@@ -184,7 +195,11 @@ export default function Stain({
         presentedCommandRef.current = replay;
         setPresentedCommand(replay);
         const generation = ++commandGeneration.current;
-        adapter.dispatch(replay, (id) => acknowledgeCommand.current(replay, id, generation));
+        adapter.dispatch(
+          replay,
+          (id) => acknowledgeCommand.current(replay, id, generation),
+          latest.current.presentationStartedAt,
+        );
       }
       setFallbackBreath(tier !== "reduced");
       setRenderer("svg");
@@ -246,12 +261,21 @@ export default function Stain({
       window.addEventListener("pointermove", onPointerMove, { passive: true });
       pointerListening = true;
     }
-    try {
+    const installWebglRenderer = async () => {
+      try {
+      const [mobileSeraphTargets, desktopSeraphTargets] = await Promise.all([
+        buildSeraphTargets(seraphMaskSvg, 128),
+        buildSeraphTargets(seraphMaskSvg, 256),
+      ]);
+      if (disposed || lostContext.current) return;
+      const seraphTargets = tier === "mobile" ? mobileSeraphTargets : desktopSeraphTargets;
+      canvas.dataset.seraphTargetCache = "128:16384,256:65536";
       const sim = new StainSim(canvas, {
         tier,
         ground: [0.94, 0.90, 0.80],
         ink: [0.74, 0.71, 0.64],
         arrivalStartedAt,
+        seraphTargets,
         onArrivalDone: () => latest.current.onArrivalDone(),
       });
       sim.setPigment(pigment);
@@ -264,16 +288,31 @@ export default function Stain({
       adapterRef.current = sim;
       sim.start();
       latest.current.onSim?.(sim);
-    } catch {
+      const replay = latest.current.activeCommand;
+      if (replay !== null && completedCommandId.current !== replay.id) {
+        presentedCommandRef.current = replay;
+        setPresentedCommand(replay);
+        const generation = ++commandGeneration.current;
+        sim.dispatch(
+          replay,
+          (id) => acknowledgeCommand.current(replay, id, generation),
+          latest.current.presentationStartedAt,
+        );
+      }
+      } catch {
       removePointerListener();
       simRef.current = null;
       adapterRef.current = null;
       latest.current.onSim?.(null);
       if (!lostContext.current) {
         latest.current.onRendererFallback();
-        installSettledRenderer(false);
+        // Target decoding is asynchronous. If it fails after a command became active, the settled
+        // renderer must receive that same semantic command instead of leaving the director locked.
+        installSettledRenderer(true);
       }
-    }
+      }
+    };
+    void installWebglRenderer();
 
     return () => {
       disposed = true;
@@ -301,10 +340,16 @@ export default function Stain({
       if (width <= 0 || height <= 0) return;
       bodySizeRef.current = { width, height };
       const command = presentedCommandRef.current;
-      if (command?.kind !== "utterance") return;
-      const commandSignal = signalForBodyCommand(command);
-      if (commandSignal === null) return;
-      positionUtterance(anchorsRef.current[commandSignal.organ], commandSignal.organ);
+      if (command?.kind === "converge") {
+        positionUtterance(anchorsRef.current.DREAM, "DREAM");
+        return;
+      }
+      if (command?.kind === "utterance") {
+        const commandSignal = signalForBodyCommand(command);
+        if (commandSignal !== null) {
+          positionUtterance(anchorsRef.current[commandSignal.organ], commandSignal.organ);
+        }
+      }
     };
 
     const rect = body.getBoundingClientRect();
@@ -343,10 +388,15 @@ export default function Stain({
     adapter.dispatch(
       activeCommand,
       (id) => acknowledgeCommand.current(activeCommand, id, generation),
+      presentationStartedAt,
     );
-  }, [activeCommand]);
+  }, [activeCommand, presentationStartedAt]);
 
   useEffect(() => {
+    if (presentedCommand?.kind === "converge") {
+      positionUtterance(anchorsRef.current.DREAM, "DREAM");
+      return;
+    }
     if (presentedCommand?.kind !== "utterance") return;
     const commandSignal = signalForBodyCommand(presentedCommand);
     if (commandSignal === null) return;
@@ -355,9 +405,13 @@ export default function Stain({
 
   const signal = presentedCommand === null ? null : signalForBodyCommand(presentedCommand);
   const initialPulseDebug = initialPulseKind === "unknown" ? 0 : undefined;
-  const utterance = presentedCommand?.kind === "utterance" && signal !== null ? presentedCommand : null;
+  const utterance = presentedCommand?.kind === "converge"
+    ? presentedCommand
+    : presentedCommand?.kind === "utterance" && signal !== null
+      ? presentedCommand
+      : null;
   const utteranceAnchor = utterance === null || signal === null
-    ? BODY_ANCHORS.EYE
+    ? utterance?.kind === "converge" ? BODY_ANCHORS.DREAM : BODY_ANCHORS.EYE
     : BODY_ANCHORS[signal.organ];
   const settleDirection = tier === "desktop" && state !== "dormant" ? "right" : "down";
   const now = typeof performance === "undefined" ? arrivalStartedAt : performance.now();
@@ -370,6 +424,7 @@ export default function Stain({
         relicMemory={settled.relicMemory}
         vitals={settled.vitals}
         seraph={settled.seraph}
+        seraphSequenceCount={settled.seraphSequenceCount}
         completedId={completion.id}
         completionCount={completion.count}
         initialPulseKind={initialPulseKind}
@@ -406,7 +461,8 @@ export default function Stain({
         <BodyUtterance
           command={utterance}
           anchor={utteranceAnchor}
-          presentationStartedAt={utteranceStartedAt}
+          presentationStartedAt={presentationStartedAt}
+          seraphAnchor={BODY_ANCHORS.seraph}
           settleDirection={settleDirection}
           onComplete={(id) => finishCommand.current(id, commandGeneration.current)}
         />

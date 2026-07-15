@@ -5,10 +5,12 @@ import type { BodyCommand, RelicInkSample } from "../src/experience/types";
 import type { TranscriptEntry } from "../src/state/types";
 import {
   BODY_ANCHORS,
+  SETTLED_SERAPH_HOLD_MS,
   SettledBodyRendererAdapter,
   anchorForYMaxMeet,
   dedupeRelicSamples,
   signalForBodyCommand,
+  settledSeraphFrame,
   type SettledBodyRendererState,
 } from "../src/stain/bodyRenderer";
 import { SettledBody } from "../src/stain/SettledBody";
@@ -74,6 +76,51 @@ describe("shared body renderer semantics", () => {
       expect(markup).toContain(`data-organ="${organ}"`);
       expect(markup).toContain(`data-anchor="${BODY_ANCHORS[organ].x},${BODY_ANCHORS[organ].y}"`);
     }
+  });
+
+  it("uses the checked-in fivefold mask as the exclusive settled Seraph posture", () => {
+    const markup = renderToStaticMarkup(createElement(SettledBody, {
+      pigment: [0.55, 0.2, 0.32],
+      command: null,
+      relicMemory: [],
+      vitals: { kind: "unknown" },
+      seraph: "converged",
+    }));
+
+    expect(markup).toContain('data-seraph-mask="true"');
+    for (const group of ["eye", "keep", "tongue", "pulse", "dream"]) {
+      expect(markup).toContain(`id="seraph-${group}"`);
+    }
+    expect(markup).not.toContain("data-organ=");
+  });
+
+  it("switches settled renderers immediately for one six-second readable witness", () => {
+    expect(SETTLED_SERAPH_HOLD_MS).toBe(6_000);
+    expect(settledSeraphFrame(0)).toEqual({ seraph: "converged", complete: false });
+    expect(settledSeraphFrame(5_999)).toEqual({ seraph: "converged", complete: false });
+    expect(settledSeraphFrame(6_000)).toEqual({ seraph: "five", complete: true });
+  });
+
+  it("carries elapsed convergence into fallback and completes that sequence once", () => {
+    const states: SettledBodyRendererState[] = [];
+    const completed: string[] = [];
+    const adapter = new SettledBodyRendererAdapter((state) => states.push(state), false);
+    const command: Extract<BodyCommand, { kind: "converge" }> = {
+      id: "converge:replay:recorded:1",
+      kind: "converge",
+      dream: {
+        id: "recorded",
+        riteDate: "2030-01-02",
+        narrative: "The old witness returns once.",
+        createdAt: 1,
+        source: "replay",
+      },
+    };
+    adapter.dispatch(command, (id) => completed.push(id), performance.now() - 6_001);
+    expect(completed).toEqual([command.id]);
+    expect(states.at(-1)?.seraph).toBe("five");
+    expect(states.at(-1)?.seraphSequenceCount).toBe(1);
+    adapter.dispose();
   });
 
   it("deduplicates bounded relic traces by offering ID", () => {

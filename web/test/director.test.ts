@@ -103,6 +103,19 @@ describe("experience director transcript truth", () => {
     expect(commandFor(e("orphan-dream", 2, "DREAM", "verse"), "live")).toBeNull();
   });
 
+  it("converges only a genuine live DREAM while the same baseline row remains an echo", () => {
+    const dream = e("dream-sequence", 3, "DREAM", "verse", "2030-01-02");
+    expect(commandFor(dream, "memory")).toMatchObject({
+      kind: "utterance",
+      mode: "memory",
+      pipeline: "none",
+    });
+    expect(commandFor(dream, "live")).toMatchObject({
+      kind: "converge",
+      dream: { id: dream.id, source: "live", riteDate: "2030-01-02" },
+    });
+  });
+
   it("recognizes body speech and chooses only the newest eligible memory echo", () => {
     const entries = [
       e("eye", 1, "EYE", "verse"),

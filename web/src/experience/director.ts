@@ -1,5 +1,5 @@
 import type { TranscriptEntry } from "../state/types";
-import type { BodyCommand, DirectorLocks, PipelineLink, UtteranceMode } from "./types";
+import type { BodyCommand, DirectorLocks, DreamCue, PipelineLink, UtteranceMode } from "./types";
 
 const SPEECH_REGISTERS: Partial<Record<TranscriptEntry["organ"], readonly TranscriptEntry["register"][]>> = {
   EYE: ["verse"],
@@ -7,6 +7,34 @@ const SPEECH_REGISTERS: Partial<Record<TranscriptEntry["organ"], readonly Transc
   TONGUE: ["sermon", "verse"],
   DREAM: ["verse"],
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isRiteDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+export function dreamReplayFromNavigationState(state: unknown): DreamCue | null {
+  if (!isRecord(state) || !isRecord(state.dreamReplay)) return null;
+  const cue = state.dreamReplay;
+  if (typeof cue.id !== "string" || cue.id.length === 0) return null;
+  if (typeof cue.riteDate !== "string" || !isRiteDate(cue.riteDate)) return null;
+  if (typeof cue.narrative !== "string" || cue.narrative.length === 0) return null;
+  if (typeof cue.createdAt !== "number" || !Number.isFinite(cue.createdAt)) return null;
+  const date = new Date(cue.createdAt);
+  if (!Number.isFinite(date.getTime())) return null;
+  return {
+    id: cue.id,
+    riteDate: cue.riteDate,
+    narrative: cue.narrative,
+    createdAt: cue.createdAt,
+    source: "replay",
+  };
+}
 
 export function isBodySpeech(entry: TranscriptEntry): boolean {
   return SPEECH_REGISTERS[entry.organ]?.includes(entry.register) ?? false;

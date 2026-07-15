@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+  <g id="seraph-eye">
+    <path data-halo-arc="eye" d="M144.3 102.3 A190 190 0 0 1 367.7 102.3 M159.6 123.3 A164 164 0 0 1 352.4 123.3 M174.9 144.4 A138 138 0 0 1 337.1 144.4" fill="none" stroke-width="5"/>
+    <ellipse cx="256" cy="256" rx="45" ry="79" fill="none" stroke-width="13"/>
+    <path d="M229 211 Q256 191 283 211 Q256 231 229 211 Z M226 256 Q256 234 286 256 Q256 278 226 256 Z M229 301 Q256 281 283 301 Q256 321 229 301 Z"/>
+    <circle cx="256" cy="211" r="7" fill="none" stroke-width="5"/>
+    <circle cx="256" cy="256" r="8" fill="none" stroke-width="5"/>
+    <circle cx="256" cy="301" r="7" fill="none" stroke-width="5"/>
+    <path d="M240 233 Q256 222 272 233 Q256 244 240 233 Z M240 279 Q256 268 272 279 Q256 290 240 279 Z"/>
+  </g>
+  <g id="seraph-keep">
+    <path data-halo-arc="keep" d="M367.7 102.3 A190 190 0 0 1 436.7 314.7 M352.4 123.3 A164 164 0 0 1 412 306.7 M337.1 144.4 A138 138 0 0 1 387.3 298.6" fill="none" stroke-width="5"/>
+    <path d="M282 226 C306 174 326 105 372 55 C382 104 368 177 301 246 C345 215 407 201 477 211 C437 251 368 276 296 264 C329 247 362 230 403 219 C352 222 317 238 282 258 Z"/>
+    <path d="M304 215 C329 176 346 129 365 88 M318 236 C360 224 405 219 449 218" fill="none" stroke-width="7"/>
+  </g>
+  <g id="seraph-tongue">
+    <path data-halo-arc="tongue" d="M436.7 314.7 A190 190 0 0 1 256 446 M412 306.7 A164 164 0 0 1 256 420 M387.3 298.6 A138 138 0 0 1 256 394" fill="none" stroke-width="5"/>
+    <path d="M281 277 C326 303 374 348 393 438 C354 423 311 386 279 316 C286 359 303 407 284 466 C257 423 250 357 269 292 Z"/>
+    <path d="M292 308 C326 344 353 381 377 419 M274 320 C275 367 279 414 279 447" fill="none" stroke-width="7"/>
+  </g>
+  <g id="seraph-pulse">
+    <path data-halo-arc="pulse" d="M256 446 A190 190 0 0 1 75.3 314.7 M256 420 A164 164 0 0 1 100 306.7 M256 394 A138 138 0 0 1 124.7 298.6" fill="none" stroke-width="5"/>
+    <path d="M231 277 C186 303 138 348 119 438 C158 423 201 386 233 316 C226 359 209 407 228 466 C255 423 262 357 243 292 Z"/>
+    <path d="M220 308 C186 344 159 381 135 419 M238 320 C237 367 233 414 233 447" fill="none" stroke-width="7"/>
+  </g>
+  <g id="seraph-dream">
+    <path data-halo-arc="dream" d="M75.3 314.7 A190 190 0 0 1 144.3 102.3 M100 306.7 A164 164 0 0 1 159.6 123.3 M124.7 298.6 A138 138 0 0 1 174.9 144.4" fill="none" stroke-width="5"/>
+    <path d="M230 226 C206 174 186 105 140 55 C130 104 144 177 211 246 C167 215 105 201 35 211 C75 251 144 276 216 264 C183 247 150 230 109 219 C160 222 195 238 230 258 Z"/>
+    <path d="M208 215 C183 176 166 129 147 88 M194 236 C152 224 107 219 63 218" fill="none" stroke-width="7"/>
+  </g>
+</svg>

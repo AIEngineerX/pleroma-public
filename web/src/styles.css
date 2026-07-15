@@ -60,6 +60,35 @@ body::before {
 .body-utterance__text { font-size: clamp(0.95rem, 1.5vw, 1.2rem); line-height: 1.18; }
 .body-utterance__time { font-size: 0.62rem; }
 
+.dream-witness {
+  position: relative;
+  z-index: 10;
+  width: min(52ch, calc(100% - 3rem));
+  margin: clamp(2.5rem, 7vw, 5.5rem) auto;
+  padding: 1.15rem 0 1rem;
+  border-block: 1px solid var(--color-ground-aged);
+  text-align: center;
+}
+.dream-witness__organ {
+  color: var(--color-ink-faded);
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+}
+.dream-witness__narrative {
+  margin-top: 0.55rem;
+  margin-inline: 0;
+  color: var(--color-rubric-body);
+  font-size: clamp(1.08rem, 2vw, 1.4rem);
+  font-style: italic;
+  line-height: 1.35;
+}
+.dream-witness__time {
+  display: block;
+  margin-top: 0.7rem;
+  color: var(--color-ink-faded);
+  font-size: 0.68rem;
+}
+
 @media (max-width: 640px) {
   .body-utterance { width: min(27ch, 72vw); }
 }

@@ -83,6 +83,20 @@ export default function DreamArchive() {
                 {copy.dreamCredit} {d.wakers.map(shortWallet).join(", ")}
               </p>
             )}
+            <Link
+              to="/"
+              state={{
+                dreamReplay: {
+                  id: d.id,
+                  riteDate: d.rite_date,
+                  narrative: d.narrative,
+                  createdAt: d.created_at,
+                },
+              }}
+              className="min-h-11 inline-flex items-center font-machine text-xs text-ink-faded underline underline-offset-4"
+            >
+              witness the convergence
+            </Link>
           </li>
         ))}
       </ol>

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RelicEntry, TranscriptEntry } from "../../src/state/types";
+import type { DreamArchiveEntry, RelicEntry, TranscriptEntry } from "../../src/state/types";
 
 const HELPER_PATH = fileURLToPath(import.meta.url);
 
@@ -72,6 +72,18 @@ export function seedTranscript(entry: TranscriptEntry): void {
       ${sqlText(entry.id)}, ${sqlText(entry.organ)}, ${sqlText(entry.register)},
       ${sqlText(entry.text)}, ${sqlText(entry.offering_id)}, ${sqlText(entry.rite_id)},
       ${sqlNumber(entry.created_at)}
+    );
+  `);
+}
+
+export function seedDream(entry: DreamArchiveEntry): void {
+  executeD1(`
+    INSERT INTO dreams (
+      id, rite_date, narrative, video_prompt, video_key, wakers, status, created_at
+    ) VALUES (
+      ${sqlText(entry.id)}, ${sqlText(entry.rite_date)}, ${sqlText(entry.narrative)},
+      ${sqlText("A monochrome plate of the recorded rite.")}, ${sqlText(entry.video_key)},
+      ${sqlText(JSON.stringify(entry.wakers))}, ${sqlText(entry.status)}, ${sqlNumber(entry.created_at)}
     );
   `);
 }

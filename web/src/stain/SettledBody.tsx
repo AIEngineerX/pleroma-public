@@ -1,4 +1,5 @@
 import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
+import seraphMaskSvg from "../assets/seraph-mask.svg?raw";
 import { BODY_ANCHORS, dedupeRelicSamples, signalForBodyCommand, type BodyOrgan } from "./bodyRenderer";
 import {
   RELIC_TRAVEL_INITIAL_SCALE,
@@ -13,6 +14,7 @@ export interface SettledBodyProps {
   relicMemory: readonly RelicInkSample[];
   vitals: VitalsFeed;
   seraph: "five" | "converged";
+  seraphSequenceCount?: number;
   completedId?: string | null;
   completionCount?: number;
   initialPulseKind?: VitalsFeed["kind"];
@@ -35,6 +37,10 @@ const CAPILLARIES = [
 ] as const;
 
 const SVG_CENTER = 50;
+const SERAPH_MASK_CONTENT = seraphMaskSvg.slice(
+  seraphMaskSvg.indexOf(">") + 1,
+  seraphMaskSvg.lastIndexOf("</svg>"),
+);
 const SVG_RELIC_START = {
   x: RELIC_TRAVEL_THRESHOLD.x * 100,
   y: (1 - RELIC_TRAVEL_THRESHOLD.y) * 100,
@@ -78,6 +84,7 @@ export function SettledBody({
   relicMemory,
   vitals,
   seraph,
+  seraphSequenceCount = 0,
   completedId = null,
   completionCount = 0,
   initialPulseKind,
@@ -113,6 +120,9 @@ export function SettledBody({
       data-completed-id={completedId ?? undefined}
       data-completion-count={completionCount}
       data-seraph={seraph}
+      data-seraph-phase={seraph === "converged" ? "hold" : "five"}
+      data-seraph-sequence-count={seraphSequenceCount}
+      data-seraph-timing="0/6000/0"
       data-pulse-kind={vitals.kind}
       data-initial-pulse-kind={initialPulseKind}
       data-initial-pulse-beat={initialPulseKind === "unknown" ? 0 : undefined}
@@ -123,6 +133,18 @@ export function SettledBody({
       data-relic-mask-nonzero={relicMaskNonzero}
       data-accretion-active-key={activeAccretionKey ?? undefined}
     >
+      {seraph === "converged" ? (
+        <g
+          data-seraph-mask="true"
+          transform="scale(0.1953125)"
+          fill="currentColor"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          dangerouslySetInnerHTML={{ __html: SERAPH_MASK_CONTENT }}
+        />
+      ) : (
+        <>
       <g fill="none" stroke="currentColor" strokeWidth="0.18" opacity="0.28">
         <path d="M50 28 C61 31 69 39 70 43" />
         <path d="M70 43 C68 55 66 61 64 66" />
@@ -157,6 +179,8 @@ export function SettledBody({
           </g>
         ))}
       </g>
+        </>
+      )}
 
       <g data-relic-memory="settled">
         {fragments.map(({ sample, path }) => (

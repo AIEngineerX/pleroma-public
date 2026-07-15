@@ -22,6 +22,15 @@ export interface DreamCue {
   source: "live" | "replay";
 }
 
+export interface DreamReplayNavigation {
+  dreamReplay: {
+    id: string;
+    riteDate: string;
+    narrative: string;
+    createdAt: number;
+  };
+}
+
 export type AccretedRelic = Omit<RelicEntry, "accreted_at"> & { accreted_at: number };
 
 export interface RelicInkSample {
