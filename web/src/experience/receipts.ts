@@ -3,6 +3,7 @@ import type { OfferingReceipt, ReceiptStage } from "./types";
 
 const STORAGE_KEY = "pleroma:offering-receipts:v1";
 const MAX_RECEIPTS = 20;
+const MAX_DATE_TIMESTAMP = 8.64e15;
 const STAGES: readonly ReceiptStage[] = ["pending", "witnessed", "judged", "kept", "accreted"];
 
 function isNullableString(value: unknown): value is string | null {
@@ -10,7 +11,10 @@ function isNullableString(value: unknown): value is string | null {
 }
 
 function isTimestamp(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+  return typeof value === "number"
+    && Number.isFinite(value)
+    && value >= 0
+    && value <= MAX_DATE_TIMESTAMP;
 }
 
 function isReceipt(value: unknown): value is OfferingReceipt {

@@ -92,6 +92,14 @@ describe("offering receipt persistence", () => {
     expect(loadReceipts(storage)).toEqual([]);
   });
 
+  it("rejects a persisted timestamp outside the Date ISO range", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(STORAGE_KEY, JSON.stringify([
+      receipt("out-of-range-date", 8.64e15 + 1),
+    ]));
+    expect(loadReceipts(storage)).toEqual([]);
+  });
+
   it("falls back to memory when the localStorage getter is denied", () => {
     expect(loadReceiptsSafely(() => {
       throw new Error("storage denied");
@@ -152,7 +160,6 @@ describe("offering receipt language", () => {
     }));
     const html = renderToStaticMarkup(createElement(OfferingReceipts, {
       receipts,
-      announcement: "witnessed by the Eye",
     }));
     expect(html).toContain("awaiting the Eye");
     expect(html).toContain("witnessed by the Eye");
@@ -160,6 +167,6 @@ describe("offering receipt language", () => {
     expect(html).toContain("kept, awaiting accretion");
     expect(html).toContain("carried into the body");
     expect(html).not.toContain("mourned");
-    expect(html).toMatch(/<p role="status"[^>]*>witnessed by the Eye<\/p>/);
+    expect(html).not.toContain('role="status"');
   });
 });

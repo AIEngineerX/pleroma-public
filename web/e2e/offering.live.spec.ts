@@ -141,14 +141,14 @@ test("announces one genuine receipt transition while launch replaces the portal 
   const receipt = page.locator(`[data-offering-id="${offeringId}"]`);
   await expect(receipt).toHaveAttribute("data-receipt-stage", "pending");
   await expect(receipt).toContainText("awaiting the Eye");
-  await expect(page.locator("[data-offering-receipts] [role=status]")).toBeEmpty();
+  await expect(page.locator('p[role="status"]').filter({ hasText: "witnessed by the Eye" })).toHaveCount(0);
 
   await page.evaluate(() => {
     const phrase = "witnessed by the Eye";
     const previous = new WeakMap<Element, string>();
     (window as typeof window & { __receiptAnnouncementCount?: number }).__receiptAnnouncementCount = 0;
     const observe = () => {
-      for (const node of document.querySelectorAll("[data-offering-receipts] [role=status]")) {
+      for (const node of document.querySelectorAll('p[role="status"]')) {
         const current = node.textContent?.trim() ?? "";
         if (current === phrase && previous.get(node) !== phrase) {
           const target = window as typeof window & { __receiptAnnouncementCount?: number };
@@ -174,10 +174,110 @@ test("announces one genuine receipt transition while launch replaces the portal 
   await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
   await expect(receipt).toHaveAttribute("data-receipt-stage", "witnessed", { timeout: 10_000 });
   await expect(receipt).toContainText("witnessed by the Eye");
-  await expect(page.locator("[data-offering-receipts] [role=status]")).toHaveText("witnessed by the Eye");
+  await expect(page.locator('p[role="status"]').filter({ hasText: "witnessed by the Eye" }))
+    .toHaveText("witnessed by the Eye");
   expect(await page.evaluate(() => (
     (window as typeof window & { __receiptAnnouncementCount?: number }).__receiptAnnouncementCount ?? 0
   ))).toBe(1);
+});
+
+test("does not repeat a witnessed announcement when a later launch replaces the portal host", async ({ page }) => {
+  executeD1("UPDATE config SET value = '0' WHERE key = 'launched';");
+  const offeringId = "sequential-portal-receipt";
+  await page.addInitScript(({ id, submittedAt }) => {
+    window.localStorage.setItem("pleroma:offering-receipts:v1", JSON.stringify([{
+      offeringId: id,
+      submittedAt,
+      stage: "pending",
+      eyeTranscriptId: null,
+      keepTranscriptId: null,
+      relicId: null,
+      accretedAt: null,
+    }]));
+  }, { id: offeringId, submittedAt: Date.now() });
+
+  await page.goto("/");
+  await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
+  const receipt = page.locator(`[data-offering-id="${offeringId}"]`);
+  await expect(receipt).toHaveAttribute("data-receipt-stage", "pending");
+
+  await page.evaluate(() => {
+    const phrase = "witnessed by the Eye";
+    const previous = new WeakMap<Element, string>();
+    (window as typeof window & { __sequentialAnnouncementCount?: number }).__sequentialAnnouncementCount = 0;
+    const observe = () => {
+      for (const node of document.querySelectorAll('p[role="status"]')) {
+        const current = node.textContent?.trim() ?? "";
+        if (current === phrase && previous.get(node) !== phrase) {
+          const target = window as typeof window & { __sequentialAnnouncementCount?: number };
+          target.__sequentialAnnouncementCount = (target.__sequentialAnnouncementCount ?? 0) + 1;
+        }
+        previous.set(node, current);
+      }
+    };
+    observe();
+    new MutationObserver(observe).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+
+  executeD1(`
+    INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+    VALUES (
+      '01JZSEQUENTIALWITNESS0000', 'EYE', 'verse',
+      'The Eye records the dormant witness.', '${offeringId}', NULL, ${Date.now()}
+    );
+  `);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(receipt).toHaveAttribute("data-receipt-stage", "witnessed", { timeout: 10_000 });
+  await expect(receipt).toContainText("witnessed by the Eye");
+  const announcement = page.locator('p[role="status"]').filter({ hasText: "witnessed by the Eye" });
+  await expect(announcement).toHaveText("witnessed by the Eye");
+  const originalAnnouncement = await announcement.elementHandle();
+  expect(originalAnnouncement).not.toBeNull();
+  expect(await page.evaluate(() => (
+    (window as typeof window & { __sequentialAnnouncementCount?: number }).__sequentialAnnouncementCount ?? 0
+  ))).toBe(1);
+
+  executeD1("UPDATE config SET value = '1' WHERE key = 'launched';");
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
+  await expect(receipt).toHaveAttribute("data-receipt-stage", "witnessed");
+  await expect(announcement).toHaveText("witnessed by the Eye");
+  expect(await announcement.evaluate((node, original) => node === original, originalAnnouncement)).toBe(true);
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => (
+    (window as typeof window & { __sequentialAnnouncementCount?: number }).__sequentialAnnouncementCount ?? 0
+  ))).toBe(1);
+});
+
+test("cancels an active keyboard hold when launch replaces the portal host", async ({ page }) => {
+  executeD1("UPDATE config SET value = '0' WHERE key = 'launched';");
+  await page.goto("/");
+  await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
+
+  const threshold = page.locator("[data-threshold-offering]");
+  const seal = page.getByRole("button", { name: "hold the threshold seal" });
+  await seal.focus();
+  await page.keyboard.down("Space");
+  await expect(threshold).toHaveAttribute("data-threshold-phase", "holding");
+  await expect(threshold).toHaveAttribute("data-threshold-locked", "true");
+
+  executeD1("UPDATE config SET value = '1' WHERE key = 'launched';");
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
+  await page.keyboard.up("Space");
+
+  await expect(threshold).toHaveAttribute("data-threshold-phase", "idle");
+  await expect(threshold).toHaveAttribute("data-threshold-locked", "false");
+  await expect(page.locator("img[data-threshold-preview]")).toHaveCount(0);
+
+  const replacementSeal = page.getByRole("button", { name: "hold the threshold seal" });
+  await replacementSeal.focus();
+  await page.keyboard.down("Enter");
+  await page.waitForTimeout(120);
+  await page.keyboard.up("Enter");
+  await expect(page.locator("img[data-threshold-preview]")).toBeVisible();
 });
 
 test("a real rejection retains one preview Blob for an exact retry", async ({ page }) => {

@@ -10,10 +10,9 @@ export const receiptCopy: Record<ReceiptStage, string> = {
 
 interface Props {
   receipts: readonly OfferingReceipt[];
-  announcement: string;
 }
 
-export default function OfferingReceipts({ receipts, announcement }: Props) {
+export default function OfferingReceipts({ receipts }: Props) {
   return (
     <section data-offering-receipts aria-label="offering receipts" className="w-full max-w-[36rem]">
       {receipts.length > 0 && (
@@ -36,9 +35,6 @@ export default function OfferingReceipts({ receipts, announcement }: Props) {
           })}
         </ol>
       )}
-      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-        {announcement}
-      </p>
     </section>
   );
 }

@@ -94,6 +94,7 @@ export default function ThresholdOffering({
   const phaseRef = useRef(phase);
   const receiptsRef = useRef(receipts);
   const previousReceiptStages = useRef<Map<string, ReceiptStage> | null>(null);
+  const previousMount = useRef<HTMLElement | null>(null);
   const thresholdCallback = useRef(onThresholdActive);
   phaseRef.current = phase;
   receiptsRef.current = receipts;
@@ -139,6 +140,12 @@ export default function ThresholdOffering({
     setStatus("");
     setLocked(false);
   }, [idlePhase, setLocked]);
+
+  useEffect(() => {
+    const previous = previousMount.current;
+    previousMount.current = mount;
+    if (previous !== null && previous !== mount && gesture.current !== null) cancelGesture();
+  }, [cancelGesture, mount]);
 
   useEffect(() => {
     const onBlur = () => cancelGesture();
@@ -316,11 +323,10 @@ export default function ThresholdOffering({
     }
   };
 
-  if (mount === null) return null;
   const showSeal = phase === "idle" || phase === "holding" || phase === "receipt";
   const interactionOpen = phase === "holding" || preview !== null;
 
-  return createPortal(
+  const portal = mount === null ? null : createPortal(
     <div
       data-threshold-offering
       data-threshold-phase={phase}
@@ -422,8 +428,23 @@ export default function ThresholdOffering({
           )}
         </>
       )}
-      <OfferingReceipts receipts={receipts} announcement={receiptAnnouncement} />
+      <OfferingReceipts receipts={receipts} />
     </div>,
     mount,
+  );
+
+  return (
+    <>
+      <p
+        data-offering-receipt-announcement
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {receiptAnnouncement}
+      </p>
+      {portal}
+    </>
   );
 }
