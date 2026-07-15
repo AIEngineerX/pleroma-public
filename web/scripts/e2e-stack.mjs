@@ -1,5 +1,5 @@
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,16 +7,18 @@ import {
   E2E_PERSIST_PATH,
   E2E_TMP_ROOT,
   REPOSITORY_ROOT,
+  acquireRunPersistence,
+  assertAcquisitionId,
   assertRunToken,
   assertSafePersistencePath,
   directoryBelongsToRun,
   e2eOrigins,
   processIdentityMarker,
   readE2EPorts,
+  readOwnedManifest,
   shutdownRequestedFor,
   terminateOwnedProcess,
   writeRunManifest,
-  writeRunOwner,
 } from "./e2e-run-ownership.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -29,12 +31,15 @@ const WEB_ROOT = path.resolve(REPOSITORY_ROOT, "web");
 const WRANGLER_CLI = path.resolve(WORKER_ROOT, "node_modules/wrangler/bin/wrangler.js");
 const WRANGLER_CONFIG = path.resolve(WORKER_ROOT, "wrangler.toml");
 const VITE_CLI = path.resolve(WEB_ROOT, "node_modules/vite/bin/vite.js");
+const MANAGED_COMMAND = path.resolve(WEB_ROOT, "scripts/e2e-managed-command.mjs");
 const TEST_ULID_MODULE = path.resolve(WEB_ROOT, "e2e/fixtures/worker-ulid.mjs");
+const MANAGED_READY_TIMEOUT_MS = 10_000;
 const managedChildren = [];
 let shuttingDown = false;
 let cleanupComplete = false;
 let shutdownWatcher;
 let activeRunToken = null;
+let activeAcquisitionId = null;
 let activePorts = null;
 
 function oneArgument(argv, name) {
@@ -59,6 +64,11 @@ export function launcherRunConfiguration(argv = process.argv, env = process.env)
     throw new Error("E2E launcher ownership token does not match its environment");
   }
   const environmentPorts = readE2EPorts(env);
+  const argumentAcquisition = assertAcquisitionId(oneArgument(argv, "pleroma-e2e-acquisition"));
+  const environmentAcquisition = assertAcquisitionId(env.PLEROMA_E2E_ACQUISITION_ID);
+  if (argumentAcquisition !== environmentAcquisition) {
+    throw new Error("E2E launcher acquisition ID does not match its environment");
+  }
   const argumentPorts = readE2EPorts({
     PLEROMA_E2E_WEB_PORT: oneArgument(argv, "pleroma-e2e-web-port"),
     PLEROMA_E2E_WORKER_PORT: oneArgument(argv, "pleroma-e2e-worker-port"),
@@ -67,7 +77,11 @@ export function launcherRunConfiguration(argv = process.argv, env = process.env)
     argumentPorts.web !== environmentPorts.web
     || argumentPorts.worker !== environmentPorts.worker
   ) throw new Error("E2E launcher port configuration does not match its environment");
-  return { runToken: argumentToken, ports: argumentPorts };
+  return {
+    runToken: argumentToken,
+    acquisitionId: argumentAcquisition,
+    ports: argumentPorts,
+  };
 }
 
 function tomlPath(filePath) {
@@ -98,29 +112,20 @@ function npmCliPath() {
   return path.resolve(npmExecPath);
 }
 
-function runCommand(label, cwd, command, args, env = process.env) {
-  console.log(`[e2e-stack] ${label}`);
-  const result = spawnSync(command, args, {
-    cwd,
-    env,
-    stdio: "inherit",
-    windowsHide: true,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${label} exited with status ${String(result.status)}`);
-  }
-}
-
 function writeProcessManifest() {
   if (activeRunToken === null) return;
+  if (activeAcquisitionId === null) return;
   if (activePorts === null) return;
   writeRunManifest(E2E_PERSIST_PATH, activeRunToken, {
     harness: { pid: process.pid, role: "harness", tree: false },
     children: managedChildren
-      .filter(({ child }) => child.pid && child.exitCode === null)
+      .filter(({ child }) => (
+        child.pid
+        && child.exitCode === null
+        && child.signalCode === null
+      ))
       .map(({ descriptor }) => descriptor),
-  }, activePorts);
+  }, activePorts, activeAcquisitionId);
 }
 
 function cleanup() {
@@ -129,11 +134,23 @@ function cleanup() {
   if (shutdownWatcher) clearInterval(shutdownWatcher);
   if (
     activeRunToken !== null
+    && activeAcquisitionId !== null
     && activePorts !== null
-    && directoryBelongsToRun(E2E_PERSIST_PATH, activeRunToken, activePorts)
+    && directoryBelongsToRun(
+      E2E_PERSIST_PATH,
+      activeRunToken,
+      activePorts,
+      activeAcquisitionId,
+    )
   ) {
     for (const { descriptor } of [...managedChildren].reverse()) {
-      terminateOwnedProcess(E2E_PERSIST_PATH, activeRunToken, descriptor, activePorts);
+      terminateOwnedProcess(
+        E2E_PERSIST_PATH,
+        activeRunToken,
+        descriptor,
+        activePorts,
+        activeAcquisitionId,
+      );
     }
   }
 }
@@ -148,35 +165,203 @@ function shutdown(exitCode) {
   }
 }
 
-function spawnManaged(label, role, cwd, script, args, env = process.env) {
-  if (activeRunToken === null) throw new Error("E2E run ownership is not initialized");
+function childExit(child) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+}
+
+function waitForManagedReady(child, label) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      finish(() => reject(new Error(`Timed out waiting for ${label} wrapper readiness`)));
+    }, MANAGED_READY_TIMEOUT_MS);
+    const onMessage = (message) => {
+      if (message?.type === "pleroma-e2e-command-ready") finish(resolve);
+    };
+    const onError = (error) => finish(() => reject(error));
+    const onExit = (code, signal) => finish(() => reject(new Error(
+      `${label} wrapper exited before readiness (${signal ?? code ?? "unknown"})`,
+    )));
+    function finish(settle) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener("message", onMessage);
+      child.removeListener("error", onError);
+      child.removeListener("exit", onExit);
+      settle();
+    }
+    child.on("message", onMessage);
+    child.once("error", onError);
+    child.once("exit", onExit);
+    child.send({ type: "pleroma-e2e-command-probe" }, (error) => {
+      if (error) onError(error);
+    });
+  });
+}
+
+function managedTargetExit(child, label) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const onMessage = (message) => {
+      if (message?.type !== "pleroma-e2e-target-exit") return;
+      finish(() => resolve({ code: message.code, signal: message.signal }));
+    };
+    const onError = (error) => finish(() => reject(error));
+    const onExit = (code, signal) => finish(() => reject(new Error(
+      `${label} wrapper exited before target result (${signal ?? code ?? "unknown"})`,
+    )));
+    function finish(settle) {
+      if (settled) return;
+      settled = true;
+      child.removeListener("message", onMessage);
+      child.removeListener("error", onError);
+      child.removeListener("exit", onExit);
+      settle();
+    }
+    child.on("message", onMessage);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
+
+function forgetManagedEntry(entry) {
+  const index = managedChildren.indexOf(entry);
+  if (index !== -1) managedChildren.splice(index, 1);
+}
+
+function assertDescriptorPublished(descriptor) {
+  if (activeRunToken === null || activeAcquisitionId === null || activePorts === null) {
+    throw new Error("E2E run ownership is not initialized");
+  }
+  const manifest = readOwnedManifest(
+    E2E_PERSIST_PATH,
+    activeRunToken,
+    activePorts,
+    activeAcquisitionId,
+  );
+  const published = manifest !== null
+    && [manifest.harness, ...manifest.children].some((candidate) => (
+      candidate.pid === descriptor.pid
+      && candidate.role === descriptor.role
+      && candidate.tree === descriptor.tree
+    ));
+  if (!published) throw new Error("Refusing to start an E2E target without its exact wrapper descriptor");
+}
+
+async function retireFailedManagedEntry(entry, published) {
+  if (published) {
+    const terminated = terminateOwnedProcess(
+      E2E_PERSIST_PATH,
+      activeRunToken,
+      entry.descriptor,
+      activePorts,
+      activeAcquisitionId,
+    );
+    if (!terminated) throw new Error("Could not retire the published E2E wrapper after launch failure");
+  } else {
+    if (entry.child.connected) entry.child.disconnect();
+    if (entry.child.exitCode === null && entry.child.signalCode === null) {
+      entry.child.kill("SIGTERM");
+    }
+  }
+  await childExit(entry.child);
+  forgetManagedEntry(entry);
+  if (published) writeProcessManifest();
+}
+
+async function sendManagedMessage(child, message) {
+  if (!child.connected || child.exitCode !== null || child.signalCode !== null) {
+    throw new Error("E2E wrapper IPC is unavailable");
+  }
+  await new Promise((resolve, reject) => {
+    child.send(message, (error) => error ? reject(error) : resolve());
+  });
+}
+
+async function spawnOwnedNode(label, role, cwd, script, args, env = process.env) {
+  if (
+    activeRunToken === null
+    || activeAcquisitionId === null
+    || activePorts === null
+  ) throw new Error("E2E run ownership is not initialized");
   console.log(`[e2e-stack] starting ${label}`);
   const child = spawn(process.execPath, [
     `--title=${processIdentityMarker(activeRunToken, role)}`,
+    MANAGED_COMMAND,
     script,
     ...args,
   ], {
     cwd,
     env,
     detached: process.platform !== "win32",
-    stdio: "inherit",
+    stdio: ["inherit", "inherit", "inherit", "ipc"],
     windowsHide: true,
   });
   if (!child.pid) throw new Error(`${label} did not receive a process ID`);
   const descriptor = { pid: child.pid, role, tree: true };
-  managedChildren.push({ child, descriptor });
-  writeProcessManifest();
-  child.once("error", (error) => {
-    if (shuttingDown) return;
-    console.error(`[e2e-stack] ${label} failed to start`, error);
-    shutdown(1);
-  });
-  child.once("exit", (code, signal) => {
-    if (shuttingDown) return;
-    console.error(`[e2e-stack] ${label} exited unexpectedly (${signal ?? code ?? "unknown"})`);
-    shutdown(typeof code === "number" && code !== 0 ? code : 1);
-  });
-  return child;
+  const entry = { child, descriptor, targetExit: null };
+  managedChildren.push(entry);
+  let published = false;
+  try {
+    await waitForManagedReady(child, label);
+    writeProcessManifest();
+    published = true;
+    assertDescriptorPublished(descriptor);
+    entry.targetExit = managedTargetExit(child, label);
+    await sendManagedMessage(child, { type: "pleroma-e2e-start" });
+    return entry;
+  } catch (error) {
+    entry.targetExit?.catch(() => {});
+    try {
+      await retireFailedManagedEntry(entry, published);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `${label} wrapper launch and cleanup failed`,
+      );
+    }
+    throw error;
+  }
+}
+
+async function runManagedCommand(label, cwd, script, args, env = process.env) {
+  console.log(`[e2e-stack] ${label}`);
+  const entry = await spawnOwnedNode(
+    label,
+    "startup",
+    cwd,
+    script,
+    args,
+    env,
+  );
+  const result = await entry.targetExit;
+  if (result.signal !== null || result.code !== 0) {
+    throw new Error(`${label} exited with ${result.signal ?? `status ${String(result.code)}`}`);
+  }
+}
+
+async function spawnManaged(label, role, cwd, script, args, env = process.env) {
+  const entry = await spawnOwnedNode(label, role, cwd, script, args, env);
+  entry.targetExit.then(
+    ({ code, signal }) => {
+      if (shuttingDown) return;
+      console.error(`[e2e-stack] ${label} exited unexpectedly (${signal ?? code ?? "unknown"})`);
+      shutdown(typeof code === "number" && code !== 0 ? code : 1);
+    },
+    (error) => {
+      if (shuttingDown) return;
+      console.error(`[e2e-stack] ${label} wrapper failed`, error);
+      shutdown(1);
+    },
+  );
+  return entry.child;
 }
 
 function isListening(host, port) {
@@ -223,47 +408,62 @@ async function waitForResponse(url, timeoutMs, validate) {
 async function main() {
   const configuration = launcherRunConfiguration();
   activeRunToken = configuration.runToken;
+  activeAcquisitionId = configuration.acquisitionId;
   activePorts = configuration.ports;
   const origins = e2eOrigins(activePorts);
   process.once("SIGINT", () => shutdown(0));
   process.once("SIGTERM", () => shutdown(0));
   process.once("exit", cleanup);
+  process.on("message", (message) => {
+    if (
+      message?.type === "pleroma-e2e-shutdown"
+      && message.runToken === process.env.PLEROMA_E2E_RUN_TOKEN
+      && message.acquisitionId === process.env.PLEROMA_E2E_ACQUISITION_ID
+    ) shutdown(0);
+  });
 
   await requireFreePort("127.0.0.1", activePorts.worker);
   await requireFreePort("localhost", activePorts.web);
 
   const persistencePath = assertSafePersistencePath();
-  if (existsSync(persistencePath)) {
-    throw new Error(`Refusing to replace E2E persistence without this run's owner token: ${persistencePath}`);
-  }
-  mkdirSync(persistencePath, { recursive: true });
-  writeRunOwner(persistencePath, activeRunToken, activePorts);
+  acquireRunPersistence(
+    persistencePath,
+    activeRunToken,
+    activePorts,
+    activeAcquisitionId,
+  );
   writeProcessManifest();
   const wranglerConfigPath = writeE2EWranglerConfig(persistencePath);
   shutdownWatcher = setInterval(() => {
     if (
       activeRunToken !== null
+      && activeAcquisitionId !== null
       && activePorts !== null
-      && shutdownRequestedFor(persistencePath, activeRunToken, activePorts)
+      && shutdownRequestedFor(
+        persistencePath,
+        activeRunToken,
+        activePorts,
+        activeAcquisitionId,
+      )
     ) shutdown(0);
   }, 100);
 
   const npmCli = npmCliPath();
-  runCommand(
+  await runManagedCommand(
     "compiling Worker Doctrine",
     REPOSITORY_ROOT,
-    process.execPath,
-    [npmCli, "run", "compile:doctrine", "--prefix", WORKER_ROOT],
+    npmCli,
+    ["run", "compile:doctrine", "--prefix", WORKER_ROOT],
   );
-  runCommand(
+  await runManagedCommand(
     "applying isolated D1 migrations",
     WORKER_ROOT,
-    process.execPath,
-    [WRANGLER_CLI, "d1", "migrations", "apply", "pleroma", "--local", "--persist-to", persistencePath],
+    WRANGLER_CLI,
+    ["d1", "migrations", "apply", "pleroma", "--local", "--persist-to", persistencePath],
   );
 
   const childEnv = { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" };
-  spawnManaged(
+  await spawnManaged(
     "local Worker",
     "worker",
     WORKER_ROOT,
@@ -284,14 +484,14 @@ async function main() {
     return body?.ok === true;
   });
 
-  runCommand(
+  await runManagedCommand(
     "building the web application against the local Worker",
     REPOSITORY_ROOT,
-    process.execPath,
-    [npmCli, "run", "build", "--prefix", WEB_ROOT],
+    npmCli,
+    ["run", "build", "--prefix", WEB_ROOT],
     { ...process.env, VITE_API_BASE: origins.worker },
   );
-  spawnManaged(
+  await spawnManaged(
     "Vite preview",
     "web",
     WEB_ROOT,

@@ -126,6 +126,61 @@ async function spawnMarkedShutdownTree(token, role, shutdownPath, exitDelayMs) {
   return { root, descendantPid };
 }
 
+async function spawnMarkedLateGrandchildTree(token, role, shutdownPath) {
+  const grandchildProgram = "setInterval(() => {}, 1000)";
+  const intermediateProgram = [
+    'const { spawn } = require("node:child_process");',
+    'const { existsSync } = require("node:fs");',
+    `const shutdownPath = ${JSON.stringify(shutdownPath)};`,
+    "const watcher = setInterval(() => {",
+    "  if (!existsSync(shutdownPath)) return;",
+    "  clearInterval(watcher);",
+    `  const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildProgram)}], {`,
+    "    detached: true,",
+    '    stdio: "ignore",',
+    "    windowsHide: true,",
+    "  });",
+    '  process.stdout.write(`grandchild:${grandchild.pid}\\n`);',
+    "  setTimeout(() => process.exit(0), 20);",
+    "}, 1);",
+  ].join("\n");
+  const rootProgram = [
+    'const { spawn } = require("node:child_process");',
+    'const { existsSync } = require("node:fs");',
+    `const shutdownPath = ${JSON.stringify(shutdownPath)};`,
+    `const intermediate = spawn(process.execPath, ["-e", ${JSON.stringify(intermediateProgram)}], {`,
+    '  stdio: ["ignore", "inherit", "inherit"],',
+    "  windowsHide: true,",
+    "});",
+    'process.stdout.write(`intermediate:${intermediate.pid}\\n`);',
+    "const watcher = setInterval(() => {",
+    "  if (!existsSync(shutdownPath)) return;",
+    "  clearInterval(watcher);",
+    "  setTimeout(() => process.exit(0), 10);",
+    "}, 1);",
+  ].join("\n");
+  const root = spawn(
+    process.execPath,
+    [`--title=${processIdentityMarker(token, role)}`, "-e", rootProgram],
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  );
+  let output = "";
+  root.stdout.on("data", (chunk) => { output += chunk; });
+  root.stderr.on("data", (chunk) => { output += chunk; });
+  await waitUntil(() => /intermediate:\d+\n/.test(output));
+  const intermediatePid = Number.parseInt(output.match(/intermediate:(\d+)/)[1], 10);
+  assert.equal(isAlive(intermediatePid), true);
+  assert.equal(await processBelongsToRun(root.pid, token, role), true);
+  return {
+    root,
+    intermediatePid,
+    async grandchildPid() {
+      await waitUntil(() => /grandchild:\d+\n/.test(output));
+      return Number.parseInt(output.match(/grandchild:(\d+)/)[1], 10);
+    },
+  };
+}
+
 async function stopChild(child) {
   if (!child.pid || !isAlive(child.pid)) return;
   child.kill("SIGTERM");
@@ -156,8 +211,13 @@ function writeOwnership(persistencePath, token, manifest, ports = TEST_PORTS) {
   mkdirSync(E2E_TMP_ROOT, { recursive: true });
   mkdirSync(persistencePath);
   const { ownerPath, manifestPath } = fixturePaths(persistencePath);
-  writeFileSync(ownerPath, JSON.stringify({ runToken: token, ports }));
-  writeFileSync(manifestPath, JSON.stringify({ runToken: token, ports, ...manifest }));
+  writeFileSync(ownerPath, JSON.stringify({ runToken: token, acquisitionId: token, ports }));
+  writeFileSync(manifestPath, JSON.stringify({
+    runToken: token,
+    acquisitionId: token,
+    ports,
+    ...manifest,
+  }));
 }
 
 function removeTestPersistence(persistencePath) {
@@ -220,6 +280,7 @@ function close(server) {
 }
 
 function runStack(token, ports = TEST_PORTS) {
+  const acquisitionId = runToken();
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
       STACK_SCRIPT,
@@ -227,6 +288,7 @@ function runStack(token, ports = TEST_PORTS) {
       "--pleroma-e2e-role=harness",
       `--pleroma-e2e-web-port=${ports.web}`,
       `--pleroma-e2e-worker-port=${ports.worker}`,
+      `--pleroma-e2e-acquisition=${acquisitionId}`,
     ], {
       cwd: path.resolve(REPOSITORY_ROOT, "web"),
       env: {
@@ -234,6 +296,7 @@ function runStack(token, ports = TEST_PORTS) {
         PLEROMA_E2E_RUN_TOKEN: token,
         PLEROMA_E2E_WEB_PORT: String(ports.web),
         PLEROMA_E2E_WORKER_PORT: String(ports.worker),
+        PLEROMA_E2E_ACQUISITION_ID: acquisitionId,
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -378,6 +441,7 @@ async function waitForProbeVersion(url, version, output, timeoutMs = 15_000) {
 
 test("the launcher requires one token and validated matching run-scoped ports", () => {
   const token = runToken();
+  const acquisitionId = runToken();
   const argv = [
     "node",
     STACK_SCRIPT,
@@ -385,14 +449,17 @@ test("the launcher requires one token and validated matching run-scoped ports", 
     "--pleroma-e2e-role=harness",
     "--pleroma-e2e-web-port=4174",
     "--pleroma-e2e-worker-port=8788",
+    `--pleroma-e2e-acquisition=${acquisitionId}`,
   ];
   const env = {
     PLEROMA_E2E_RUN_TOKEN: token,
     PLEROMA_E2E_WEB_PORT: "4174",
     PLEROMA_E2E_WORKER_PORT: "8788",
+    PLEROMA_E2E_ACQUISITION_ID: acquisitionId,
   };
   assert.deepEqual(launcherRunConfiguration(argv, env), {
     runToken: token,
+    acquisitionId,
     ports: { web: 4174, worker: 8788 },
   });
   assert.deepEqual(readE2EPorts({}), { web: 4173, worker: 8787 });
@@ -528,6 +595,39 @@ test("Windows ancestry rejects a stale PPID from before the owned parent incarna
   );
 });
 
+test("Windows ancestry rejects a child discovered after the owned parent incarnation is gone", () => {
+  const ownedParent = {
+    pid: 4200,
+    creationDate: "2026-07-15T17:02:00.0000000-04:00",
+    creationTimeMs: 1_784_152_920_000,
+    creationTimeTicks: "638882677200000000",
+  };
+  const reusedParent = {
+    ...ownedParent,
+    creationDate: "2026-07-15T17:03:00.0000000-04:00",
+    creationTimeMs: ownedParent.creationTimeMs + 60_000,
+    creationTimeTicks: "638882677800000000",
+  };
+  const foreignChild = {
+    pid: 4300,
+    parentPid: ownedParent.pid,
+    creationDate: "2026-07-15T17:03:01.0000000-04:00",
+    creationTimeMs: reusedParent.creationTimeMs + 1_000,
+    creationTimeTicks: "638882677810000000",
+  };
+
+  assert.equal(
+    windowsProcessDescendantEdgeState(ownedParent, foreignChild, reusedParent),
+    "unavailable",
+    "a reused parent PID cannot extend authority from the retired owned incarnation",
+  );
+  assert.equal(
+    windowsProcessDescendantEdgeState(ownedParent, foreignChild, undefined),
+    "unavailable",
+    "a child first observed after its owned parent disappeared has no proven edge",
+  );
+});
+
 test("a real stale-PPID process remains outside Windows kill authority", (context) => {
   if (process.platform !== "win32") {
     context.skip("Win32_Process supplies the stale ParentProcessId fixture");
@@ -621,6 +721,7 @@ test("owned teardown outlasts delayed Windows persistence-handle release", async
     const result = await teardownOwnedRun({
       persistencePath,
       runToken: ownerToken,
+      acquisitionId: ownerToken,
       ports: TEST_PORTS,
       gracefulTimeoutMs: 0,
       forcedTimeoutMs: 0,
@@ -633,6 +734,7 @@ test("owned teardown outlasts delayed Windows persistence-handle release", async
       const cleanup = await teardownOwnedRun({
         persistencePath,
         runToken: ownerToken,
+        acquisitionId: ownerToken,
         ports: TEST_PORTS,
         gracefulTimeoutMs: 0,
         forcedTimeoutMs: 0,
@@ -687,6 +789,7 @@ test("teardown cannot write, signal, or delete a directory owned by another run"
     const result = await teardownOwnedRun({
       persistencePath,
       runToken: teardownToken,
+      acquisitionId: teardownToken,
       ports: TEST_PORTS,
       gracefulTimeoutMs: 25,
       forcedTimeoutMs: 25,
@@ -698,6 +801,86 @@ test("teardown cannot write, signal, or delete a directory owned by another run"
     assert.equal(existsSync(shutdownPath), false);
   } finally {
     await stopChild(foreign);
+    removeTestPersistence(persistencePath);
+  }
+});
+
+test("same-acquisition teardown accepts a removed descriptor only after its exact process exits", async () => {
+  const ownerToken = runToken();
+  const recordedHarness = await spawnMarkedProcess(ownerToken, "harness");
+  const harnessPid = recordedHarness.pid;
+  await stopChild(recordedHarness);
+  const owned = await spawnMarkedProcess(ownerToken, "worker");
+  const persistencePath = testPersistencePath();
+  const { manifestPath, shutdownPath } = fixturePaths(persistencePath);
+  const harness = { pid: harnessPid, role: "harness", tree: false };
+  try {
+    writeOwnership(persistencePath, ownerToken, {
+      harness,
+      children: [{ pid: owned.pid, role: "worker", tree: false }],
+    });
+    const teardown = teardownOwnedRun({
+      persistencePath,
+      runToken: ownerToken,
+      acquisitionId: ownerToken,
+      ports: TEST_PORTS,
+      gracefulTimeoutMs: 2_000,
+      forcedTimeoutMs: 2_000,
+    });
+    await waitUntil(() => existsSync(shutdownPath));
+    await stopChild(owned);
+    writeFileSync(manifestPath, JSON.stringify({
+      runToken: ownerToken,
+      acquisitionId: ownerToken,
+      ports: TEST_PORTS,
+      harness,
+      children: [],
+    }));
+
+    assert.equal(await teardown, "cleaned");
+    assert.equal(existsSync(persistencePath), false);
+  } finally {
+    await stopChild(owned);
+    removeTestPersistence(persistencePath);
+  }
+});
+
+test("same-acquisition teardown preserves a live descriptor removed from the manifest", async () => {
+  const ownerToken = runToken();
+  const recordedHarness = await spawnMarkedProcess(ownerToken, "harness");
+  const harnessPid = recordedHarness.pid;
+  await stopChild(recordedHarness);
+  const owned = await spawnMarkedProcess(ownerToken, "worker");
+  const persistencePath = testPersistencePath();
+  const { manifestPath, shutdownPath } = fixturePaths(persistencePath);
+  const harness = { pid: harnessPid, role: "harness", tree: false };
+  try {
+    writeOwnership(persistencePath, ownerToken, {
+      harness,
+      children: [{ pid: owned.pid, role: "worker", tree: false }],
+    });
+    const teardown = teardownOwnedRun({
+      persistencePath,
+      runToken: ownerToken,
+      acquisitionId: ownerToken,
+      ports: TEST_PORTS,
+      gracefulTimeoutMs: 100,
+      forcedTimeoutMs: 100,
+    });
+    await waitUntil(() => existsSync(shutdownPath));
+    writeFileSync(manifestPath, JSON.stringify({
+      runToken: ownerToken,
+      acquisitionId: ownerToken,
+      ports: TEST_PORTS,
+      harness,
+      children: [],
+    }));
+
+    assert.equal(await teardown, "ownership-lost");
+    assert.equal(isAlive(owned.pid), true);
+    assert.equal(existsSync(persistencePath), true);
+  } finally {
+    await stopChild(owned);
     removeTestPersistence(persistencePath);
   }
 });
@@ -718,6 +901,7 @@ test("teardown cannot kill a reused foreign PID or delete its evidence", async (
     const result = await teardownOwnedRun({
       persistencePath,
       runToken: ownerToken,
+      acquisitionId: ownerToken,
       ports: TEST_PORTS,
       gracefulTimeoutMs: 25,
       forcedTimeoutMs: 25,
@@ -728,6 +912,7 @@ test("teardown cannot kill a reused foreign PID or delete its evidence", async (
     assert.equal(existsSync(sentinelPath), true);
     assert.deepEqual(JSON.parse(readFileSync(shutdownPath, "utf8")), {
       runToken: ownerToken,
+      acquisitionId: ownerToken,
       ports: TEST_PORTS,
     });
   } finally {
@@ -752,6 +937,7 @@ test("teardown preserves evidence after a reused foreign PID exits during its wa
     const result = await teardownOwnedRun({
       persistencePath,
       runToken: ownerToken,
+      acquisitionId: ownerToken,
       ports: TEST_PORTS,
       gracefulTimeoutMs: 25,
       forcedTimeoutMs: 6_000,
@@ -788,6 +974,7 @@ test("teardown retires an owned tree whose root exits during identity proof", as
     const result = await teardownOwnedRun({
       persistencePath,
       runToken: ownerToken,
+      acquisitionId: ownerToken,
       ports: TEST_PORTS,
       gracefulTimeoutMs: 100,
       forcedTimeoutMs: 2_000,
@@ -801,6 +988,56 @@ test("teardown retires an owned tree whose root exits during identity proof", as
   } finally {
     await stopChild(owned.root);
     await stopPid(owned.descendantPid);
+    removeTestPersistence(persistencePath);
+  }
+});
+
+test("teardown preserves a late grandchild first observed after its proven parent exits", async (context) => {
+  if (process.platform !== "win32") {
+    context.skip("Win32 CreationDate ancestry proves the multi-level late descendant");
+    return;
+  }
+
+  const ownerToken = runToken();
+  const persistencePath = testPersistencePath();
+  const { sentinelPath, shutdownPath } = fixturePaths(persistencePath);
+  const harness = await spawnMarkedProcess(ownerToken, "harness");
+  const harnessPid = harness.pid;
+  await stopChild(harness);
+  const owned = await spawnMarkedLateGrandchildTree(ownerToken, "worker", shutdownPath);
+  let grandchildPid = null;
+  try {
+    writeOwnership(persistencePath, ownerToken, {
+      harness: { pid: harnessPid, role: "harness", tree: false },
+      children: [{ pid: owned.root.pid, role: "worker", tree: true }],
+    });
+    writeFileSync(sentinelPath, "late descendant identity unavailable\n");
+
+    const result = await teardownOwnedRun({
+      persistencePath,
+      runToken: ownerToken,
+      acquisitionId: ownerToken,
+      ports: TEST_PORTS,
+      gracefulTimeoutMs: 300,
+      forcedTimeoutMs: 2_000,
+      deletionTimeoutMs: 1_000,
+    });
+    grandchildPid = await owned.grandchildPid();
+
+    assert.equal(result, "identity-unavailable");
+    assert.equal(existsSync(persistencePath), true);
+    assert.equal(existsSync(sentinelPath), true);
+    assert.equal(isAlive(owned.root.pid), false);
+    assert.equal(isAlive(owned.intermediatePid), false);
+    assert.equal(
+      isAlive(grandchildPid),
+      true,
+      "a late descendant without a live proven parent must remain outside kill authority",
+    );
+  } finally {
+    await stopChild(owned.root);
+    await stopPid(owned.intermediatePid);
+    if (grandchildPid !== null) await stopPid(grandchildPid);
     removeTestPersistence(persistencePath);
   }
 });
@@ -827,6 +1064,7 @@ test("teardown preserves owned state when Windows identity probing is unavailabl
     const result = await teardownOwnedRun({
       persistencePath,
       runToken: ownerToken,
+      acquisitionId: ownerToken,
       ports: TEST_PORTS,
       gracefulTimeoutMs: 0,
       forcedTimeoutMs: 25,
@@ -869,6 +1107,7 @@ test("teardown preserves state around a present Windows process with unavailable
     const result = await teardownOwnedRun({
       persistencePath,
       runToken: ownerToken,
+      acquisitionId: ownerToken,
       ports: TEST_PORTS,
       gracefulTimeoutMs: 0,
       forcedTimeoutMs: 25,
@@ -896,6 +1135,7 @@ test("the owning run terminates its verified process and removes its persistence
     const result = await teardownOwnedRun({
       persistencePath,
       runToken: ownerToken,
+      acquisitionId: ownerToken,
       ports: TEST_PORTS,
       gracefulTimeoutMs: 25,
       forcedTimeoutMs: 2_000,

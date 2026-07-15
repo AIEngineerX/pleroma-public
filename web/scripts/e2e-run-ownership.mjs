@@ -91,6 +91,13 @@ export function assertRunToken(value) {
   return value;
 }
 
+export function assertAcquisitionId(value) {
+  if (typeof value !== "string" || !RUN_TOKEN.test(value)) {
+    throw new Error("PLEROMA E2E acquisition ID must be 32 random bytes encoded as lowercase hex");
+  }
+  return value;
+}
+
 function assertRole(value) {
   if (typeof value !== "string" || !PROCESS_ROLE.test(value)) {
     throw new Error(`Invalid PLEROMA E2E process role: ${String(value)}`);
@@ -120,24 +127,49 @@ function readJson(filePath) {
   }
 }
 
-export function directoryBelongsToRun(persistencePath, runToken, ports = DEFAULT_E2E_PORTS) {
+export function directoryBelongsToRun(
+  persistencePath,
+  runToken,
+  ports = DEFAULT_E2E_PORTS,
+  acquisitionId,
+) {
   const token = assertRunToken(runToken);
+  const acquisition = assertAcquisitionId(acquisitionId);
   const normalizedPorts = normalizePorts(ports);
   const { ownerPath } = ownershipPaths(persistencePath);
   const owner = readJson(ownerPath);
   return owner !== null
     && typeof owner === "object"
     && owner.runToken === token
+    && owner.acquisitionId === acquisition
     && portsMatch(owner.ports, normalizedPorts)
-    && Object.keys(owner).length === 2;
+    && Object.keys(owner).length === 3;
 }
 
-export function writeRunOwner(persistencePath, runToken, ports = DEFAULT_E2E_PORTS) {
+export function acquireRunPersistence(
+  persistencePath,
+  runToken,
+  ports = DEFAULT_E2E_PORTS,
+  acquisitionId,
+) {
   const token = assertRunToken(runToken);
+  const acquisition = assertAcquisitionId(acquisitionId);
   const normalizedPorts = normalizePorts(ports);
   const { persistencePath: safePath, ownerPath } = ownershipPaths(persistencePath);
-  mkdirSync(safePath, { recursive: true });
-  writeFileSync(ownerPath, JSON.stringify({ runToken: token, ports: normalizedPorts }));
+  mkdirSync(path.dirname(safePath), { recursive: true });
+  try {
+    mkdirSync(safePath);
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw new Error(`Refusing to acquire E2E persistence because it already exists: ${safePath}`);
+    }
+    throw error;
+  }
+  writeFileSync(
+    ownerPath,
+    JSON.stringify({ runToken: token, acquisitionId: acquisition, ports: normalizedPorts }),
+    { flag: "wx" },
+  );
 }
 
 function validPid(value) {
@@ -153,8 +185,14 @@ function validProcessDescriptor(value) {
     && typeof value.tree === "boolean";
 }
 
-export function readOwnedManifest(persistencePath, runToken, ports = DEFAULT_E2E_PORTS) {
+export function readOwnedManifest(
+  persistencePath,
+  runToken,
+  ports = DEFAULT_E2E_PORTS,
+  acquisitionId,
+) {
   const token = assertRunToken(runToken);
+  const acquisition = assertAcquisitionId(acquisitionId);
   const normalizedPorts = normalizePorts(ports);
   const { manifestPath } = ownershipPaths(persistencePath);
   const manifest = readJson(manifestPath);
@@ -162,6 +200,7 @@ export function readOwnedManifest(persistencePath, runToken, ports = DEFAULT_E2E
     manifest === null
     || typeof manifest !== "object"
     || manifest.runToken !== token
+    || manifest.acquisitionId !== acquisition
     || !portsMatch(manifest.ports, normalizedPorts)
     || !validProcessDescriptor(manifest.harness)
     || !Array.isArray(manifest.children)
@@ -169,6 +208,7 @@ export function readOwnedManifest(persistencePath, runToken, ports = DEFAULT_E2E
   ) return null;
   return {
     runToken: token,
+    acquisitionId: acquisition,
     ports: normalizedPorts,
     harness: { ...manifest.harness },
     children: manifest.children.map((child) => ({ ...child })),
@@ -180,13 +220,20 @@ export function writeRunManifest(
   runToken,
   manifest,
   ports = DEFAULT_E2E_PORTS,
+  acquisitionId,
 ) {
   const token = assertRunToken(runToken);
+  const acquisition = assertAcquisitionId(acquisitionId);
   const normalizedPorts = normalizePorts(ports);
-  if (!directoryBelongsToRun(persistencePath, token, normalizedPorts)) {
+  if (!directoryBelongsToRun(persistencePath, token, normalizedPorts, acquisition)) {
     throw new Error("Refusing to write an E2E manifest without matching directory ownership");
   }
-  const candidate = { runToken: token, ports: normalizedPorts, ...manifest };
+  const candidate = {
+    runToken: token,
+    acquisitionId: acquisition,
+    ports: normalizedPorts,
+    ...manifest,
+  };
   if (
     !validProcessDescriptor(candidate.harness)
     || !Array.isArray(candidate.children)
@@ -196,16 +243,23 @@ export function writeRunManifest(
   writeFileSync(manifestPath, JSON.stringify(candidate));
 }
 
-export function shutdownRequestedFor(persistencePath, runToken, ports = DEFAULT_E2E_PORTS) {
+export function shutdownRequestedFor(
+  persistencePath,
+  runToken,
+  ports = DEFAULT_E2E_PORTS,
+  acquisitionId,
+) {
   const token = assertRunToken(runToken);
+  const acquisition = assertAcquisitionId(acquisitionId);
   const normalizedPorts = normalizePorts(ports);
   const { shutdownPath } = ownershipPaths(persistencePath);
   const request = readJson(shutdownPath);
   return request !== null
     && typeof request === "object"
     && request.runToken === token
+    && request.acquisitionId === acquisition
     && portsMatch(request.ports, normalizedPorts)
-    && Object.keys(request).length === 2;
+    && Object.keys(request).length === 3;
 }
 
 export function isProcessAlive(pid) {
@@ -219,11 +273,16 @@ export function isProcessAlive(pid) {
 }
 
 function commandLineBelongsToRun(commandLine, runToken, role) {
-  const titleMarker = `--title=${processIdentityMarker(runToken, role)}`;
-  if (commandLine.includes(titleMarker)) return true;
+  const marker = processIdentityMarker(runToken, role);
+  const normalized = commandLine.replaceAll("\0", " ").trim();
+  if (normalized === marker) return true;
+  const args = normalized
+    .split(/\s+/)
+    .map((argument) => argument.replace(/^"(.*)"$/, "$1"));
+  if (args.includes(`--title=${marker}`)) return true;
   return role === "harness"
-    && commandLine.includes(`--pleroma-e2e-owner=${runToken}`)
-    && commandLine.includes("--pleroma-e2e-role=harness");
+    && args.includes(`--pleroma-e2e-owner=${runToken}`)
+    && args.includes("--pleroma-e2e-role=harness");
 }
 
 function nonWindowsProcessCommandLine(pid) {
@@ -315,7 +374,8 @@ export function windowsProcessIncarnationState(current, expected) {
     : "reused";
 }
 
-export function windowsProcessDescendantEdgeState(parent, child) {
+export function windowsProcessDescendantEdgeState(parent, child, currentParent) {
+  const observedParent = arguments.length >= 3 ? currentParent : parent;
   if (child?.parentPid !== parent?.pid) return "not-child";
   if (
     typeof parent?.creationDate !== "string"
@@ -331,18 +391,27 @@ export function windowsProcessDescendantEdgeState(parent, child) {
   const childTicks = BigInt(child.creationTimeTicks);
   if (childTicks < parentTicks) return "stale-parent";
   if (childTicks === parentTicks) return "unavailable";
+  if (windowsProcessIncarnationState(observedParent, parent) !== "same") {
+    return "unavailable";
+  }
   return "possible-child";
 }
 
-function windowsDescendants(snapshot, rootRecord) {
+function windowsDescendants(snapshot, rootRecords) {
+  const roots = Array.isArray(rootRecords) ? rootRecords : [rootRecords];
   const descendants = [];
-  const queue = [{ ...rootRecord, depth: 0 }];
-  const seen = new Set([rootRecord.pid]);
+  const queue = roots.map((record) => ({ ...record, depth: record.depth ?? 0 }));
+  const seen = new Set(roots.map((record) => record.pid));
   while (queue.length > 0) {
     const parent = queue.shift();
     for (const processRecord of snapshot.processes.values()) {
       if (seen.has(processRecord.pid)) continue;
-      const edgeState = windowsProcessDescendantEdgeState(parent, processRecord);
+      const currentParent = snapshot.processes.get(parent.pid);
+      const edgeState = windowsProcessDescendantEdgeState(
+        parent,
+        processRecord,
+        currentParent,
+      );
       if (edgeState === "not-child" || edgeState === "stale-parent") continue;
       if (edgeState === "unavailable") {
         return { state: "unavailable", records: descendants };
@@ -392,7 +461,7 @@ function classifyWindowsDescriptor(snapshot, descriptor, runToken) {
     return { state: "mismatch", record: { ...root, depth: 0 } };
   }
   const lineage = descriptor.tree
-    ? windowsDescendants(snapshot, root)
+    ? windowsDescendants(snapshot, [root])
     : { state: "ok", records: [] };
   if (lineage.state === "unavailable") return { state: "unavailable" };
   const descendants = lineage.records;
@@ -467,44 +536,47 @@ function inspectWindowsProofLineage(snapshot, proof, knownRecords) {
   if (snapshot.state !== "ok") {
     return { status: "identity-unavailable", records: knownRecords };
   }
+  const known = uniqueWindowsRecords(knownRecords);
+  for (const record of known) {
+    const incarnation = windowsProcessIncarnationState(
+      snapshot.processes.get(record.pid),
+      record,
+    );
+    if (incarnation === "unavailable") {
+      return { status: "identity-unavailable", records: known };
+    }
+  }
   const currentRoot = snapshot.processes.get(proof.root.pid);
   const rootIncarnation = windowsProcessIncarnationState(currentRoot, proof.root);
   if (rootIncarnation === "unavailable") {
-    return { status: "identity-unavailable", records: knownRecords };
+    return { status: "identity-unavailable", records: known };
   }
   if (rootIncarnation === "same") {
     if (currentRoot.commandLine === null) {
-      return { status: "identity-unavailable", records: knownRecords };
+      return { status: "identity-unavailable", records: known };
     }
     if (!commandLineBelongsToRun(currentRoot.commandLine, proof.runToken, proof.descriptor.role)) {
-      return { status: "foreign-process", records: knownRecords };
+      return { status: "foreign-process", records: known };
     }
   }
 
   const lineage = proof.descriptor.tree
-    ? windowsDescendants(snapshot, proof.root)
+    ? windowsDescendants(snapshot, known)
     : { state: "ok", records: [] };
   if (lineage.state === "unavailable") {
-    return { status: "identity-unavailable", records: knownRecords };
+    return { status: "identity-unavailable", records: known };
   }
   const descendants = lineage.records;
   if (descendants.some((record) => (
     record.creationDate === null
     || record.creationTimeMs === null
     || record.creationTimeTicks === null
-  ))) return { status: "identity-unavailable", records: knownRecords };
+  ))) return { status: "identity-unavailable", records: known };
 
-  const known = new Set(knownRecords.map(windowsRecordKey));
-  if (rootIncarnation !== "same") {
-    const unproven = descendants.filter((record) => !known.has(windowsRecordKey(record)));
-    if (unproven.length > 0) {
-      return { status: "identity-unavailable", records: knownRecords };
-    }
-    return { status: "root-retired", records: knownRecords };
-  }
+  const records = uniqueWindowsRecords([...known, ...descendants]);
   return {
-    status: "root-present",
-    records: uniqueWindowsRecords([...knownRecords, ...descendants]),
+    status: rootIncarnation === "same" ? "root-present" : "root-retired",
+    records,
   };
 }
 
@@ -553,13 +625,13 @@ function terminateWindowsOwnedProof(proof, runToken) {
     if (rootResult === "processes-running") status = rootResult;
 
     const snapshot = windowsProcessSnapshot();
-    const completion = windowsRecordsState(snapshot, records);
     const postKillLineage = inspectWindowsProofLineage(snapshot, ownedProof, records);
     records = postKillLineage.records;
     if (
       postKillLineage.status === "identity-unavailable"
       || postKillLineage.status === "foreign-process"
     ) return { status: postKillLineage.status, records };
+    const completion = windowsRecordsState(snapshot, records);
     if (completion === "exited" && postKillLineage.status === "root-retired") {
       return { status: "terminated", records };
     }
@@ -574,17 +646,17 @@ function terminateWindowsOwnedProof(proof, runToken) {
   return { status: windowsRecordsState(finalSnapshot, records), records };
 }
 
-function auditWindowsOwnedProofs(proofs, records, runToken) {
+function auditWindowsOwnedProofs(proofs, runToken) {
   const snapshot = windowsProcessSnapshot();
-  if (snapshot.state !== "ok") return { status: "identity-unavailable", records };
-  let observed = uniqueWindowsRecords(records);
+  if (snapshot.state !== "ok") return { status: "identity-unavailable", records: [] };
+  let observed = [];
   for (const proof of proofs) {
     const lineage = inspectWindowsProofLineage(
       snapshot,
       { ...proof, runToken },
-      observed,
+      proof.records,
     );
-    observed = lineage.records;
+    observed = uniqueWindowsRecords([...observed, ...lineage.records]);
     if (lineage.status === "identity-unavailable" || lineage.status === "foreign-process") {
       return { status: lineage.status, records: observed };
     }
@@ -610,6 +682,113 @@ export async function processBelongsToRun(pid, runToken, role) {
   return processBelongsToRunSync(pid, runToken, role);
 }
 
+function posixProcessGroupId(pid) {
+  if (!validPid(pid)) return null;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(")");
+    if (commandEnd !== -1) {
+      const fields = stat.slice(commandEnd + 2).trim().split(/\s+/);
+      const groupId = Number(fields[2]);
+      if (validPid(groupId)) return groupId;
+    }
+  } catch {
+    // Fall through for POSIX platforms without procfs.
+  }
+  const result = spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) return null;
+  const groupId = Number(result.stdout.trim());
+  return validPid(groupId) ? groupId : null;
+}
+
+function posixProcessGroupAlive(groupId) {
+  if (!validPid(groupId)) return false;
+  try {
+    process.kill(-groupId, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+export function posixProcessGroupAuthorityState({
+  groupAlive,
+  leaderAlive,
+  leaderOwned,
+  leaderGroupMatches = true,
+}) {
+  if (!groupAlive) return "retired";
+  if (!leaderAlive) return "unavailable";
+  if (!leaderOwned) return "foreign";
+  return leaderGroupMatches ? "authorized" : "unavailable";
+}
+
+function inspectPosixDescriptorSync(descriptor, runToken) {
+  if (!isProcessAlive(descriptor.pid)) {
+    return descriptor.tree && posixProcessGroupAlive(descriptor.pid)
+      ? { state: "unavailable" }
+      : { state: "absent" };
+  }
+  if (!processBelongsToRunSync(descriptor.pid, runToken, descriptor.role)) {
+    return { state: "mismatch" };
+  }
+  if (!descriptor.tree) {
+    return { state: "match", proof: { descriptor: { ...descriptor } } };
+  }
+  const groupId = posixProcessGroupId(descriptor.pid);
+  if (groupId === null || groupId !== descriptor.pid) return { state: "unavailable" };
+  return {
+    state: "match",
+    proof: { descriptor: { ...descriptor }, groupId },
+  };
+}
+
+function terminatePosixOwnedProof(proof, runToken) {
+  const { descriptor } = proof;
+  if (descriptor.tree) {
+    const groupAlive = posixProcessGroupAlive(proof.groupId);
+    const leaderAlive = isProcessAlive(descriptor.pid);
+    const leaderOwned = leaderAlive
+      && processBelongsToRunSync(descriptor.pid, runToken, descriptor.role);
+    const authority = posixProcessGroupAuthorityState({
+      groupAlive,
+      leaderAlive,
+      leaderOwned,
+      leaderGroupMatches: leaderAlive
+        && posixProcessGroupId(descriptor.pid) === proof.groupId,
+    });
+    if (authority === "retired") return "terminated";
+    if (authority === "foreign") return "foreign-process";
+    if (authority === "unavailable") return "identity-unavailable";
+    try {
+      process.kill(-proof.groupId, "SIGTERM");
+      return "terminated";
+    } catch (error) {
+      if (error?.code === "ESRCH") return "terminated";
+      throw error;
+    }
+  }
+  if (!isProcessAlive(descriptor.pid)) return "terminated";
+  if (!processBelongsToRunSync(descriptor.pid, runToken, descriptor.role)) {
+    return "foreign-process";
+  }
+  try {
+    process.kill(descriptor.pid, "SIGTERM");
+    return "terminated";
+  } catch (error) {
+    if (error?.code === "ESRCH") return "terminated";
+    throw error;
+  }
+}
+
+function posixProofExited(proof) {
+  return proof.descriptor.tree
+    ? !posixProcessGroupAlive(proof.groupId)
+    : !isProcessAlive(proof.descriptor.pid);
+}
+
 function manifestContains(manifest, descriptor) {
   return [manifest.harness, ...manifest.children].some((candidate) => (
     candidate.pid === descriptor.pid
@@ -623,11 +802,13 @@ export function terminateOwnedProcess(
   runToken,
   descriptor,
   ports = DEFAULT_E2E_PORTS,
+  acquisitionId,
 ) {
   const token = assertRunToken(runToken);
+  const acquisition = assertAcquisitionId(acquisitionId);
   const normalizedPorts = normalizePorts(ports);
-  if (!directoryBelongsToRun(persistencePath, token, normalizedPorts)) return false;
-  const manifest = readOwnedManifest(persistencePath, token, normalizedPorts);
+  if (!directoryBelongsToRun(persistencePath, token, normalizedPorts, acquisition)) return false;
+  const manifest = readOwnedManifest(persistencePath, token, normalizedPorts, acquisition);
   if (manifest === null || !manifestContains(manifest, descriptor)) return false;
   if (process.platform === "win32") {
     const identity = inspectWindowsDescriptorSync(descriptor, token);
@@ -635,15 +816,10 @@ export function terminateOwnedProcess(
     if (identity.state !== "match") return false;
     return terminateWindowsOwnedProof(identity.proof, token).status === "terminated";
   }
-  if (!isProcessAlive(descriptor.pid)) return true;
-  if (!processBelongsToRunSync(descriptor.pid, token, descriptor.role)) return false;
-  try {
-    process.kill(descriptor.tree ? -descriptor.pid : descriptor.pid, "SIGTERM");
-    return true;
-  } catch (error) {
-    if (error?.code === "ESRCH") return true;
-    throw error;
-  }
+  const identity = inspectPosixDescriptorSync(descriptor, token);
+  if (identity.state === "absent") return true;
+  if (identity.state !== "match") return false;
+  return terminatePosixOwnedProof(identity.proof, token) === "terminated";
 }
 
 function delay(milliseconds) {
@@ -659,13 +835,13 @@ async function waitForDirectoryRemoval(persistencePath, timeoutMs) {
   return !existsSync(persistencePath);
 }
 
-async function waitForProcessesToExit(descriptors, timeoutMs) {
+async function waitForPosixProofsToExit(proofs, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (descriptors.every((descriptor) => !isProcessAlive(descriptor.pid))) return true;
+    if (proofs.every(posixProofExited)) return true;
     await delay(25);
   }
-  return descriptors.every((descriptor) => !isProcessAlive(descriptor.pid));
+  return proofs.every(posixProofExited);
 }
 
 async function waitForWindowsRecordsToExit(records, timeoutMs) {
@@ -680,9 +856,9 @@ async function waitForWindowsRecordsToExit(records, timeoutMs) {
   return windowsRecordsState(windowsProcessSnapshot(), expected);
 }
 
-function attemptRemoveOwnedPersistence(persistencePath, runToken, ports) {
-  if (!directoryBelongsToRun(persistencePath, runToken, ports)) return false;
-  if (readOwnedManifest(persistencePath, runToken, ports) === null) return false;
+function attemptRemoveOwnedPersistence(persistencePath, runToken, ports, acquisitionId) {
+  if (!directoryBelongsToRun(persistencePath, runToken, ports, acquisitionId)) return false;
+  if (readOwnedManifest(persistencePath, runToken, ports, acquisitionId) === null) return false;
   const ownershipEvidence = new Set([
     "run-owner.json",
     "stack-processes.json",
@@ -690,12 +866,12 @@ function attemptRemoveOwnedPersistence(persistencePath, runToken, ports) {
   ]);
   for (const name of readdirSync(persistencePath)) {
     if (ownershipEvidence.has(name)) continue;
-    if (!directoryBelongsToRun(persistencePath, runToken, ports)) return false;
-    if (readOwnedManifest(persistencePath, runToken, ports) === null) return false;
+    if (!directoryBelongsToRun(persistencePath, runToken, ports, acquisitionId)) return false;
+    if (readOwnedManifest(persistencePath, runToken, ports, acquisitionId) === null) return false;
     rmSync(path.resolve(persistencePath, name), { recursive: true, force: true });
   }
-  if (!directoryBelongsToRun(persistencePath, runToken, ports)) return false;
-  if (readOwnedManifest(persistencePath, runToken, ports) === null) return false;
+  if (!directoryBelongsToRun(persistencePath, runToken, ports, acquisitionId)) return false;
+  if (readOwnedManifest(persistencePath, runToken, ports, acquisitionId) === null) return false;
   rmSync(persistencePath, { recursive: true, force: true });
   return true;
 }
@@ -704,11 +880,17 @@ function retryableRemovalError(error) {
   return error?.code === "EPERM" || error?.code === "EBUSY" || error?.code === "ENOTEMPTY";
 }
 
-async function removeOwnedPersistence(persistencePath, runToken, ports, timeoutMs) {
+async function removeOwnedPersistence(
+  persistencePath,
+  runToken,
+  ports,
+  acquisitionId,
+  timeoutMs,
+) {
   const deadline = Date.now() + timeoutMs;
   while (true) {
     try {
-      return attemptRemoveOwnedPersistence(persistencePath, runToken, ports);
+      return attemptRemoveOwnedPersistence(persistencePath, runToken, ports, acquisitionId);
     } catch (error) {
       if (!retryableRemovalError(error) || Date.now() >= deadline) throw error;
       await delay(100);
@@ -719,6 +901,7 @@ async function removeOwnedPersistence(persistencePath, runToken, ports, timeoutM
 export async function teardownOwnedRun({
   persistencePath = E2E_PERSIST_PATH,
   runToken,
+  acquisitionId,
   ports = DEFAULT_E2E_PORTS,
   gracefulTimeoutMs = 10_000,
   forcedTimeoutMs = process.platform === "win32" ? 15_000 : 3_000,
@@ -726,10 +909,11 @@ export async function teardownOwnedRun({
 } = {}) {
   const safePath = assertSafePersistencePath(persistencePath);
   const token = assertRunToken(runToken);
+  const acquisition = assertAcquisitionId(acquisitionId);
   const normalizedPorts = normalizePorts(ports);
   if (!existsSync(safePath)) return "absent";
-  if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "not-owner";
-  const manifest = readOwnedManifest(safePath, token, normalizedPorts);
+  if (!directoryBelongsToRun(safePath, token, normalizedPorts, acquisition)) return "not-owner";
+  const manifest = readOwnedManifest(safePath, token, normalizedPorts, acquisition);
   if (manifest === null) return "invalid-manifest";
 
   const descriptors = [...manifest.children].reverse().concat(manifest.harness);
@@ -738,12 +922,16 @@ export async function teardownOwnedRun({
   let identityUnavailable = false;
   let observedWindowsRecords = [];
   const windowsProofs = [];
+  const posixIdentities = new Map();
+  const posixProofs = [];
   if (process.platform === "win32") {
     for (const descriptor of descriptors) {
       if (!existsSync(safePath)) return "cleaned";
-      if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
-      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts);
-      if (currentManifest === null || !manifestContains(currentManifest, descriptor)) {
+      if (!directoryBelongsToRun(safePath, token, normalizedPorts, acquisition)) return "ownership-lost";
+      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts, acquisition);
+      if (currentManifest === null) return "ownership-lost";
+      if (!manifestContains(currentManifest, descriptor)) {
+        if (inspectWindowsDescriptorSync(descriptor, token).state === "absent") continue;
         return "ownership-lost";
       }
       const identity = inspectWindowsDescriptorSync(descriptor, token);
@@ -758,29 +946,52 @@ export async function teardownOwnedRun({
         identityUnavailable = true;
       }
     }
+  } else {
+    for (const descriptor of descriptors) {
+      if (!existsSync(safePath)) return "cleaned";
+      if (!directoryBelongsToRun(safePath, token, normalizedPorts, acquisition)) return "ownership-lost";
+      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts, acquisition);
+      if (currentManifest === null) return "ownership-lost";
+      if (!manifestContains(currentManifest, descriptor)) {
+        if (inspectPosixDescriptorSync(descriptor, token).state === "absent") continue;
+        return "ownership-lost";
+      }
+      const identity = inspectPosixDescriptorSync(descriptor, token);
+      posixIdentities.set(`${descriptor.role}:${descriptor.pid}:${descriptor.tree}`, identity);
+      if (identity.state === "match") posixProofs.push(identity.proof);
+      else if (identity.state === "mismatch") foundForeignProcess = true;
+      else if (identity.state === "unavailable") identityUnavailable = true;
+    }
   }
 
   const { shutdownPath } = ownershipPaths(safePath);
   if (
-    !directoryBelongsToRun(safePath, token, normalizedPorts)
-    || readOwnedManifest(safePath, token, normalizedPorts) === null
+    !directoryBelongsToRun(safePath, token, normalizedPorts, acquisition)
+    || readOwnedManifest(safePath, token, normalizedPorts, acquisition) === null
   ) {
     return "ownership-lost";
   }
-  writeFileSync(shutdownPath, JSON.stringify({ runToken: token, ports: normalizedPorts }));
+  writeFileSync(shutdownPath, JSON.stringify({
+    runToken: token,
+    acquisitionId: acquisition,
+    ports: normalizedPorts,
+  }));
   if (await waitForDirectoryRemoval(safePath, gracefulTimeoutMs)) return "cleaned";
 
   if (process.platform === "win32") {
     for (const descriptor of descriptors) {
       if (!existsSync(safePath)) return "cleaned";
-      if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
-      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts);
-      if (currentManifest === null || !manifestContains(currentManifest, descriptor)) {
+      if (!directoryBelongsToRun(safePath, token, normalizedPorts, acquisition)) return "ownership-lost";
+      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts, acquisition);
+      if (currentManifest === null) return "ownership-lost";
+      if (!manifestContains(currentManifest, descriptor)) {
+        if (inspectWindowsDescriptorSync(descriptor, token).state === "absent") continue;
         return "ownership-lost";
       }
       const identity = windowsIdentities.get(`${descriptor.role}:${descriptor.pid}:${descriptor.tree}`);
       if (identity?.state !== "match") continue;
       const termination = terminateWindowsOwnedProof(identity.proof, token);
+      identity.proof.records = termination.records;
       observedWindowsRecords.push(...termination.records);
       if (termination.status === "foreign-process") foundForeignProcess = true;
       if (termination.status === "identity-unavailable") identityUnavailable = true;
@@ -796,7 +1007,6 @@ export async function teardownOwnedRun({
     if (waitResult === "processes-running") return "processes-running";
     const finalAudit = auditWindowsOwnedProofs(
       windowsProofs,
-      observedWindowsRecords,
       token,
     );
     if (finalAudit.status === "foreign-process") return "foreign-process";
@@ -805,33 +1015,43 @@ export async function teardownOwnedRun({
   } else {
     for (const descriptor of descriptors) {
       if (!existsSync(safePath)) return "cleaned";
-      if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
-      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts);
-      if (currentManifest === null || !manifestContains(currentManifest, descriptor)) {
+      if (!directoryBelongsToRun(safePath, token, normalizedPorts, acquisition)) return "ownership-lost";
+      const currentManifest = readOwnedManifest(safePath, token, normalizedPorts, acquisition);
+      if (currentManifest === null) return "ownership-lost";
+      if (!manifestContains(currentManifest, descriptor)) {
+        if (inspectPosixDescriptorSync(descriptor, token).state === "absent") continue;
         return "ownership-lost";
       }
-      if (!isProcessAlive(descriptor.pid)) continue;
-      if (!processBelongsToRunSync(descriptor.pid, token, descriptor.role)) {
+      const identity = posixIdentities.get(`${descriptor.role}:${descriptor.pid}:${descriptor.tree}`);
+      if (identity?.state !== "match") continue;
+      const termination = terminatePosixOwnedProof(identity.proof, token);
+      if (termination === "foreign-process") {
         foundForeignProcess = true;
-        continue;
       }
-      terminateOwnedProcess(safePath, token, descriptor, normalizedPorts);
+      if (termination === "identity-unavailable") identityUnavailable = true;
     }
-    const exited = await waitForProcessesToExit(descriptors, forcedTimeoutMs);
+    const exited = await waitForPosixProofsToExit(posixProofs, forcedTimeoutMs);
     if (foundForeignProcess) return "foreign-process";
+    if (identityUnavailable) return "identity-unavailable";
     if (!exited) return "processes-running";
   }
 
   if (!existsSync(safePath)) return "cleaned";
-  if (!directoryBelongsToRun(safePath, token, normalizedPorts)) return "ownership-lost";
-  const finalManifest = readOwnedManifest(safePath, token, normalizedPorts);
+  if (!directoryBelongsToRun(safePath, token, normalizedPorts, acquisition)) return "ownership-lost";
+  const finalManifest = readOwnedManifest(safePath, token, normalizedPorts, acquisition);
   if (finalManifest === null) return "ownership-lost";
   if (process.platform !== "win32") {
-    const liveDescriptors = [...finalManifest.children, finalManifest.harness]
-      .filter((descriptor) => isProcessAlive(descriptor.pid));
-    if (liveDescriptors.length > 0) return "processes-running";
+    for (const proof of posixProofs) {
+      if (!posixProofExited(proof)) return "processes-running";
+    }
   }
-  return await removeOwnedPersistence(safePath, token, normalizedPorts, deletionTimeoutMs)
+  return await removeOwnedPersistence(
+    safePath,
+    token,
+    normalizedPorts,
+    acquisition,
+    deletionTimeoutMs,
+  )
     ? "cleaned"
     : "ownership-lost";
 }

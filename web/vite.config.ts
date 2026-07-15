@@ -30,7 +30,8 @@ function publicDoctrine(): Plugin {
 export default defineConfig({
   plugins: [publicDoctrine(), react(), tailwindcss()],
   server: { proxy: { "/api": "http://localhost:8787" } },
-  // e2e/ holds Playwright specs (run via `npm run e2e`), not vitest ones; without this exclude,
-  // vitest's default *.spec.ts glob picks them up and collides with Playwright's test().
-  test: { exclude: [...configDefaults.exclude, "e2e/**"] },
+  // e2e/ and scripts/fixtures/ hold Playwright specs (run via `npm run e2e` and the ownership
+  // suites), not vitest ones; without this exclude, vitest's default *.spec.ts glob picks them
+  // up and collides with Playwright's test().
+  test: { exclude: [...configDefaults.exclude, "e2e/**", "scripts/fixtures/**"] },
 });
