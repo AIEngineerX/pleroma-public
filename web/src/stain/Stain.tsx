@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
 import {
   BODY_ANCHORS,
+  BodyDispatchOwnership,
   SettledBodyRendererAdapter,
   anchorForYMaxMeet,
+  projectBodyAnchorsForYMaxMeet,
+  settledSeraphHoldElapsed,
   signalForBodyCommand,
   type BodyAnchor,
   type BodyAnchorName,
@@ -12,7 +15,13 @@ import {
 } from "./bodyRenderer";
 import { SettledBody } from "./SettledBody";
 import BodyUtterance from "../experience/BodyUtterance";
-import { arrivalProgress, pickTier, StainSim, type Tier } from "./stainSim";
+import {
+  arrivalProgress,
+  pickTier,
+  StainSim,
+  type SeraphConvergenceFrame,
+  type Tier,
+} from "./stainSim";
 import { buildSeraphTargets } from "./seraphTargets";
 import seraphMaskSvg from "../assets/seraph-mask.svg?raw";
 
@@ -29,6 +38,7 @@ interface Props {
   onArrivalDone(): void;
   forceSettledRenderer: boolean;
   onRendererFallback(): void;
+  onSeraphPhaseChange?(phase: SeraphConvergenceFrame["phase"]): void;
   onSim?: (sim: StainSim | null) => void;
 }
 
@@ -46,7 +56,29 @@ function initialSettledState(
     vitals,
     seraph: "five",
     seraphSequenceCount: 0,
+    dreamResidue: false,
   };
+}
+
+export interface SeraphRendererInstallLifecycle {
+  disposed: boolean;
+  lostContext: boolean;
+}
+
+export async function runSeraphTargetInstall<T>(
+  pending: Promise<T>,
+  lifecycle: SeraphRendererInstallLifecycle,
+  onReady: (value: T) => void,
+  onFallback: () => void,
+): Promise<void> {
+  try {
+    const value = await pending;
+    if (lifecycle.disposed || lifecycle.lostContext) return;
+    onReady(value);
+  } catch {
+    if (lifecycle.disposed || lifecycle.lostContext) return;
+    onFallback();
+  }
 }
 
 export default function Stain({
@@ -62,6 +94,7 @@ export default function Stain({
   onArrivalDone,
   forceSettledRenderer,
   onRendererFallback,
+  onSeraphPhaseChange,
   onSim,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -70,11 +103,13 @@ export default function Stain({
   const simRef = useRef<StainSim | null>(null);
   const lostContext = useRef(false);
   const commandGeneration = useRef(0);
+  const dispatchOwnership = useRef(new BodyDispatchOwnership());
   const completedCommandId = useRef<string | null>(null);
   const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presentedCommandRef = useRef<BodyCommand | null>(null);
   const anchorsRef = useRef<Readonly<Record<BodyAnchorName, BodyAnchor>>>(BODY_ANCHORS);
   const bodySizeRef = useRef({ width: 1, height: 1 });
+  const reportedSeraphPhase = useRef<SeraphConvergenceFrame["phase"]>("five");
   const latest = useRef({
     vitals,
     relicMemory,
@@ -83,6 +118,7 @@ export default function Stain({
     onCommandComplete,
     onArrivalDone,
     onRendererFallback,
+    onSeraphPhaseChange,
     onSim,
   });
   latest.current = {
@@ -93,6 +129,7 @@ export default function Stain({
     onCommandComplete,
     onArrivalDone,
     onRendererFallback,
+    onSeraphPhaseChange,
     onSim,
   };
 
@@ -103,6 +140,7 @@ export default function Stain({
   const rendererRef = useRef(renderer);
   rendererRef.current = renderer;
   const [fallbackBreath, setFallbackBreath] = useState(false);
+  const [bodySize, setBodySize] = useState({ width: 1, height: 1 });
   const [presentedCommand, setPresentedCommand] = useState<BodyCommand | null>(null);
   const [completion, setCompletion] = useState<{ id: string | null; count: number }>({
     id: null,
@@ -149,12 +187,35 @@ export default function Stain({
     }, SEMANTIC_DWELL_MS);
   };
 
+  const reportSeraphPhase = (phase: SeraphConvergenceFrame["phase"]) => {
+    if (reportedSeraphPhase.current === phase) return;
+    reportedSeraphPhase.current = phase;
+    latest.current.onSeraphPhaseChange?.(phase);
+  };
+
+  const dispatchCommand = (
+    adapter: BodyRendererAdapter,
+    command: BodyCommand,
+    startedAt: number,
+  ) => {
+    const generation = dispatchOwnership.current.claim(adapter, command.id);
+    if (generation === null) return;
+    commandGeneration.current = generation;
+    adapter.dispatch(
+      command,
+      (id) => acknowledgeCommand.current(command, id, generation),
+      startedAt,
+    );
+  };
+
   const positionUtterance = (anchor: BodyAnchor, organ: BodyAnchorName) => {
     const { width, height } = bodySizeRef.current;
     const visibleAnchor = rendererRef.current === "svg"
       ? anchorForYMaxMeet(anchor, width, height)
       : anchor;
-    const fixedAnchor = BODY_ANCHORS[organ];
+    const fixedAnchor = rendererRef.current === "svg"
+      ? anchorForYMaxMeet(BODY_ANCHORS[organ], width, height)
+      : BODY_ANCHORS[organ];
     const node = utteranceLayerRef.current?.querySelector<HTMLElement>("[data-body-utterance]");
     if (node === null || node === undefined) return;
     const translateX = (visibleAnchor.x - fixedAnchor.x) * width;
@@ -180,11 +241,14 @@ export default function Stain({
   };
 
   useEffect(() => {
-    let disposed = false;
+    const lifecycle: SeraphRendererInstallLifecycle = {
+      disposed: false,
+      lostContext: false,
+    };
     const canvas = canvasRef.current;
 
-    const installSettledRenderer = (replayActive: boolean) => {
-      if (disposed) return;
+    const installSettledRenderer = (replayActive: boolean, fallbackHoldElapsedMs?: number) => {
+      if (lifecycle.disposed) return;
       const adapter = new SettledBodyRendererAdapter(setSettled, tier === "reduced");
       adapterRef.current = adapter;
       adapter.setAnchorSink(receiveAnchors);
@@ -194,12 +258,11 @@ export default function Stain({
       if (replay !== null && completedCommandId.current !== replay.id) {
         presentedCommandRef.current = replay;
         setPresentedCommand(replay);
-        const generation = ++commandGeneration.current;
-        adapter.dispatch(
-          replay,
-          (id) => acknowledgeCommand.current(replay, id, generation),
-          latest.current.presentationStartedAt,
-        );
+        const now = typeof performance === "undefined" ? Date.now() : performance.now();
+        const startedAt = fallbackHoldElapsedMs === undefined
+          ? latest.current.presentationStartedAt
+          : now - fallbackHoldElapsedMs;
+        dispatchCommand(adapter, replay, startedAt);
       }
       setFallbackBreath(tier !== "reduced");
       setRenderer("svg");
@@ -209,9 +272,9 @@ export default function Stain({
     if (tier === "reduced" || forceSettledRenderer) {
       installSettledRenderer(false);
       return () => {
-        disposed = true;
+        lifecycle.disposed = true;
         clearDwell();
-        commandGeneration.current += 1;
+        commandGeneration.current = dispatchOwnership.current.invalidate();
         adapterRef.current?.setAnchorSink(null);
         adapterRef.current?.dispose();
         adapterRef.current = null;
@@ -241,10 +304,11 @@ export default function Stain({
 
     const onContextLost = (event: Event) => {
       event.preventDefault();
-      if (lostContext.current || disposed) return;
+      if (lostContext.current || lifecycle.disposed) return;
       lostContext.current = true;
+      lifecycle.lostContext = true;
       clearDwell();
-      commandGeneration.current += 1;
+      commandGeneration.current = dispatchOwnership.current.invalidate();
       const failed = simRef.current;
       failed?.stop();
       failed?.setAnchorSink(null);
@@ -253,7 +317,9 @@ export default function Stain({
       adapterRef.current = null;
       latest.current.onSim?.(null);
       latest.current.onRendererFallback();
-      installSettledRenderer(true);
+      const now = typeof performance === "undefined" ? Date.now() : performance.now();
+      const webglElapsed = Math.max(0, now - latest.current.presentationStartedAt);
+      installSettledRenderer(true, settledSeraphHoldElapsed(webglElapsed));
     };
 
     canvas.addEventListener("webglcontextlost", onContextLost, false);
@@ -261,13 +327,11 @@ export default function Stain({
       window.addEventListener("pointermove", onPointerMove, { passive: true });
       pointerListening = true;
     }
-    const installWebglRenderer = async () => {
-      try {
-      const [mobileSeraphTargets, desktopSeraphTargets] = await Promise.all([
+    const pendingTargets = Promise.all([
         buildSeraphTargets(seraphMaskSvg, 128),
         buildSeraphTargets(seraphMaskSvg, 256),
       ]);
-      if (disposed || lostContext.current) return;
+    void runSeraphTargetInstall(pendingTargets, lifecycle, ([mobileSeraphTargets, desktopSeraphTargets]) => {
       const seraphTargets = tier === "mobile" ? mobileSeraphTargets : desktopSeraphTargets;
       canvas.dataset.seraphTargetCache = "128:16384,256:65536";
       const sim = new StainSim(canvas, {
@@ -277,6 +341,7 @@ export default function Stain({
         arrivalStartedAt,
         seraphTargets,
         onArrivalDone: () => latest.current.onArrivalDone(),
+        onSeraphPhaseChange: reportSeraphPhase,
       });
       sim.setPigment(pigment);
       sim.setAmplitude(amplitude);
@@ -292,32 +357,25 @@ export default function Stain({
       if (replay !== null && completedCommandId.current !== replay.id) {
         presentedCommandRef.current = replay;
         setPresentedCommand(replay);
-        const generation = ++commandGeneration.current;
-        sim.dispatch(
-          replay,
-          (id) => acknowledgeCommand.current(replay, id, generation),
-          latest.current.presentationStartedAt,
-        );
+        dispatchCommand(sim, replay, latest.current.presentationStartedAt);
       }
-      } catch {
+    }, () => {
       removePointerListener();
+      simRef.current?.setAnchorSink(null);
+      simRef.current?.dispose();
       simRef.current = null;
       adapterRef.current = null;
       latest.current.onSim?.(null);
-      if (!lostContext.current) {
-        latest.current.onRendererFallback();
-        // Target decoding is asynchronous. If it fails after a command became active, the settled
-        // renderer must receive that same semantic command instead of leaving the director locked.
-        installSettledRenderer(true);
-      }
-      }
-    };
-    void installWebglRenderer();
+      latest.current.onRendererFallback();
+      // No WebGL posture became visible, so a command that activated during target decoding receives
+      // a complete settled hold instead of losing time to the rejected asynchronous install.
+      installSettledRenderer(true, 0);
+    });
 
     return () => {
-      disposed = true;
+      lifecycle.disposed = true;
       clearDwell();
-      commandGeneration.current += 1;
+      commandGeneration.current = dispatchOwnership.current.invalidate();
       canvas.removeEventListener("webglcontextlost", onContextLost, false);
       removePointerListener();
       const sim = simRef.current;
@@ -339,6 +397,9 @@ export default function Stain({
     const updateBodySize = (width: number, height: number) => {
       if (width <= 0 || height <= 0) return;
       bodySizeRef.current = { width, height };
+      setBodySize((current) => (
+        current.width === width && current.height === height ? current : { width, height }
+      ));
       const command = presentedCommandRef.current;
       if (command?.kind === "converge") {
         positionUtterance(anchorsRef.current.DREAM, "DREAM");
@@ -369,9 +430,14 @@ export default function Stain({
   useEffect(() => { adapterRef.current?.hydrateRelics(relicMemory); }, [relicMemory]);
 
   useEffect(() => {
+    if (renderer !== "svg") return;
+    reportSeraphPhase(settled.seraph === "converged" ? "hold" : "five");
+  }, [renderer, settled.seraph]);
+
+  useEffect(() => {
     if (activeCommand === null) {
       clearDwell();
-      commandGeneration.current += 1;
+      commandGeneration.current = dispatchOwnership.current.invalidate();
       presentedCommandRef.current = null;
       setPresentedCommand(null);
       if (adapterRef.current instanceof SettledBodyRendererAdapter) {
@@ -384,12 +450,7 @@ export default function Stain({
     clearDwell();
     presentedCommandRef.current = activeCommand;
     setPresentedCommand(activeCommand);
-    const generation = ++commandGeneration.current;
-    adapter.dispatch(
-      activeCommand,
-      (id) => acknowledgeCommand.current(activeCommand, id, generation),
-      presentationStartedAt,
-    );
+    dispatchCommand(adapter, activeCommand, presentationStartedAt);
   }, [activeCommand, presentationStartedAt]);
 
   useEffect(() => {
@@ -410,9 +471,17 @@ export default function Stain({
     : presentedCommand?.kind === "utterance" && signal !== null
       ? presentedCommand
       : null;
-  const utteranceAnchor = utterance === null || signal === null
+  const baseUtteranceAnchor = utterance === null || signal === null
     ? utterance?.kind === "converge" ? BODY_ANCHORS.DREAM : BODY_ANCHORS.EYE
     : BODY_ANCHORS[signal.organ];
+  const projectedUtterance = renderer === "svg"
+    ? projectBodyAnchorsForYMaxMeet(
+      baseUtteranceAnchor,
+      BODY_ANCHORS.seraph,
+      bodySize.width,
+      bodySize.height,
+    )
+    : { start: baseUtteranceAnchor, target: BODY_ANCHORS.seraph };
   const settleDirection = tier === "desktop" && state !== "dormant" ? "right" : "down";
   const now = typeof performance === "undefined" ? arrivalStartedAt : performance.now();
   const initialArrival = arrivalProgress(now - arrivalStartedAt);
@@ -424,6 +493,7 @@ export default function Stain({
         relicMemory={settled.relicMemory}
         vitals={settled.vitals}
         seraph={settled.seraph}
+        dreamResidue={settled.dreamResidue}
         seraphSequenceCount={settled.seraphSequenceCount}
         completedId={completion.id}
         completionCount={completion.count}
@@ -460,9 +530,9 @@ export default function Stain({
       <div ref={utteranceLayerRef} className="contents" aria-hidden="true">
         <BodyUtterance
           command={utterance}
-          anchor={utteranceAnchor}
+          anchor={projectedUtterance.start}
           presentationStartedAt={presentationStartedAt}
-          seraphAnchor={BODY_ANCHORS.seraph}
+          seraphAnchor={projectedUtterance.target}
           settleDirection={settleDirection}
           onComplete={(id) => finishCommand.current(id, commandGeneration.current)}
         />

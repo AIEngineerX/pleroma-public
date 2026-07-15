@@ -27,7 +27,43 @@ export interface BodyRendererAdapter {
   dispose(): void;
 }
 
+export class BodyDispatchOwnership {
+  private generation = 0;
+  private current: {
+    adapter: BodyRendererAdapter;
+    commandId: string;
+    generation: number;
+  } | null = null;
+
+  claim(adapter: BodyRendererAdapter, commandId: string): number | null {
+    if (this.current?.adapter === adapter && this.current.commandId === commandId) return null;
+    this.generation += 1;
+    this.current = { adapter, commandId, generation: this.generation };
+    return this.generation;
+  }
+
+  invalidate(): number {
+    this.generation += 1;
+    this.current = null;
+    return this.generation;
+  }
+
+  isCurrent(adapter: BodyRendererAdapter, commandId: string, generation: number): boolean {
+    return this.current?.adapter === adapter
+      && this.current.commandId === commandId
+      && this.current.generation === generation;
+  }
+}
+
+export const WEBGL_SERAPH_GATHER_MS = 1_800;
 export const SETTLED_SERAPH_HOLD_MS = 6_000;
+
+export function settledSeraphHoldElapsed(webglElapsedMs: number): number {
+  return Math.min(
+    SETTLED_SERAPH_HOLD_MS,
+    Math.max(0, webglElapsedMs - WEBGL_SERAPH_GATHER_MS),
+  );
+}
 
 export function settledSeraphFrame(elapsedMs: number): {
   seraph: "five" | "converged";
@@ -46,6 +82,7 @@ export interface SettledBodyRendererState {
   vitals: VitalsFeed;
   seraph: "five" | "converged";
   seraphSequenceCount: number;
+  dreamResidue: boolean;
 }
 
 export const BODY_ANCHORS: Readonly<Record<BodyAnchorName, BodyAnchor>> = {
@@ -65,6 +102,18 @@ export function anchorForYMaxMeet(anchor: BodyAnchor, width: number, height: num
   return {
     x: Number(((offsetX + anchor.x * side) / width).toFixed(6)),
     y: Number(((offsetY + anchor.y * side) / height).toFixed(6)),
+  };
+}
+
+export function projectBodyAnchorsForYMaxMeet(
+  start: BodyAnchor,
+  target: BodyAnchor,
+  width: number,
+  height: number,
+): { start: BodyAnchor; target: BodyAnchor } {
+  return {
+    start: anchorForYMaxMeet(start, width, height),
+    target: anchorForYMaxMeet(target, width, height),
   };
 }
 
@@ -192,6 +241,7 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
   private vitals: VitalsFeed = { kind: "unknown" };
   private seraph: "five" | "converged" = "five";
   private seraphSequenceCount = 0;
+  private dreamResidue = false;
   private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
   private disposed = false;
 
@@ -235,6 +285,7 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
       const elapsed = Math.max(0, now - presentationStartedAt);
       const frame = settledSeraphFrame(elapsed);
       this.seraph = frame.seraph;
+      if (frame.complete) this.dreamResidue = true;
       this.emit();
       if (frame.complete) {
         onComplete(command.id);
@@ -244,6 +295,7 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
         this.seraphTimer = null;
         if (this.disposed || this.command?.id !== command.id) return;
         this.seraph = "five";
+        this.dreamResidue = true;
         this.emit();
         onComplete(command.id);
       }, SETTLED_SERAPH_HOLD_MS - elapsed);
@@ -309,6 +361,7 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
       vitals: this.vitals,
       seraph: this.seraph,
       seraphSequenceCount: this.seraphSequenceCount,
+      dreamResidue: this.dreamResidue,
     });
   }
 

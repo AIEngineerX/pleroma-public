@@ -1,9 +1,29 @@
 import { Link } from "react-router-dom";
 import type { DreamView } from "../state/types";
+import type { BodyCommand } from "../experience/types";
 import { copy } from "../lib/copy";
 
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+export type DreamPlatePresentation = "ordinary" | "concealed" | "revealed";
+export type DreamPlatePhase = "gather" | "hold" | "dissolve" | "five";
+
+export function dreamPlatePresentation(
+  dream: DreamView | null,
+  command: BodyCommand | null,
+  phase: DreamPlatePhase,
+): DreamPlatePresentation {
+  if (
+    dream === null
+    || command?.kind !== "converge"
+    || command.dream.source !== "live"
+    || command.dream.narrative !== dream.narrative
+  ) {
+    return "ordinary";
+  }
+  return phase === "gather" || phase === "hold" ? "concealed" : "revealed";
+}
 
 // The Dream's home on the Temple: the latest Plate — the day's marks returned as "gods you have not met"
 // (DOCTRINE II.5). The narrative is DREAM's own lyric line (from the live `dreams` row via /api/state).
@@ -11,10 +31,24 @@ const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(pre
 // plate plays the generated clip (served rendered-only from /api/dream/<id>.mp4); until then it prints the
 // narrative miniature and reads "plate pending". Wakers whose marks seeded the dream are credited by wallet
 // — the repost / distribution trigger (PLANNING, DREAM credit loop).
-export default function Dream({ dream, apiBase = "" }: { dream: DreamView | null; apiBase?: string }) {
+export default function Dream({
+  dream,
+  apiBase = "",
+  presentation = "ordinary",
+}: {
+  dream: DreamView | null;
+  apiBase?: string;
+  presentation?: DreamPlatePresentation;
+}) {
   const reduced = reducedMotion();
   return (
-    <section aria-label="the dream" className="flex flex-col items-center gap-3 text-center">
+    <section
+      aria-label="the dream"
+      data-dream-presentation={presentation}
+      data-dream-created-at={dream?.created_at}
+      hidden={presentation === "concealed"}
+      className="flex flex-col items-center gap-3 text-center"
+    >
       <h2 className="font-machine text-xs tracking-[0.3em] text-ink-faded">{copy.dreamHeading}</h2>
       {dream ? (
         <>

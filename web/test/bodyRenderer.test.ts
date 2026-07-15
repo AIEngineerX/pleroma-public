@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { BodyCommand, RelicInkSample } from "../src/experience/types";
 import type { TranscriptEntry } from "../src/state/types";
+import * as bodyRendererModule from "../src/stain/bodyRenderer";
 import {
   BODY_ANCHORS,
   SETTLED_SERAPH_HOLD_MS,
@@ -15,6 +16,25 @@ import {
 } from "../src/stain/bodyRenderer";
 import { SettledBody } from "../src/stain/SettledBody";
 import { SWARM_ORGANS, SwarmActivity } from "../src/stain/swarmSignals";
+
+interface DispatchOwnershipContract {
+  claim(adapter: object, commandId: string): number | null;
+  invalidate(): number;
+  isCurrent(adapter: object, commandId: string, generation: number): boolean;
+}
+
+interface RepairBodyRendererApi {
+  BodyDispatchOwnership?: new () => DispatchOwnershipContract;
+  settledSeraphHoldElapsed?(webglElapsedMs: number): number;
+  projectBodyAnchorsForYMaxMeet?(
+    start: { x: number; y: number },
+    target: { x: number; y: number },
+    width: number,
+    height: number,
+  ): { start: { x: number; y: number }; target: { x: number; y: number } };
+}
+
+const repairApi = bodyRendererModule as unknown as RepairBodyRendererApi;
 
 function relic(offeringId: string): RelicInkSample {
   const alpha = new Uint8Array(64 * 64);
@@ -101,6 +121,112 @@ describe("shared body renderer semantics", () => {
     expect(settledSeraphFrame(6_000)).toEqual({ seraph: "five", complete: true });
   });
 
+  it("translates WebGL convergence elapsed into only the settled hold elapsed", () => {
+    expect(typeof repairApi.settledSeraphHoldElapsed).toBe("function");
+    if (repairApi.settledSeraphHoldElapsed === undefined) return;
+
+    expect(repairApi.settledSeraphHoldElapsed(1_000)).toBe(0);
+    expect(repairApi.settledSeraphHoldElapsed(5_000)).toBe(3_200);
+    expect(repairApi.settledSeraphHoldElapsed(6_500)).toBe(4_700);
+    expect(repairApi.settledSeraphHoldElapsed(7_799)).toBe(5_999);
+    expect(repairApi.settledSeraphHoldElapsed(7_800)).toBe(6_000);
+    expect(repairApi.settledSeraphHoldElapsed(10_000)).toBe(6_000);
+  });
+
+  it("projects both the SVG Dream origin and Seraph target through xMidYMax meet", () => {
+    expect(typeof repairApi.projectBodyAnchorsForYMaxMeet).toBe("function");
+    if (repairApi.projectBodyAnchorsForYMaxMeet === undefined) return;
+
+    const wide = repairApi.projectBodyAnchorsForYMaxMeet(
+      BODY_ANCHORS.DREAM,
+      BODY_ANCHORS.seraph,
+      200,
+      100,
+    );
+    expect(wide).toEqual({
+      start: { x: 0.4, y: 0.43 },
+      target: { x: 0.5, y: 0.5 },
+    });
+    expect(wide.target.x * 200).toBe(100);
+    expect(wide.start.x * 200 + (BODY_ANCHORS.seraph.x - BODY_ANCHORS.DREAM.x) * 200)
+      .toBe(120);
+    expect(wide.target.x * 200).not.toBe(120);
+
+    const portrait = repairApi.projectBodyAnchorsForYMaxMeet(
+      BODY_ANCHORS.DREAM,
+      BODY_ANCHORS.seraph,
+      100,
+      200,
+    );
+    expect(portrait).toEqual({
+      start: { x: 0.3, y: 0.715 },
+      target: { x: 0.5, y: 0.75 },
+    });
+    expect(portrait.target.y * 200).toBe(150);
+  });
+
+  it.each(["converge", "accrete"] as const)(
+    "owns install and effect dispatch once for %s and completes the current generation",
+    (kind) => {
+      expect(typeof repairApi.BodyDispatchOwnership).toBe("function");
+      if (repairApi.BodyDispatchOwnership === undefined) return;
+
+      const states: SettledBodyRendererState[] = [];
+      const adapter = new SettledBodyRendererAdapter((state) => states.push(state), true);
+      const ownership = new repairApi.BodyDispatchOwnership();
+      const completions: string[] = [];
+      let directorLocked = true;
+      const command: BodyCommand = kind === "converge" ? {
+        id: "converge:single-owner",
+        kind: "converge",
+        dream: {
+          id: "single-owner",
+          riteDate: "2030-01-02",
+          narrative: "One callback carries the whole witness.",
+          createdAt: 1,
+          source: "live",
+        },
+      } : {
+        id: "accrete:single-owner:2",
+        kind: "accrete",
+        relic: {
+          id: "single-owner",
+          offering_id: "single-owner-offering",
+          wallet: null,
+          summary: "one retained mark",
+          rite_id: null,
+          kept_at: 1,
+          genesis: 0,
+          accreted_at: 2,
+        },
+        ink: relic("single-owner-offering"),
+      };
+
+      const dispatchLikeStain = () => {
+        const generation = ownership.claim(adapter, command.id);
+        if (generation === null) return;
+        adapter.dispatch(command, (id) => {
+          if (!ownership.isCurrent(adapter, id, generation)) return;
+          directorLocked = false;
+          completions.push(id);
+        }, kind === "converge" ? performance.now() - SETTLED_SERAPH_HOLD_MS : performance.now());
+      };
+
+      dispatchLikeStain(); // asynchronous install path
+      dispatchLikeStain(); // React active-command effect for the same adapter + command
+
+      expect(directorLocked).toBe(false);
+      expect(completions).toEqual([command.id]);
+      if (kind === "converge") {
+        expect(states.at(-1)?.seraphSequenceCount).toBe(1);
+      } else {
+        expect(states.at(-1)?.relicRevision).toBe(1);
+        expect(states.at(-1)?.relicMemory).toHaveLength(1);
+      }
+      adapter.dispose();
+    },
+  );
+
   it("carries elapsed convergence into fallback and completes that sequence once", () => {
     const states: SettledBodyRendererState[] = [];
     const completed: string[] = [];
@@ -120,6 +246,50 @@ describe("shared body renderer semantics", () => {
     expect(completed).toEqual([command.id]);
     expect(states.at(-1)?.seraph).toBe("five");
     expect(states.at(-1)?.seraphSequenceCount).toBe(1);
+    adapter.dispose();
+  });
+
+  it("returns from settled convergence with visible Sophia residue without changing PULSE truth", () => {
+    const states: SettledBodyRendererState[] = [];
+    const adapter = new SettledBodyRendererAdapter((state) => states.push(state), false);
+    const command: Extract<BodyCommand, { kind: "converge" }> = {
+      id: "converge:residue",
+      kind: "converge",
+      dream: {
+        id: "residue",
+        riteDate: "2030-01-02",
+        narrative: "Sophia remains as a changed Dream organ.",
+        createdAt: 1,
+        source: "live",
+      },
+    };
+    adapter.setVitals({
+      kind: "current",
+      value: { state: "fed", buys: 5, sells: 2, holders: 19 },
+      receivedAt: 20,
+    });
+    adapter.dispatch(command, () => undefined, performance.now() - SETTLED_SERAPH_HOLD_MS);
+    const state = states.at(-1) as (SettledBodyRendererState & { dreamResidue?: boolean }) | undefined;
+    expect(state?.dreamResidue).toBe(true);
+
+    const markup = renderToStaticMarkup(createElement(SettledBody as unknown as React.ComponentType<{
+      pigment: [number, number, number];
+      command: BodyCommand | null;
+      relicMemory: readonly RelicInkSample[];
+      vitals: SettledBodyRendererState["vitals"];
+      seraph: "five" | "converged";
+      dreamResidue: boolean;
+    }>, {
+      pigment: [0.55, 0.2, 0.32],
+      command: state?.command ?? null,
+      relicMemory: state?.relicMemory ?? [],
+      vitals: state?.vitals ?? { kind: "unknown" },
+      seraph: state?.seraph ?? "five",
+      dreamResidue: state?.dreamResidue ?? false,
+    }));
+    expect(markup).toContain('data-dream-residue="sophia"');
+    expect(markup).toContain('data-residue="sophia"');
+    expect(markup).toContain('data-pulse-kind="current"');
     adapter.dispose();
   });
 

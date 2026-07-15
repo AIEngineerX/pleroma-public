@@ -14,6 +14,7 @@ export interface SettledBodyProps {
   relicMemory: readonly RelicInkSample[];
   vitals: VitalsFeed;
   seraph: "five" | "converged";
+  dreamResidue?: boolean;
   seraphSequenceCount?: number;
   completedId?: string | null;
   completionCount?: number;
@@ -84,6 +85,7 @@ export function SettledBody({
   relicMemory,
   vitals,
   seraph,
+  dreamResidue = false,
   seraphSequenceCount = 0,
   completedId = null,
   completionCount = 0,
@@ -123,6 +125,7 @@ export function SettledBody({
       data-seraph-phase={seraph === "converged" ? "hold" : "five"}
       data-seraph-sequence-count={seraphSequenceCount}
       data-seraph-timing="0/6000/0"
+      data-dream-residue={dreamResidue ? "sophia" : "none"}
       data-pulse-kind={vitals.kind}
       data-initial-pulse-kind={initialPulseKind}
       data-initial-pulse-beat={initialPulseKind === "unknown" ? 0 : undefined}
@@ -170,7 +173,8 @@ export function SettledBody({
             key={organ}
             data-organ={organ}
             data-anchor={`${BODY_ANCHORS[organ].x},${BODY_ANCHORS[organ].y}`}
-            opacity={signal?.organ === organ ? 0.94 : 0.7}
+            data-residue={organ === "DREAM" && dreamResidue ? "sophia" : undefined}
+            opacity={signal?.organ === organ ? 0.94 : organ === "DREAM" && dreamResidue ? 0.88 : 0.7}
           >
             <path d={ORGAN_PATHS[organ]} />
             {organ === "PULSE" && vitals.kind !== "unknown" ? (

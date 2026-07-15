@@ -11,6 +11,7 @@ import {
 } from "./relicInk";
 import {
   BODY_ANCHORS,
+  WEBGL_SERAPH_GATHER_MS,
   commitRelicSample,
   dedupeRelicSamples,
   relicSampleListsMatch,
@@ -23,7 +24,7 @@ import {
 export type Tier = "desktop" | "mobile" | "reduced";
 export const ARRIVAL_DURATION_MS = 2_500;
 export const ACCRETION_DURATION_MS = RELIC_ACCRETION_DURATION_MS;
-export const SERAPH_CONVERGE_MS = 1_800;
+export const SERAPH_CONVERGE_MS = WEBGL_SERAPH_GATHER_MS;
 export const SERAPH_HOLD_MS = 6_000;
 export const SERAPH_DISSOLVE_MS = 2_400;
 
@@ -196,6 +197,25 @@ export interface StainOpts {
   arrivalStartedAt: number;
   seraphTargets: Float32Array;
   onArrivalDone(): void;
+  onSeraphPhaseChange?(phase: SeraphConvergenceFrame["phase"]): void;
+}
+
+function seraphTargetExtents(targets: Float32Array): number[][] {
+  const extents = Array.from({ length: 5 }, () => [
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ]);
+  for (let at = 0; at < targets.length; at += 4) {
+    const organ = Math.max(0, Math.min(4, Math.round(targets[at + 2])));
+    const extent = extents[organ];
+    extent[0] = Math.min(extent[0], targets[at]);
+    extent[1] = Math.max(extent[1], targets[at]);
+    extent[2] = Math.min(extent[2], targets[at + 1]);
+    extent[3] = Math.max(extent[3], targets[at + 1]);
+  }
+  return extents.map((extent) => extent.map((value) => Number(value.toFixed(6))));
 }
 
 function initialAnchors(): Record<BodyAnchorName, BodyAnchor> {
@@ -238,6 +258,7 @@ export class StainSim implements BodyRendererAdapter {
     onComplete(id: string): void;
   } | null = null;
   private seraphSequenceCount = 0;
+  private seraphPhase: SeraphConvergenceFrame["phase"] = "five";
   private disposed = false;
   private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
   private readonly anchorBuffer = new Float32Array(10);
@@ -277,6 +298,7 @@ export class StainSim implements BodyRendererAdapter {
         index % 4 === 3 && value > 0 ? count + 1 : count
       ), 0),
     );
+    this.canvas.dataset.seraphTargetExtents = JSON.stringify(seraphTargetExtents(opts.seraphTargets));
   }
   private link(vs: string, fs: string): WebGLProgram {
     const g = this.gl, p = g.createProgram()!, shaders: WebGLShader[] = [];
@@ -447,6 +469,10 @@ export class StainSim implements BodyRendererAdapter {
     this.canvas.dataset.seraphPhase = frame.phase;
     this.canvas.dataset.seraphConvergence = frame.convergence.toFixed(3);
     this.canvas.dataset.seraphSequenceCount = String(this.seraphSequenceCount);
+    if (frame.phase !== this.seraphPhase) {
+      this.seraphPhase = frame.phase;
+      this.opts.onSeraphPhaseChange?.(frame.phase);
+    }
   }
   private frame = (now: number) => {
     const g = this.gl;

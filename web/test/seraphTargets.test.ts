@@ -34,6 +34,31 @@ function cohortCounts(targets: Float32Array): number[] {
   return counts;
 }
 
+function cohortCoordinates(
+  targets: Float32Array,
+  organIndex: number,
+): Array<{ x: number; y: number }> {
+  const coordinates: Array<{ x: number; y: number }> = [];
+  for (let at = 0; at < targets.length; at += 4) {
+    if (targets[at + 2] !== organIndex) continue;
+    coordinates.push({ x: targets[at], y: targets[at + 1] });
+  }
+  return coordinates;
+}
+
+function coordinate(width: number, height: number, x: number, y: number): { x: number; y: number } {
+  return { x: (x + 0.5) / width, y: 1 - (y + 0.5) / height };
+}
+
+function hasCoordinate(
+  coordinates: ReadonlyArray<{ x: number; y: number }>,
+  expected: { x: number; y: number },
+): boolean {
+  return coordinates.some((point) => (
+    Math.abs(point.x - expected.x) < 1e-6 && Math.abs(point.y - expected.y) < 1e-6
+  ));
+}
+
 describe("authoritative fivefold Seraph mask", () => {
   it("contains only the five ordered cohort groups, one halo share each, and no raster", () => {
     const svg = readFileSync(
@@ -99,6 +124,67 @@ describe("Seraph target expansion", () => {
         .toEqual(expectedByOrgan[index]);
     }
   });
+
+  it.each([128, 256] as const)(
+    "stratifies every tier-%i cohort across the first, last, and full mask extents",
+    (tier) => {
+      const side = 137;
+      const full = {
+        width: side,
+        height: side,
+        alpha: new Uint8Array(side * side).fill(255),
+      } satisfies SeraphGroupMask;
+      const expanded = targetsFromGroupMasks({
+        EYE: full,
+        KEEP: full,
+        TONGUE: full,
+        PULSE: full,
+        DREAM: full,
+      }, tier);
+
+      for (let organIndex = 0; organIndex < SWARM_ORGANS.length; organIndex += 1) {
+        const coordinates = cohortCoordinates(expanded, organIndex);
+        expect(hasCoordinate(coordinates, coordinate(side, side, 0, 0))).toBe(true);
+        expect(hasCoordinate(coordinates, coordinate(side, side, side - 1, side - 1))).toBe(true);
+        expect(hasCoordinate(coordinates, coordinate(side, side, side - 1, 0))).toBe(true);
+        expect(hasCoordinate(coordinates, coordinate(side, side, 0, side - 1))).toBe(true);
+      }
+    },
+  );
+
+  it.each([128, 256] as const)(
+    "cycles every sparse pixel when a tier-%i cohort is larger than its mask",
+    (tier) => {
+      const sparse = {
+        width: 5,
+        height: 3,
+        alpha: Uint8Array.from([
+          255, 0, 0, 0, 255,
+          0, 0, 255, 0, 0,
+          255, 0, 0, 0, 255,
+        ]),
+      } satisfies SeraphGroupMask;
+      const expanded = targetsFromGroupMasks({
+        EYE: sparse,
+        KEEP: sparse,
+        TONGUE: sparse,
+        PULSE: sparse,
+        DREAM: sparse,
+      }, tier);
+      const expected = [
+        coordinate(5, 3, 0, 0),
+        coordinate(5, 3, 4, 0),
+        coordinate(5, 3, 2, 1),
+        coordinate(5, 3, 0, 2),
+        coordinate(5, 3, 4, 2),
+      ];
+
+      for (let organIndex = 0; organIndex < SWARM_ORGANS.length; organIndex += 1) {
+        const coordinates = cohortCoordinates(expanded, organIndex);
+        for (const pixel of expected) expect(hasCoordinate(coordinates, pixel)).toBe(true);
+      }
+    },
+  );
 
   it("rejects malformed or empty real cohort masks", () => {
     const malformed = { ...masks(), EYE: { width: 2, height: 2, alpha: new Uint8Array(3) } };

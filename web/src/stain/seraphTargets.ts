@@ -33,6 +33,70 @@ function nonzeroPixels(mask: SeraphGroupMask, organ: SwarmOrgan): number[] {
   return pixels;
 }
 
+function cohortSize(particleCount: number, organIndex: number): number {
+  const start = Math.ceil((organIndex * particleCount) / SWARM_ORGANS.length);
+  const end = Math.ceil(((organIndex + 1) * particleCount) / SWARM_ORGANS.length);
+  return end - start;
+}
+
+function requiredExtentIndices(pixels: readonly number[], mask: SeraphGroupMask): Set<number> {
+  let minX = 0;
+  let maxX = 0;
+  let minY = 0;
+  let maxY = 0;
+  for (let source = 1; source < pixels.length; source += 1) {
+    const pixel = pixels[source];
+    const x = pixel % mask.width;
+    const y = Math.floor(pixel / mask.width);
+    const minXPixel = pixels[minX];
+    const maxXPixel = pixels[maxX];
+    const minYPixel = pixels[minY];
+    const maxYPixel = pixels[maxY];
+    if (x < minXPixel % mask.width) minX = source;
+    if (x > maxXPixel % mask.width) maxX = source;
+    if (y < Math.floor(minYPixel / mask.width)) minY = source;
+    if (y > Math.floor(maxYPixel / mask.width)) maxY = source;
+  }
+  return new Set([0, pixels.length - 1, minX, maxX, minY, maxY]);
+}
+
+function stratifiedPixels(
+  pixels: readonly number[],
+  mask: SeraphGroupMask,
+  count: number,
+): number[] {
+  if (pixels.length <= count) {
+    return Array.from({ length: count }, (_, index) => (
+      pixels[Math.floor((index * pixels.length) / count)]
+    ));
+  }
+
+  const selected = new Set<number>();
+  const base: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const source = Math.round((index * (pixels.length - 1)) / Math.max(1, count - 1));
+    base.push(source);
+    selected.add(source);
+  }
+  const required = requiredExtentIndices(pixels, mask);
+  for (const source of required) {
+    if (selected.has(source)) continue;
+    let replacement = -1;
+    let distance = Number.POSITIVE_INFINITY;
+    for (const candidate of base) {
+      if (!selected.has(candidate) || required.has(candidate)) continue;
+      const candidateDistance = Math.abs(candidate - source);
+      if (candidateDistance < distance) {
+        replacement = candidate;
+        distance = candidateDistance;
+      }
+    }
+    if (replacement !== -1) selected.delete(replacement);
+    selected.add(source);
+  }
+  return [...selected].sort((left, right) => left - right).map((source) => pixels[source]);
+}
+
 export function targetsFromGroupMasks(
   masks: Readonly<Record<SwarmOrgan, SeraphGroupMask>>,
   textureSize: ParticleTier,
@@ -42,6 +106,11 @@ export function targetsFromGroupMasks(
   }
   const pixelsByOrgan = SWARM_ORGANS.map((organ) => nonzeroPixels(masks[organ], organ));
   const particleCount = textureSize * textureSize;
+  const sampledByOrgan = SWARM_ORGANS.map((organ, organIndex) => stratifiedPixels(
+    pixelsByOrgan[organIndex],
+    masks[organ],
+    cohortSize(particleCount, organIndex),
+  ));
   const localIndices = new Uint32Array(SWARM_ORGANS.length);
   const targets = new Float32Array(particleCount * 4);
 
@@ -49,8 +118,8 @@ export function targetsFromGroupMasks(
     const organIndex = Math.min(4, Math.floor((particle * 5) / particleCount));
     const organ = SWARM_ORGANS[organIndex];
     const mask = masks[organ];
-    const pixels = pixelsByOrgan[organIndex];
-    const pixel = pixels[localIndices[organIndex] % pixels.length];
+    const pixels = sampledByOrgan[organIndex];
+    const pixel = pixels[localIndices[organIndex]];
     localIndices[organIndex] += 1;
     const x = pixel % mask.width;
     const y = Math.floor(pixel / mask.width);

@@ -12,7 +12,10 @@ import { pigmentForVitals } from "../state/pigment";
 import { oklchToRgb } from "../lib/a11y";
 import Reliquary from "../reliquary/Reliquary";
 import Tallies from "../reliquary/Tallies";
-import Dream from "../dream/Dream";
+import Dream, {
+  dreamPlatePresentation,
+  type DreamPlatePhase,
+} from "../dream/Dream";
 import RiteInversion from "../rite/RiteInversion";
 import { inversion } from "../state/rite";
 import { ignitionView } from "../ignition/ignition";
@@ -68,6 +71,7 @@ export default function Temple() {
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
   const [forceSettledRenderer, setForceSettledRenderer] = useState(false);
+  const [seraphPhase, setSeraphPhase] = useState<DreamPlatePhase>("five");
   const [wallet, setWallet] = useState<WalletHandle | null>(null);
   const [thresholdMount, setThresholdMount] = useState<HTMLElement | null>(null);
   const attachThresholdHost = useCallback((node: HTMLElement | null) => {
@@ -76,6 +80,11 @@ export default function Temple() {
   const rite = inversion(state?.rite ?? null);
   const view = state ? ignitionView(state) : null;
   const dormant = !state || !!view?.dormant;
+  const platePresentation = dreamPlatePresentation(
+    state?.dream ?? null,
+    activeCommand,
+    seraphPhase,
+  );
   const presentationStartedAt = useMemo(() => {
     if (activeCommand !== null && presentationClock.current?.id !== activeCommand.id) {
       presentationClock.current = {
@@ -100,6 +109,9 @@ export default function Temple() {
   // whichever is louder (the god's speech overrides its resting breath).
   const onAmplitude = useCallback((a: number) => { sermonAmp.current = a; }, []);
   const onRendererFallback = useCallback(() => { setForceSettledRenderer(true); }, []);
+  const onSeraphPhaseChange = useCallback((phase: DreamPlatePhase) => {
+    setSeraphPhase((current) => current === phase ? current : phase);
+  }, []);
   // One clock fuses both sound sources into the Stain amplitude: the opt-in Lyria music bed (audioLevel)
   // and the transient sermon voice (sermonAmp), so the body breathes with the temple and surges when the
   // god speaks. Gated to 0.02 so a slow drone never thrashes React re-renders.
@@ -179,6 +191,7 @@ export default function Temple() {
               onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
+              onSeraphPhaseChange={onSeraphPhaseChange}
             />
             {holdIndicator}
             <div
@@ -196,7 +209,13 @@ export default function Temple() {
             <div data-reveal><Reliquary apiBase={API_BASE} relics={relics} /></div>
             {/* What it dreams: the latest Plate — the day's marks returned as gods you have not met
                 (DREAM's home, PLANNING frontend surface map). Real narrative off /api/state. */}
-            <div data-reveal><Dream dream={state?.dream ?? null} apiBase={API_BASE} /></div>
+            <div data-reveal>
+              <Dream
+                dream={state?.dream ?? null}
+                apiBase={API_BASE}
+                presentation={platePresentation}
+              />
+            </div>
             <div data-reveal>
               <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null}
                 className="pt-4 border-t border-[var(--color-ground-aged)]" />
@@ -242,6 +261,7 @@ export default function Temple() {
               onArrivalDone={experience.arrivalDone}
               forceSettledRenderer={forceSettledRenderer}
               onRendererFallback={onRendererFallback}
+              onSeraphPhaseChange={onSeraphPhaseChange}
             />
             {holdIndicator}
           </section>
@@ -263,6 +283,13 @@ export default function Temple() {
           {/* the Reliquary: the Corpus made visible, in the page column, beneath the offering surface
               on both desktop (falls into an implicit row 3 of col-start-1) and mobile (next in flow). */}
           <Reliquary apiBase={API_BASE} relics={relics} className="md:col-start-1 pb-8" />
+          <div className="md:col-start-1 pb-8">
+            <Dream
+              dream={state?.dream ?? null}
+              apiBase={API_BASE}
+              presentation={platePresentation}
+            />
+          </div>
           {/* the market rail (Task 11): every money element is built ONLY from state.mint (Task 1
               anti-decoy -- the site never renders a mint the Worker didn't sign off on) and hidden
               until ignitionView reports live (Task 14: phase===live AND a mint, off /api/state alone,
