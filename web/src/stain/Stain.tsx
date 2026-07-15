@@ -36,7 +36,14 @@ function initialSettledState(
   vitals: VitalsFeed,
   relicMemory: readonly RelicInkSample[],
 ): SettledBodyRendererState {
-  return { command: null, relicMemory, vitals, seraph: "five" };
+  return {
+    command: null,
+    relicMemory,
+    relicRevision: relicMemory.length > 0 ? 1 : 0,
+    activeAccretionKey: null,
+    vitals,
+    seraph: "five",
+  };
 }
 
 export default function Stain({
@@ -167,7 +174,7 @@ export default function Stain({
 
     const installSettledRenderer = (replayActive: boolean) => {
       if (disposed) return;
-      const adapter = new SettledBodyRendererAdapter(setSettled);
+      const adapter = new SettledBodyRendererAdapter(setSettled, tier === "reduced");
       adapterRef.current = adapter;
       adapter.setAnchorSink(receiveAnchors);
       adapter.setVitals(latest.current.vitals);
@@ -367,6 +374,8 @@ export default function Stain({
         completionCount={completion.count}
         initialPulseKind={initialPulseKind}
         ambientBreath={fallbackBreath}
+        relicRevision={settled.relicRevision}
+        activeAccretionKey={settled.activeAccretionKey}
       />
     ) : (
     <canvas

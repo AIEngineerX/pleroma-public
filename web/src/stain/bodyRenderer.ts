@@ -4,6 +4,11 @@ import type {
   RelicInkSample,
   VitalsFeed,
 } from "../experience/types";
+import {
+  RELIC_ACCRETION_DURATION_MS,
+  RELIC_MEMORY_LIMIT,
+  relicAccretionKey,
+} from "./relicInk";
 
 export type BodyAnchorName = "EYE" | "KEEP" | "TONGUE" | "PULSE" | "DREAM" | "seraph";
 
@@ -25,6 +30,8 @@ export interface BodyRendererAdapter {
 export interface SettledBodyRendererState {
   command: BodyCommand | null;
   relicMemory: readonly RelicInkSample[];
+  relicRevision: number;
+  activeAccretionKey: string | null;
   vitals: VitalsFeed;
   seraph: "five" | "converged";
 }
@@ -110,6 +117,7 @@ export function dedupeRelicSamples(samples: readonly RelicInkSample[]): RelicInk
     if (seen.has(sample.offeringId)) continue;
     seen.add(sample.offeringId);
     unique.push(sample);
+    if (unique.length === RELIC_MEMORY_LIMIT) break;
   }
   return unique;
 }
@@ -135,12 +143,18 @@ function cloneVitalsFeed(feed: VitalsFeed): VitalsFeed {
 export class SettledBodyRendererAdapter implements BodyRendererAdapter {
   private command: BodyCommand | null = null;
   private relicMemory: RelicInkSample[] = [];
+  private relicRevision = 0;
+  private activeAccretionKey: string | null = null;
+  private accretionTimer: ReturnType<typeof setTimeout> | null = null;
   private vitals: VitalsFeed = { kind: "unknown" };
   private seraph: "five" | "converged" = "five";
   private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
   private disposed = false;
 
-  constructor(private onChange: (state: SettledBodyRendererState) => void) {}
+  constructor(
+    private onChange: (state: SettledBodyRendererState) => void,
+    private readonly reducedMotion = false,
+  ) {}
 
   dispatch(command: BodyCommand, onComplete: (id: string) => void): void {
     if (this.disposed) {
@@ -149,7 +163,25 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
     }
     this.command = command;
     if (command.kind === "accrete") {
-      this.relicMemory = dedupeRelicSamples([...this.relicMemory, command.ink]);
+      this.clearAccretionTimer();
+      const key = relicAccretionKey(command.relic);
+      this.activeAccretionKey = key;
+      this.emit();
+      const commit = () => {
+        this.accretionTimer = null;
+        if (this.disposed || this.activeAccretionKey !== key) return;
+        const before = this.relicMemory.map((sample) => sample.offeringId).join("\u001f");
+        this.relicMemory = dedupeRelicSamples([...this.relicMemory, command.ink]);
+        if (this.relicMemory.map((sample) => sample.offeringId).join("\u001f") !== before) {
+          this.relicRevision += 1;
+        }
+        this.activeAccretionKey = null;
+        this.emit();
+        onComplete(command.id);
+      };
+      if (this.reducedMotion) commit();
+      else this.accretionTimer = setTimeout(commit, RELIC_ACCRETION_DURATION_MS);
+      return;
     } else if (command.kind === "converge") {
       this.seraph = "converged";
     } else if (command.kind === "dissolve") {
@@ -166,6 +198,7 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
       && next.every((sample, index) => sample.offeringId === this.relicMemory[index]?.offeringId);
     if (unchanged) return;
     this.relicMemory = next;
+    this.relicRevision += 1;
     this.emit();
   }
 
@@ -193,10 +226,11 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
   }
 
   stop(): void {
-    // A settled body has no animation loop to stop.
+    this.clearAccretionTimer();
   }
 
   dispose(): void {
+    this.clearAccretionTimer();
     this.disposed = true;
     this.anchorSink = null;
     this.onChange = () => undefined;
@@ -206,8 +240,16 @@ export class SettledBodyRendererAdapter implements BodyRendererAdapter {
     this.onChange({
       command: this.command,
       relicMemory: this.relicMemory,
+      relicRevision: this.relicRevision,
+      activeAccretionKey: this.activeAccretionKey,
       vitals: this.vitals,
       seraph: this.seraph,
     });
+  }
+
+  private clearAccretionTimer(): void {
+    if (this.accretionTimer !== null) clearTimeout(this.accretionTimer);
+    this.accretionTimer = null;
+    this.activeAccretionKey = null;
   }
 }

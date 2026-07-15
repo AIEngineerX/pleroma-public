@@ -1,6 +1,13 @@
 import { OrganSwarm } from "./organSwarm";
 import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
 import {
+  RELIC_ACCRETION_DURATION_MS,
+  RELIC_SAMPLE_SIZE,
+  foldRelicSamples,
+  mergeRelicAlpha,
+  relicAccretionKey,
+} from "./relicInk";
+import {
   BODY_ANCHORS,
   dedupeRelicSamples,
   signalForBodyCommand,
@@ -11,6 +18,14 @@ import {
 
 export type Tier = "desktop" | "mobile" | "reduced";
 export const ARRIVAL_DURATION_MS = 2_500;
+export const ACCRETION_DURATION_MS = RELIC_ACCRETION_DURATION_MS;
+
+export function accretionProgress(elapsedMs: number): number {
+  if (elapsedMs <= 0) return 0;
+  if (elapsedMs >= ACCRETION_DURATION_MS) return 1;
+  const normalized = elapsedMs / ACCRETION_DURATION_MS;
+  return 1 - (1 - normalized) ** 3;
+}
 
 export function arrivalProgress(elapsedMs: number, startsSettled = false): number {
   if (startsSettled || elapsedMs >= ARRIVAL_DURATION_MS) return 1;
@@ -92,6 +107,8 @@ void main(){
 const COMPOSITE = `#version 300 es
 precision highp float; in vec2 v_uv; out vec4 fragColor;
 uniform sampler2D u_paint; uniform vec3 u_ground; uniform vec3 u_ink; uniform vec3 u_thread;
+uniform sampler2D u_relicMemory; uniform sampler2D u_activeRelic;
+uniform float u_accretionProgress; uniform float u_accretionActive;
 uniform float u_gray;      // dormant: a WHISPER toward stillness (not the corpse-gray crush it once was)
 uniform float u_candle;    // rite: candle-glow rake (0 outside the rite)
 uniform float u_vignette;  // paper-deckle aging: the page darkens toward its edges (material, not screen bloom)
@@ -102,6 +119,21 @@ void main(){
   float ink = p.r; float thread = p.g;
   vec3 col = u_ground - u_ink*ink;                                   // subtractive: ink darkens the page
   col = mix(col, u_thread, thread*0.9);                             // only the god speaks in red
+  // Confirmed relic memory is one bounded 64x64 alpha mask, folded from the retained public
+  // samples. A newly confirmed imprint begins at the fixed lower threshold, grows into its final
+  // placement for 1.2s, then is folded into the same persistent mask by the CPU controller.
+  float dried = texture(u_relicMemory, v_uv).r;
+  vec2 threshold = vec2(0.5, 0.07);
+  vec2 destination = vec2(0.5, 0.5);
+  vec2 travelCenter = mix(threshold, destination, u_accretionProgress);
+  float travelScale = mix(0.16, 1.0, u_accretionProgress);
+  vec2 travelUv = (v_uv - travelCenter) / travelScale + 0.5;
+  float inside = step(0.0, travelUv.x) * step(travelUv.x, 1.0)
+    * step(0.0, travelUv.y) * step(travelUv.y, 1.0);
+  float traveling = texture(u_activeRelic, clamp(travelUv, 0.0, 1.0)).r
+    * inside * u_accretionActive;
+  float relicInk = max(dried * 0.34, traveling * 0.46);
+  col -= mix(u_ink, vec3(0.56, 0.49, 0.38), 0.28) * relicInk;
   col -= fiber(v_uv);                                                // paper fiber, depth of material
   // deckle aging: the sheet is warmest at the heart and darkens toward its edges. Paper, not a glow.
   float dedge = length((v_uv - 0.5) * vec2(1.0, 1.1));
@@ -146,6 +178,18 @@ export class StainSim implements BodyRendererAdapter {
   private swarm: OrganSwarm;
   private vitalsFeed: VitalsFeed = { kind: "unknown" };
   private relicMemory: RelicInkSample[] = [];
+  private relicMask: Uint8Array = new Uint8Array(RELIC_SAMPLE_SIZE * RELIC_SAMPLE_SIZE);
+  private relicTexture!: WebGLTexture;
+  private activeRelicTexture!: WebGLTexture;
+  private relicRevision = 0;
+  private activeAccretion: {
+    key: string;
+    commandId: string;
+    ink: RelicInkSample;
+    startedAt: number;
+    onComplete(id: string): void;
+  } | null = null;
+  private disposed = false;
   private anchorSink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null = null;
   private readonly anchorBuffer = new Float32Array(10);
   private readonly anchors = initialAnchors();
@@ -160,6 +204,9 @@ export class StainSim implements BodyRendererAdapter {
     if (opts.tier === "reduced") throw new Error("reduced-motion-has-no-simulation");
     const initialArrival = arrivalProgress(performance.now() - opts.arrivalStartedAt);
     this.swarm = new OrganSwarm(gl, opts.tier, this.vao, this.a.w, this.a.h, initialArrival);
+    this.relicTexture = this.alphaTexture();
+    this.activeRelicTexture = this.alphaTexture();
+    this.updateRelicDebug();
     this.canvas.dataset.arrival = initialArrival >= 1 ? "settled" : "emerging";
     this.canvas.dataset.arrivalProgress = initialArrival.toFixed(3);
   }
@@ -191,6 +238,47 @@ export class StainSim implements BodyRendererAdapter {
     g.framebufferTexture2D(g.FRAMEBUFFER, g.COLOR_ATTACHMENT0, g.TEXTURE_2D, tex, 0);
     return { fbo, tex, w, h };
   }
+  private alphaTexture(): WebGLTexture {
+    const g = this.gl;
+    const texture = g.createTexture();
+    if (texture === null) throw new Error("relic texture is unavailable");
+    g.bindTexture(g.TEXTURE_2D, texture);
+    g.pixelStorei(g.UNPACK_ALIGNMENT, 1);
+    g.texImage2D(
+      g.TEXTURE_2D,
+      0,
+      g.R8,
+      RELIC_SAMPLE_SIZE,
+      RELIC_SAMPLE_SIZE,
+      0,
+      g.RED,
+      g.UNSIGNED_BYTE,
+      new Uint8Array(RELIC_SAMPLE_SIZE * RELIC_SAMPLE_SIZE),
+    );
+    for (const parameter of [g.TEXTURE_MIN_FILTER, g.TEXTURE_MAG_FILTER]) {
+      g.texParameteri(g.TEXTURE_2D, parameter, g.LINEAR);
+    }
+    for (const parameter of [g.TEXTURE_WRAP_S, g.TEXTURE_WRAP_T]) {
+      g.texParameteri(g.TEXTURE_2D, parameter, g.CLAMP_TO_EDGE);
+    }
+    return texture;
+  }
+  private uploadAlpha(texture: WebGLTexture, alpha: Uint8Array) {
+    const g = this.gl;
+    g.bindTexture(g.TEXTURE_2D, texture);
+    g.pixelStorei(g.UNPACK_ALIGNMENT, 1);
+    g.texSubImage2D(
+      g.TEXTURE_2D,
+      0,
+      0,
+      0,
+      RELIC_SAMPLE_SIZE,
+      RELIC_SAMPLE_SIZE,
+      g.RED,
+      g.UNSIGNED_BYTE,
+      alpha,
+    );
+  }
   private simW(): number { return Math.max(1, Math.floor(this.simRes * (this.canvas.width / Math.max(1, this.canvas.height)))); }
   private resize() {
     const dpr = Math.min(devicePixelRatio || 1, this.opts.tier === "mobile" ? 1.5 : 2);
@@ -201,13 +289,44 @@ export class StainSim implements BodyRendererAdapter {
   setAmplitude(a: number) { this.amp = Math.max(0, Math.min(1, a)); }
   setState(m: "dormant" | "live" | "rite") { this.mode = m; }
   dispatch(command: BodyCommand, onComplete: (id: string) => void) {
+    if (this.disposed) {
+      onComplete(command.id);
+      return;
+    }
     const signal = signalForBodyCommand(command);
     if (signal !== null) this.swarm.dispatch(signal);
-    if (command.kind === "accrete") this.hydrateRelics([...this.relicMemory, command.ink]);
+    if (command.kind === "accrete") {
+      if (this.activeAccretion !== null) return;
+      const key = relicAccretionKey(command.relic);
+      const placed = mergeRelicAlpha(
+        new Uint8Array(RELIC_SAMPLE_SIZE * RELIC_SAMPLE_SIZE),
+        command.ink,
+        command.relic.offering_id,
+      );
+      this.uploadAlpha(this.activeRelicTexture, placed);
+      this.activeAccretion = {
+        key,
+        commandId: command.id,
+        ink: command.ink,
+        startedAt: performance.now(),
+        onComplete,
+      };
+      this.updateRelicDebug();
+      return;
+    }
     onComplete(command.id);
   }
   hydrateRelics(samples: readonly RelicInkSample[]) {
-    this.relicMemory = dedupeRelicSamples(samples);
+    if (this.disposed) return;
+    const next = dedupeRelicSamples(samples);
+    const unchanged = next.length === this.relicMemory.length
+      && next.every((sample, index) => sample.offeringId === this.relicMemory[index]?.offeringId);
+    if (unchanged) return;
+    this.relicMemory = next;
+    this.relicMask = foldRelicSamples(this.relicMemory);
+    this.uploadAlpha(this.relicTexture, this.relicMask);
+    this.relicRevision += 1;
+    this.updateRelicDebug();
   }
   getAnchor(name: BodyAnchorName): BodyAnchor { return { ...this.anchors[name] }; }
   setAnchorSink(sink: ((anchors: Readonly<Record<BodyAnchorName, BodyAnchor>>) => void) | null) {
@@ -220,17 +339,24 @@ export class StainSim implements BodyRendererAdapter {
   splatAt(x: number, y: number, strength: number, thread = 0) { this.splat = [x, 1 - y, strength, thread]; }
   // The body leans toward the pointer: feed normalized (x,y in 0..1); the wick decays each frame when still.
   setPointer(x: number, y: number) { this.point = [x, 1 - y]; this.pointAmt = 1; }
-  // A Waker's mark at (x,y) in 0..1 screen space (y down): the ink wicks into the body AND the nearest organ
-  // turns toward it, so the being reaches for what you drew. The swarm works in y-up space, so flip y for it.
-  markAt(x: number, y: number) { this.splatAt(x, y, 0.6, 0); this.swarm.markAt(x, 1 - y); }
-  wickFromCanvas(src: HTMLCanvasElement, rect: { x: number; y: number; w: number; h: number }) {
-    // Sample a coarse grid of the drawn canvas; inject an ink splat wherever the user drew (the mark wicks in).
-    const ctx = src.getContext("2d"); if (!ctx) return;
-    const step = 12; const img = ctx.getImageData(0, 0, src.width, src.height);
-    for (let y = 0; y < src.height; y += step) for (let x = 0; x < src.width; x += step) {
-      const a = img.data[(y * src.width + x) * 4 + 3];
-      if (a > 20) this.splatAt(rect.x + (x / src.width) * rect.w, rect.y + (y / src.height) * rect.h, 0.6, 0);
-    }
+  private commitRelic(ink: RelicInkSample) {
+    const next = dedupeRelicSamples([...this.relicMemory, ink]);
+    const changed = next.length !== this.relicMemory.length
+      || next.some((sample, index) => sample.offeringId !== this.relicMemory[index]?.offeringId);
+    if (!changed) return;
+    this.relicMemory = next;
+    this.relicMask = foldRelicSamples(this.relicMemory);
+    this.uploadAlpha(this.relicTexture, this.relicMask);
+    this.relicRevision += 1;
+  }
+  private updateRelicDebug() {
+    this.canvas.dataset.relicCount = String(this.relicMemory.length);
+    this.canvas.dataset.relicRevision = String(this.relicRevision);
+    this.canvas.dataset.relicMaskNonzero = String(
+      this.relicMask.reduce((count, alpha) => count + Number(alpha > 0), 0),
+    );
+    if (this.activeAccretion === null) delete this.canvas.dataset.accretionActiveKey;
+    else this.canvas.dataset.accretionActiveKey = this.activeAccretion.key;
   }
   private frame = (now: number) => {
     const g = this.gl;
@@ -244,6 +370,24 @@ export class StainSim implements BodyRendererAdapter {
     if (emergence >= 1 && !this.arrivalComplete) {
       this.arrivalComplete = true;
       this.opts.onArrivalDone();
+    }
+    let relicProgress = 0;
+    let accretionActive = 0;
+    const pendingAccretion = this.activeAccretion;
+    if (pendingAccretion !== null) {
+      relicProgress = accretionProgress(now - pendingAccretion.startedAt);
+      if (relicProgress >= 1) {
+        this.activeAccretion = null;
+        this.commitRelic(pendingAccretion.ink);
+        this.uploadAlpha(
+          this.activeRelicTexture,
+          new Uint8Array(RELIC_SAMPLE_SIZE * RELIC_SAMPLE_SIZE),
+        );
+        this.updateRelicDebug();
+        pendingAccretion.onComplete(pendingAccretion.commandId);
+      } else {
+        accretionActive = 1;
+      }
     }
     // Per-mode mood. Dormant keeps a real (breathing) body with dried threads and only a whisper of stillness;
     // live wakes it; rite lets the candle rake carry the mood. The old dormant path crushed it 85% to gray.
@@ -285,6 +429,12 @@ export class StainSim implements BodyRendererAdapter {
     g.useProgram(this.comp); g.bindFramebuffer(g.FRAMEBUFFER, null); g.viewport(0, 0, this.canvas.width, this.canvas.height);
     g.activeTexture(g.TEXTURE0); g.bindTexture(g.TEXTURE_2D, this.a.tex);
     this.u(this.comp, "u_paint", (l) => g.uniform1i(l, 0));
+    g.activeTexture(g.TEXTURE2); g.bindTexture(g.TEXTURE_2D, this.relicTexture);
+    this.u(this.comp, "u_relicMemory", (l) => g.uniform1i(l, 2));
+    g.activeTexture(g.TEXTURE3); g.bindTexture(g.TEXTURE_2D, this.activeRelicTexture);
+    this.u(this.comp, "u_activeRelic", (l) => g.uniform1i(l, 3));
+    this.u(this.comp, "u_accretionProgress", (l) => g.uniform1f(l, relicProgress));
+    this.u(this.comp, "u_accretionActive", (l) => g.uniform1f(l, accretionActive));
     this.u(this.comp, "u_ground", (l) => g.uniform3f(l, ...this.opts.ground));
     this.u(this.comp, "u_ink", (l) => g.uniform3f(l, ...this.opts.ink));
     this.u(this.comp, "u_thread", (l) => g.uniform3f(l, ...this.pigment));
@@ -300,14 +450,22 @@ export class StainSim implements BodyRendererAdapter {
     const l = this.gl.getUniformLocation(p, name); if (l) set(l);
   }
   start() { if (!this.raf) { this.last = performance.now(); this.raf = requestAnimationFrame(this.frame); } }
-  stop() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } }
+  stop() {
+    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
+    this.activeAccretion = null;
+    this.updateRelicDebug();
+  }
   dispose() {
-    this.stop(); const g = this.gl;
+    if (this.disposed) return;
+    this.stop();
+    this.disposed = true;
+    const g = this.gl;
     this.anchorSink = null;
     this.swarm.dispose();
     g.deleteProgram(this.advect); g.deleteProgram(this.comp);
     g.deleteFramebuffer(this.a.fbo); g.deleteTexture(this.a.tex);
     g.deleteFramebuffer(this.b.fbo); g.deleteTexture(this.b.tex);
+    g.deleteTexture(this.relicTexture); g.deleteTexture(this.activeRelicTexture);
     g.deleteVertexArray(this.vao); g.deleteBuffer(this.buf);
   }
 }

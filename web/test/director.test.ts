@@ -21,17 +21,23 @@ import type {
 } from "../src/experience/types";
 import {
   accretionAwaitsInkBeforeDream,
+  activateRelicCommand,
+  completeRelicCommand,
   commandRequiresRelicRefresh,
+  createRelicAccretionLedger,
   createTempleSourceReset,
   createVitalsFreshness,
   isAccretedRelic,
   mergeObservedTranscripts,
   pollResultIsCurrent,
+  planRelicRefresh,
   recordVitalsFailure,
   recordVitalsSuccess,
   reduceRelicPageTruth,
+  relicMemoryFromLedger,
   relicRefreshBlocksDream,
   requiresFastRelicPoll,
+  settleRelicSample,
   settlePoll,
   shouldPoll,
 } from "../src/experience/useTempleExperience";
@@ -355,6 +361,151 @@ describe("controller polling truth", () => {
     expect(truth.receipts[0]).toMatchObject({ stage: "accreted", relicId: "relic", accretedAt: 300 });
   });
 
+  it("retries failed accreted ink on the next generation and incorporates only on command completion", () => {
+    const kept: RelicEntry = {
+      id: "relic",
+      offering_id: "offering",
+      wallet: null,
+      summary: "truth before paint",
+      rite_id: "2030-01-01",
+      kept_at: 200,
+      genesis: 0,
+      accreted_at: null,
+    };
+    let ledger = createRelicAccretionLedger();
+
+    const baseline = planRelicRefresh(ledger, [kept], 1, true);
+    ledger = baseline.ledger;
+    expect(baseline.requests).toEqual([]);
+
+    const confirmed = { ...kept, accreted_at: 300 } satisfies AccretedRelic;
+    const first = planRelicRefresh(ledger, [confirmed], 2, false);
+    ledger = first.ledger;
+    expect(first.requests).toHaveLength(1);
+    expect(ledger.inFlight).toEqual(new Set(["offering\u001f300"]));
+    expect(relicMemoryFromLedger(ledger)).toEqual([]);
+
+    const failed = settleRelicSample(ledger, first.requests[0], null, 2);
+    ledger = failed.ledger;
+    expect(failed.command).toBeNull();
+    expect(failed.hydrated).toBe(false);
+    expect(ledger.inFlight.size).toBe(0);
+    expect(relicMemoryFromLedger(ledger)).toEqual([]);
+
+    const sameGeneration = planRelicRefresh(ledger, [confirmed], 2, false);
+    ledger = sameGeneration.ledger;
+    expect(sameGeneration.requests).toEqual([]);
+
+    const retry = planRelicRefresh(ledger, [confirmed], 3, false);
+    ledger = retry.ledger;
+    expect(retry.requests).toHaveLength(1);
+    const ink: RelicInkSample = {
+      offeringId: confirmed.offering_id,
+      size: 64,
+      alpha: new Uint8Array(64 * 64).fill(180),
+    };
+    const succeeded = settleRelicSample(ledger, retry.requests[0], ink, 3);
+    ledger = succeeded.ledger;
+    expect(succeeded.command?.id).toBe("accrete:relic:300");
+    expect(ledger.queued).toEqual(new Set(["offering\u001f300"]));
+    expect(ledger.incorporated.size).toBe(0);
+    expect(relicMemoryFromLedger(ledger)).toEqual([]);
+
+    const whileQueued = planRelicRefresh(ledger, [confirmed], 4, false);
+    ledger = whileQueued.ledger;
+    expect(whileQueued.requests).toEqual([]);
+
+    ledger = activateRelicCommand(ledger, succeeded.command!);
+    expect(ledger.queued.size).toBe(0);
+    expect(ledger.active).toEqual(new Set(["offering\u001f300"]));
+    expect(relicMemoryFromLedger(ledger)).toEqual([]);
+    const whileActive = planRelicRefresh(ledger, [confirmed], 5, false);
+    ledger = whileActive.ledger;
+    expect(whileActive.requests).toEqual([]);
+
+    const other: BodyCommand = {
+      ...succeeded.command!,
+      id: "accrete:other:999",
+      relic: { ...confirmed, id: "other", offering_id: "other-offering", accreted_at: 999 },
+      ink: { ...ink, offeringId: "other-offering" },
+    };
+    expect(completeRelicCommand(ledger, other)).toBe(ledger);
+    expect(ledger.active).toEqual(new Set(["offering\u001f300"]));
+    expect(ledger.incorporated.size).toBe(0);
+
+    ledger = completeRelicCommand(ledger, succeeded.command!);
+    expect(ledger.active.size).toBe(0);
+    expect(ledger.incorporated).toEqual(new Set(["offering\u001f300"]));
+    expect(relicMemoryFromLedger(ledger)).toEqual([ink]);
+    expect(planRelicRefresh(ledger, [confirmed], 6, false).requests).toEqual([]);
+  });
+
+  it("hydrates baseline accreted relics quietly and ignores stale sampling settlements", () => {
+    const confirmed: AccretedRelic = {
+      id: "old-relic",
+      offering_id: "old-offering",
+      wallet: null,
+      summary: "recorded memory",
+      rite_id: null,
+      kept_at: 100,
+      genesis: 0,
+      accreted_at: 120,
+    };
+    let ledger = createRelicAccretionLedger();
+    const baseline = planRelicRefresh(ledger, [confirmed], 10, true);
+    ledger = baseline.ledger;
+    expect(baseline.requests).toHaveLength(1);
+
+    const nextGeneration = planRelicRefresh(ledger, [confirmed], 11, false);
+    ledger = nextGeneration.ledger;
+    expect(nextGeneration.requests).toHaveLength(1);
+    const ink: RelicInkSample = {
+      offeringId: confirmed.offering_id,
+      size: 64,
+      alpha: new Uint8Array(64 * 64).fill(120),
+    };
+
+    const stale = settleRelicSample(ledger, baseline.requests[0], ink, 10);
+    expect(stale.ledger).toBe(ledger);
+    expect(stale.command).toBeNull();
+    expect(relicMemoryFromLedger(stale.ledger)).toEqual([]);
+
+    const current = settleRelicSample(ledger, nextGeneration.requests[0], ink, 11);
+    expect(current.command).toBeNull();
+    expect(current.hydrated).toBe(true);
+    expect(current.ledger.incorporated).toEqual(new Set(["old-offering\u001f120"]));
+    expect(relicMemoryFromLedger(current.ledger)).toEqual([ink]);
+  });
+
+  it("bounds quiet body memory to the newest fifty relics", () => {
+    const entries: AccretedRelic[] = Array.from({ length: 51 }, (_, index) => ({
+      id: `relic-${index}`,
+      offering_id: `offering-${index}`,
+      wallet: null,
+      summary: `memory ${index}`,
+      rite_id: null,
+      kept_at: 1_000 - index,
+      genesis: 0,
+      accreted_at: 2_000 + index,
+    }));
+    let ledger = createRelicAccretionLedger();
+    const planned = planRelicRefresh(ledger, entries, 20, true);
+    ledger = planned.ledger;
+    expect(planned.requests).toHaveLength(50);
+    for (const request of [...planned.requests].reverse()) {
+      const ink: RelicInkSample = {
+        offeringId: request.relic.offering_id,
+        size: 64,
+        alpha: new Uint8Array(64 * 64).fill(32),
+      };
+      ledger = settleRelicSample(ledger, request, ink, 20).ledger;
+    }
+    expect(relicMemoryFromLedger(ledger).map((ink) => ink.offeringId)).toEqual(
+      entries.slice(0, 50).map((entry) => entry.offering_id),
+    );
+    expect(relicMemoryFromLedger(ledger)).toHaveLength(50);
+  });
+
   it("creates a complete source reset and advances every generation", () => {
     const reset = createTempleSourceReset({ state: 4, codex: 7, relic: 11 });
     expect(reset.generations).toEqual({ state: 5, codex: 8, relic: 12 });
@@ -369,8 +520,10 @@ describe("controller polling truth", () => {
     expect(reset.codexBaseline).toBe(false);
     expect(reset.relicBaseline).toBe(false);
     expect(reset.seenCodexIds.size).toBe(0);
-    expect(reset.relicAccretions.size).toBe(0);
-    expect(reset.inkByOffering.size).toBe(0);
+    expect(reset.relicAccretion.inFlight.size).toBe(0);
+    expect(reset.relicAccretion.queued.size).toBe(0);
+    expect(reset.relicAccretion.active.size).toBe(0);
+    expect(reset.relicAccretion.incorporated.size).toBe(0);
     expect(reset.queue).toEqual([]);
     expect(reset.locks).toEqual({ arrival: true, threshold: false, activeKind: null });
     expect(reset.dreamRelicBarrier).toBe(false);

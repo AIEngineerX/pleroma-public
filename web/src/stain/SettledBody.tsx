@@ -1,5 +1,6 @@
 import type { BodyCommand, RelicInkSample, VitalsFeed } from "../experience/types";
 import { BODY_ANCHORS, dedupeRelicSamples, signalForBodyCommand, type BodyOrgan } from "./bodyRenderer";
+import { foldRelicSamples, relicAccretionKey } from "./relicInk";
 
 export interface SettledBodyProps {
   pigment: [number, number, number];
@@ -11,6 +12,8 @@ export interface SettledBodyProps {
   completionCount?: number;
   initialPulseKind?: VitalsFeed["kind"];
   ambientBreath?: boolean;
+  relicRevision?: number;
+  activeAccretionKey?: string | null;
 }
 
 const ORGAN_PATHS: Readonly<Record<BodyOrgan, string>> = {
@@ -26,6 +29,38 @@ const CAPILLARIES = [
   { name: "keep-tongue", d: "M70 43 C68 55 66 61 64 66" },
 ] as const;
 
+function offeringHash(offeringId: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < offeringId.length; index += 1) {
+    hash ^= offeringId.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+export function relicFragmentPath(sample: RelicInkSample): string | null {
+  const points: Array<{ x: number; y: number }> = [];
+  for (let y = 0; y < sample.size; y += 2) {
+    for (let x = 0; x < sample.size; x += 2) {
+      if (sample.alpha[y * sample.size + x] >= 24) points.push({ x, y });
+    }
+  }
+  if (points.length === 0) return null;
+
+  const hash = offeringHash(sample.offeringId);
+  const offsetX = ((hash & 0xff) / 255 - 0.5) * 8;
+  const offsetY = (((hash >>> 8) & 0xff) / 255 - 0.5) * 8;
+  const count = Math.min(9, points.length);
+  const selected = Array.from({ length: count }, (_, index) => (
+    points[Math.floor((index / Math.max(1, count - 1)) * (points.length - 1))]
+  ));
+  return selected.map((point, index) => {
+    const x = 34 + (point.x / Math.max(1, sample.size - 1)) * 32 + offsetX;
+    const y = 34 + (point.y / Math.max(1, sample.size - 1)) * 32 + offsetY;
+    return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+  }).join(" ");
+}
+
 export function SettledBody({
   pigment,
   command,
@@ -36,10 +71,21 @@ export function SettledBody({
   completionCount = 0,
   initialPulseKind,
   ambientBreath = false,
+  relicRevision = 0,
+  activeAccretionKey = null,
 }: SettledBodyProps) {
   const signal = command === null ? null : signalForBodyCommand(command);
   const rubric = `rgb(${pigment.map((channel) => Math.round(channel * 255)).join(" ")})`;
   const relics = dedupeRelicSamples(relicMemory);
+  const fragments = relics
+    .map((sample) => ({ sample, path: relicFragmentPath(sample) }))
+    .filter((fragment): fragment is { sample: RelicInkSample; path: string } => fragment.path !== null);
+  const relicMaskNonzero = foldRelicSamples(relics)
+    .reduce((count, alpha) => count + Number(alpha > 0), 0);
+  const activeAccretion = command?.kind === "accrete" ? {
+    key: relicAccretionKey(command.relic),
+    path: relicFragmentPath(command.ink),
+  } : null;
 
   return (
     <svg
@@ -61,6 +107,10 @@ export function SettledBody({
       data-initial-pulse-beat={initialPulseKind === "unknown" ? 0 : undefined}
       data-initial-pulse-bpm={initialPulseKind === "unknown" ? 0 : undefined}
       data-initial-pulse-pressure={initialPulseKind === "unknown" ? 0 : undefined}
+      data-relic-count={fragments.length}
+      data-relic-revision={relicRevision}
+      data-relic-mask-nonzero={relicMaskNonzero}
+      data-accretion-active-key={activeAccretionKey ?? undefined}
     >
       <g fill="none" stroke="currentColor" strokeWidth="0.18" opacity="0.28">
         <path d="M50 28 C61 31 69 39 70 43" />
@@ -98,8 +148,42 @@ export function SettledBody({
       </g>
 
       <g data-relic-memory="settled">
-        {relics.map((sample) => <g key={sample.offeringId} data-relic-offering={sample.offeringId} />)}
+        {fragments.map(({ sample, path }) => (
+          <path
+            key={sample.offeringId}
+            data-relic-offering={sample.offeringId}
+            data-relic-fragment
+            d={path}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="0.34"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity="0.24"
+          />
+        ))}
       </g>
+      {activeAccretion !== null && activeAccretion.path !== null ? (
+        <g data-relic-travel data-accretion-key={activeAccretion.key}>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            from="-34 28"
+            to="0 0"
+            dur="1.2s"
+            fill="freeze"
+          />
+          <path
+            d={activeAccretion.path}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="0.48"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity="0.42"
+          />
+        </g>
+      ) : null}
     </svg>
   );
 }

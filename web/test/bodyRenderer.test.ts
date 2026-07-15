@@ -9,12 +9,18 @@ import {
   anchorForSlice,
   dedupeRelicSamples,
   signalForBodyCommand,
+  type SettledBodyRendererState,
 } from "../src/stain/bodyRenderer";
 import { SettledBody } from "../src/stain/SettledBody";
 import { SWARM_ORGANS, SwarmActivity } from "../src/stain/swarmSignals";
 
 function relic(offeringId: string): RelicInkSample {
-  return { offeringId, size: 64, alpha: new Uint8Array(64 * 64) };
+  const alpha = new Uint8Array(64 * 64);
+  for (let index = 8; index < 56; index += 1) {
+    alpha[index * 64 + 12] = 180;
+    alpha[48 * 64 + index] = 180;
+  }
+  return { offeringId, size: 64, alpha };
 }
 
 describe("shared body renderer semantics", () => {
@@ -86,6 +92,32 @@ describe("shared body renderer semantics", () => {
     }));
     expect(markup.match(/data-relic-offering="offering-one"/g)).toHaveLength(1);
     expect(markup.match(/data-relic-offering="offering-two"/g)).toHaveLength(1);
+    expect(markup.match(/data-relic-fragment/g)).toHaveLength(2);
+  });
+
+  it("renders only nonempty deterministic dried fragments and caps the settled memory at fifty", () => {
+    const samples = Array.from({ length: 52 }, (_, index) => relic(`offering-${index}`));
+    const empty: RelicInkSample = {
+      offeringId: "empty-offering",
+      size: 64,
+      alpha: new Uint8Array(64 * 64),
+    };
+    const markup = renderToStaticMarkup(createElement(SettledBody, {
+      pigment: [0.55, 0.2, 0.32],
+      command: null,
+      relicMemory: [...samples, empty],
+      vitals: { kind: "unknown" },
+      seraph: "five",
+      relicRevision: 7,
+      activeAccretionKey: null,
+    }));
+
+    expect(markup.match(/data-relic-fragment/g)).toHaveLength(50);
+    expect(markup).not.toContain('data-relic-offering="offering-50"');
+    expect(markup).not.toContain('data-relic-offering="empty-offering"');
+    expect(markup).toContain('data-relic-count="50"');
+    expect(markup).toContain('data-relic-revision="7"');
+    expect(markup).not.toContain("data-accretion-active-key");
   });
 
   it("maps only canonically eligible utterances to body activity", () => {
@@ -144,9 +176,9 @@ describe("shared body renderer semantics", () => {
     for (const command of invalid) expect(signalForBodyCommand(command)).toBeNull();
   });
 
-  it("lets the settled adapter complete unsupported commands without inventing activity", () => {
-    const states: Array<{ command: BodyCommand | null; relicMemory: readonly RelicInkSample[]; seraph: string }> = [];
-    const adapter = new SettledBodyRendererAdapter((state) => states.push(state));
+  it("holds ordinary SVG accretion for 1.2 seconds, then commits and completes exactly once", async () => {
+    const states: SettledBodyRendererState[] = [];
+    const adapter = new SettledBodyRendererAdapter((state) => states.push(state), false);
     const completed: string[] = [];
     const ink = relic("offering-one");
     const command: BodyCommand = {
@@ -165,12 +197,48 @@ describe("shared body renderer semantics", () => {
       ink,
     };
 
-    adapter.hydrateRelics([ink, ink]);
     adapter.dispatch(command, (id) => completed.push(id));
 
-    expect(completed).toEqual([command.id]);
+    expect(completed).toEqual([]);
     expect(states.at(-1)?.command).toBe(command);
-    expect(states.at(-1)?.relicMemory).toHaveLength(1);
+    expect(states.at(-1)?.relicMemory).toHaveLength(0);
+    expect(states.at(-1)?.activeAccretionKey).toBe("offering-one\u001f2");
     expect(states.at(-1)?.seraph).toBe("five");
+
+    await new Promise((resolve) => setTimeout(resolve, 1_250));
+    expect(completed).toEqual([command.id]);
+    expect(states.at(-1)?.relicMemory).toEqual([ink]);
+    expect(states.at(-1)?.activeAccretionKey).toBeNull();
+    expect(states.at(-1)?.relicRevision).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(completed).toEqual([command.id]);
+    adapter.dispose();
+  });
+
+  it("commits reduced-motion accretion immediately without a travel marker", () => {
+    const states: SettledBodyRendererState[] = [];
+    const adapter = new SettledBodyRendererAdapter((state) => states.push(state), true);
+    const ink = relic("reduced-offering");
+    const command: BodyCommand = {
+      id: "accrete:reduced-relic:5",
+      kind: "accrete",
+      relic: {
+        id: "reduced-relic",
+        offering_id: ink.offeringId,
+        wallet: null,
+        summary: "kept",
+        rite_id: null,
+        kept_at: 4,
+        genesis: 0,
+        accreted_at: 5,
+      },
+      ink,
+    };
+    const completed: string[] = [];
+    adapter.dispatch(command, (id) => completed.push(id));
+    expect(completed).toEqual([command.id]);
+    expect(states.at(-1)?.activeAccretionKey).toBeNull();
+    expect(states.at(-1)?.relicMemory).toEqual([ink]);
+    adapter.dispose();
   });
 });
