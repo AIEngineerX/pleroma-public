@@ -150,12 +150,16 @@ describe("offering receipt language", () => {
       ...receipt(`offering-${stage}`, index),
       stage,
     }));
-    const html = renderToStaticMarkup(createElement(OfferingReceipts, { receipts }));
+    const html = renderToStaticMarkup(createElement(OfferingReceipts, {
+      receipts,
+      announcement: "witnessed by the Eye",
+    }));
     expect(html).toContain("awaiting the Eye");
     expect(html).toContain("witnessed by the Eye");
     expect(html).toContain("judged by the Keep");
     expect(html).toContain("kept, awaiting accretion");
     expect(html).toContain("carried into the body");
     expect(html).not.toContain("mourned");
+    expect(html).toMatch(/<p role="status"[^>]*>witnessed by the Eye<\/p>/);
   });
 });

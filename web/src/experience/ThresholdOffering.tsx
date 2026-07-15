@@ -16,8 +16,8 @@ import {
   renderImprintBlob,
   type ImprintGesture,
 } from "./thresholdImprint";
-import type { OfferingReceipt } from "./types";
-import OfferingReceipts from "./OfferingReceipts";
+import type { OfferingReceipt, ReceiptStage } from "./types";
+import OfferingReceipts, { receiptCopy } from "./OfferingReceipts";
 
 type ThresholdPhase = "idle" | "holding" | "preview" | "submitting" | "receipt";
 
@@ -85,6 +85,7 @@ export default function ThresholdOffering({
   const [phase, setPhase] = useState<ThresholdPhase>("idle");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [status, setStatus] = useState("");
+  const [receiptAnnouncement, setReceiptAnnouncement] = useState("");
   const sealRef = useRef<HTMLButtonElement>(null);
   const gesture = useRef<GestureDraft | null>(null);
   const previewRef = useRef<Preview | null>(null);
@@ -92,10 +93,21 @@ export default function ThresholdOffering({
   const thresholdLocked = useRef(false);
   const phaseRef = useRef(phase);
   const receiptsRef = useRef(receipts);
+  const previousReceiptStages = useRef<Map<string, ReceiptStage> | null>(null);
   const thresholdCallback = useRef(onThresholdActive);
   phaseRef.current = phase;
   receiptsRef.current = receipts;
   thresholdCallback.current = onThresholdActive;
+
+  useEffect(() => {
+    const nextStages = new Map(receipts.map((receipt) => [receipt.offeringId, receipt.stage]));
+    const previous = previousReceiptStages.current;
+    if (previous !== null) {
+      const changed = receipts.find((receipt) => previous.get(receipt.offeringId) !== receipt.stage);
+      setReceiptAnnouncement(changed === undefined ? "" : receiptCopy[changed.stage]);
+    }
+    previousReceiptStages.current = nextStages;
+  }, [receipts]);
 
   const setLocked = useCallback((active: boolean) => {
     if (thresholdLocked.current === active) return;
@@ -410,7 +422,7 @@ export default function ThresholdOffering({
           )}
         </>
       )}
-      <OfferingReceipts receipts={receipts} />
+      <OfferingReceipts receipts={receipts} announcement={receiptAnnouncement} />
     </div>,
     mount,
   );

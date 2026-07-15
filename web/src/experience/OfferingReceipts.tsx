@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import type { OfferingReceipt, ReceiptStage } from "./types";
 
 export const receiptCopy: Record<ReceiptStage, string> = {
@@ -11,22 +10,10 @@ export const receiptCopy: Record<ReceiptStage, string> = {
 
 interface Props {
   receipts: readonly OfferingReceipt[];
+  announcement: string;
 }
 
-export default function OfferingReceipts({ receipts }: Props) {
-  const previousStages = useRef<Map<string, ReceiptStage> | null>(null);
-  const [announcement, setAnnouncement] = useState("");
-
-  useEffect(() => {
-    const nextStages = new Map(receipts.map((receipt) => [receipt.offeringId, receipt.stage]));
-    const previous = previousStages.current;
-    if (previous !== null) {
-      const changed = receipts.find((receipt) => previous.get(receipt.offeringId) !== receipt.stage);
-      setAnnouncement(changed === undefined ? "" : receiptCopy[changed.stage]);
-    }
-    previousStages.current = nextStages;
-  }, [receipts]);
-
+export default function OfferingReceipts({ receipts, announcement }: Props) {
   return (
     <section data-offering-receipts aria-label="offering receipts" className="w-full max-w-[36rem]">
       {receipts.length > 0 && (

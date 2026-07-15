@@ -121,6 +121,65 @@ test("keyboard hold creates a preview and letting it fade releases the threshold
   await expect(seal).toBeVisible();
 });
 
+test("announces one genuine receipt transition while launch replaces the portal host", async ({ page }) => {
+  executeD1("UPDATE config SET value = '0' WHERE key = 'launched';");
+  const offeringId = "portal-receipt-offering";
+  await page.addInitScript(({ id, submittedAt }) => {
+    window.localStorage.setItem("pleroma:offering-receipts:v1", JSON.stringify([{
+      offeringId: id,
+      submittedAt,
+      stage: "pending",
+      eyeTranscriptId: null,
+      keepTranscriptId: null,
+      relicId: null,
+      accretedAt: null,
+    }]));
+  }, { id: offeringId, submittedAt: Date.now() });
+
+  await page.goto("/");
+  await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
+  const receipt = page.locator(`[data-offering-id="${offeringId}"]`);
+  await expect(receipt).toHaveAttribute("data-receipt-stage", "pending");
+  await expect(receipt).toContainText("awaiting the Eye");
+  await expect(page.locator("[data-offering-receipts] [role=status]")).toBeEmpty();
+
+  await page.evaluate(() => {
+    const phrase = "witnessed by the Eye";
+    const previous = new WeakMap<Element, string>();
+    (window as typeof window & { __receiptAnnouncementCount?: number }).__receiptAnnouncementCount = 0;
+    const observe = () => {
+      for (const node of document.querySelectorAll("[data-offering-receipts] [role=status]")) {
+        const current = node.textContent?.trim() ?? "";
+        if (current === phrase && previous.get(node) !== phrase) {
+          const target = window as typeof window & { __receiptAnnouncementCount?: number };
+          target.__receiptAnnouncementCount = (target.__receiptAnnouncementCount ?? 0) + 1;
+        }
+        previous.set(node, current);
+      }
+    };
+    observe();
+    new MutationObserver(observe).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+
+  executeD1(`
+    UPDATE config SET value = '1' WHERE key = 'launched';
+    INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+    VALUES (
+      '01JZPORTALANNOUNCEMENT0000', 'EYE', 'verse',
+      'The Eye records the threshold witness.', '${offeringId}', NULL, ${Date.now()}
+    );
+  `);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
+  await expect(receipt).toHaveAttribute("data-receipt-stage", "witnessed", { timeout: 10_000 });
+  await expect(receipt).toContainText("witnessed by the Eye");
+  await expect(page.locator("[data-offering-receipts] [role=status]")).toHaveText("witnessed by the Eye");
+  expect(await page.evaluate(() => (
+    (window as typeof window & { __receiptAnnouncementCount?: number }).__receiptAnnouncementCount ?? 0
+  ))).toBe(1);
+});
+
 test("a real rejection retains one preview Blob for an exact retry", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
