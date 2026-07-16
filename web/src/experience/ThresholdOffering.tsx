@@ -65,13 +65,17 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-function pointFromPointer(event: ReactPointerEvent<HTMLButtonElement>): { x: number; y: number } {
-  const bounds = event.currentTarget.getBoundingClientRect();
+function pointFromClient(el: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {
+  const bounds = el.getBoundingClientRect();
   if (bounds.width <= 0 || bounds.height <= 0) return { x: IMPRINT_SIZE / 2, y: IMPRINT_SIZE / 2 };
   return {
-    x: clamp(((event.clientX - bounds.left) / bounds.width) * IMPRINT_SIZE, 0, IMPRINT_SIZE),
-    y: clamp(((event.clientY - bounds.top) / bounds.height) * IMPRINT_SIZE, 0, IMPRINT_SIZE),
+    x: clamp(((clientX - bounds.left) / bounds.width) * IMPRINT_SIZE, 0, IMPRINT_SIZE),
+    y: clamp(((clientY - bounds.top) / bounds.height) * IMPRINT_SIZE, 0, IMPRINT_SIZE),
   };
+}
+
+function pointFromPointer(event: ReactPointerEvent<HTMLButtonElement>): { x: number; y: number } {
+  return pointFromClient(event.currentTarget, event.clientX, event.clientY);
 }
 
 function pointerPressure(event: ReactPointerEvent<HTMLButtonElement>): number {
@@ -99,6 +103,10 @@ export default function ThresholdOffering({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [status, setStatus] = useState("");
   const [receiptAnnouncement, setReceiptAnnouncement] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const confirmTimer = useRef<number | null>(null);
+  const [bloom, setBloom] = useState(false);
+  const bloomTimer = useRef<number | null>(null);
   const [mobileViewport, setMobileViewport] = useState(() => (
     typeof matchMedia === "function" && matchMedia(MOBILE_THRESHOLD_QUERY).matches
   ));
@@ -150,6 +158,21 @@ export default function ThresholdOffering({
     setPreview(null);
   }, []);
 
+  // The "received" beat: an affirmative confirmation at the seal the instant an offering commits, since
+  // the durable proof (the receipt advancing) lands quietly in the ledger below and up to a tick later.
+  const dismissConfirmed = useCallback(() => {
+    if (confirmTimer.current !== null) {
+      clearTimeout(confirmTimer.current);
+      confirmTimer.current = null;
+    }
+    if (bloomTimer.current !== null) {
+      clearTimeout(bloomTimer.current);
+      bloomTimer.current = null;
+    }
+    setConfirmed(false);
+    setBloom(false);
+  }, []);
+
   const idlePhase = useCallback((): ThresholdPhase => (
     receiptsRef.current.length > 0 ? "receipt" : "idle"
   ), []);
@@ -193,6 +216,8 @@ export default function ThresholdOffering({
     const current = previewRef.current;
     if (current !== null) URL.revokeObjectURL(current.url);
     previewRef.current = null;
+    if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
+    if (bloomTimer.current !== null) clearTimeout(bloomTimer.current);
     if (thresholdLocked.current) {
       thresholdLocked.current = false;
       thresholdCallback.current(false);
@@ -201,6 +226,7 @@ export default function ThresholdOffering({
 
   const beginGesture = useCallback((draft: Omit<GestureDraft, "generation" | "seed" | "startedAt">) => {
     if (gesture.current !== null || previewRef.current !== null || phaseRef.current === "submitting") return false;
+    dismissConfirmed();
     const seed = crypto.getRandomValues(new Uint32Array(4));
     const next: GestureDraft = {
       ...draft,
@@ -214,12 +240,16 @@ export default function ThresholdOffering({
     setPhase("holding");
     setLocked(true);
     return true;
-  }, [onEnter, setLocked]);
+  }, [dismissConfirmed, onEnter, setLocked]);
 
   const finishGesture = useCallback(async () => {
     const current = gesture.current;
     if (current === null) return;
     gesture.current = null;
+    const releasingSeal = sealRef.current;
+    if (current.pointerId !== null && releasingSeal?.hasPointerCapture(current.pointerId)) {
+      releasingSeal.releasePointerCapture(current.pointerId);
+    }
     const imprint: ImprintGesture = {
       seed: current.seed,
       start: current.start,
@@ -245,6 +275,12 @@ export default function ThresholdOffering({
     }
   }, [clearPreview, idlePhase, setLocked]);
 
+  // Pointer capture keeps a MOUSE drag tracking after the cursor leaves the 44px seal. It is
+  // deliberately NOT set for touch: WebKit (iOS Safari) mis-handles setPointerCapture() on a touch
+  // pointer — it retargets the pointerup to the element beneath the seal and fires a spurious
+  // lostpointercapture, so the seal's own up never arrives, finishGesture never runs, and the press
+  // collapses back to idle before a preview can form. The gesture is instead completed from the
+  // window-level listeners below, which see the release wherever the browser dispatches it.
   const onPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (!event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return;
     event.preventDefault();
@@ -257,40 +293,38 @@ export default function ThresholdOffering({
       end: point,
       pressure: pointerPressure(event),
     })) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    if (event.pointerType !== "touch") event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const onPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const current = gesture.current;
-    if (current?.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    event.stopPropagation();
-    current.end = pointFromPointer(event);
-    current.pressure = Math.max(current.pressure, pointerPressure(event));
-  };
-
-  const onPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const current = gesture.current;
-    if (current?.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    event.stopPropagation();
-    current.end = pointFromPointer(event);
-    current.pressure = Math.max(current.pressure, pointerPressure(event));
-    void finishGesture();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  const onPointerCancel = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    cancelGesture(event.pointerId);
-  };
-
-  const onLostPointerCapture = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    cancelGesture(event.pointerId);
-  };
+  // A pointer gesture is driven to completion at the window level so it survives event retargeting:
+  // once a press begins on the seal, the move/up/cancel are honored wherever the browser dispatches
+  // them (the seal, the body beneath, or nowhere). A keyboard gesture has pointerId null and never
+  // matches a real pointerId, so it is untouched. No-op whenever no pointer gesture is in flight.
+  useEffect(() => {
+    const readPressure = (pressure: number) => clamp(pressure > 0 ? pressure : 0.5, 0, 1);
+    const track = (event: PointerEvent): boolean => {
+      const current = gesture.current;
+      if (current === null || current.pointerId !== event.pointerId) return false;
+      const seal = sealRef.current;
+      if (seal !== null) current.end = pointFromClient(seal, event.clientX, event.clientY);
+      current.pressure = Math.max(current.pressure, readPressure(event.pressure));
+      return true;
+    };
+    const onMove = (event: PointerEvent) => { track(event); };
+    const onUp = (event: PointerEvent) => { if (track(event)) void finishGesture(); };
+    const onCancel = (event: PointerEvent) => {
+      const current = gesture.current;
+      if (current !== null && current.pointerId === event.pointerId) cancelGesture(event.pointerId);
+    };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerup", onUp, { passive: true });
+    window.addEventListener("pointercancel", onCancel, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [cancelGesture, finishGesture]);
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if ((event.key !== " " && event.key !== "Enter") || event.repeat) return;
@@ -339,6 +373,18 @@ export default function ThresholdOffering({
         setPhase("receipt");
         setStatus("");
         setLocked(false);
+        if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
+        setConfirmed(true);
+        confirmTimer.current = window.setTimeout(() => {
+          confirmTimer.current = null;
+          setConfirmed(false);
+        }, 6500);
+        if (bloomTimer.current !== null) clearTimeout(bloomTimer.current);
+        setBloom(true);
+        bloomTimer.current = window.setTimeout(() => {
+          bloomTimer.current = null;
+          setBloom(false);
+        }, 1400);
       } else {
         setPhase("preview");
         setStatus(rejectionMessage(result.status));
@@ -428,6 +474,19 @@ export default function ThresholdOffering({
       onKeyDown={onDialogKeyDown}
       className="threshold-offering relative z-20 flex w-full max-w-[36rem] flex-col items-center gap-3 text-center"
     >
+      {confirmed && (
+        <div data-threshold-confirm className="threshold-confirm flex flex-col items-center gap-1.5">
+          <svg aria-hidden viewBox="0 0 44 44" className="threshold-confirm-sigil h-9 w-9" fill="none">
+            <circle cx="22" cy="22" r="14.6" stroke="currentColor" strokeWidth="1" />
+            <path d="M22 15.4 L22 28.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M16.3 21.3 C19 19.9 25 19.9 27.7 21.3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <circle cx="22" cy="13.2" r="1.7" fill="currentColor" />
+          </svg>
+          <p className="threshold-confirm-line font-machine text-sm text-ink">{copy.markReceived}</p>
+          <p className="font-machine text-xs text-ink-faded">{copy.markAwaiting}</p>
+        </div>
+      )}
+
       {showSeal && (
         <button
           ref={sealRef}
@@ -437,10 +496,6 @@ export default function ThresholdOffering({
           aria-describedby={interactionOpen ? "threshold-terms" : undefined}
           className="touch-none inline-flex h-11 w-11 shrink-0 items-center justify-center text-ink-faded transition-[color,opacity,transform] duration-300 ease-out hover:text-ink active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
           onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerCancel}
-          onLostPointerCapture={onLostPointerCapture}
           onKeyDown={onKeyDown}
           onKeyUp={onKeyUp}
           onBlur={() => {
@@ -549,6 +604,24 @@ export default function ThresholdOffering({
     receiptHost,
   );
 
+  // The mark-bloom: a one-shot ink wash across the whole viewport the instant an offering commits, the
+  // temple taking the mark in. Purely decorative (aria-hidden, pointer-events:none) so it never touches
+  // focus, the offering flow, or the receipt semantics; body-portaled so it is truly full-viewport.
+  const bloomPortal = typeof document === "undefined" ? null : createPortal(
+    bloom ? (
+      <div data-mark-bloom aria-hidden="true" className="mark-bloom">
+        <span className="mark-bloom-wash" />
+        <svg viewBox="0 0 44 44" className="mark-bloom-sigil" fill="none">
+          <circle cx="22" cy="22" r="14.6" stroke="currentColor" strokeWidth="1" />
+          <path d="M22 15.4 L22 28.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M16.3 21.3 C19 19.9 25 19.9 27.7 21.3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="22" cy="13.2" r="1.7" fill="currentColor" />
+        </svg>
+      </div>
+    ) : null,
+    document.body,
+  );
+
   return (
     <>
       <p
@@ -562,6 +635,7 @@ export default function ThresholdOffering({
       </p>
       {portal}
       {receiptPortal}
+      {bloomPortal}
     </>
   );
 }

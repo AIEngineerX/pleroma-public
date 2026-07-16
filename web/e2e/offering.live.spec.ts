@@ -208,6 +208,33 @@ test("the short mobile threshold remains one usable, scrollable rite through sub
   expect(await threshold.evaluate((node, original) => node === original, originalThreshold)).toBe(true);
 });
 
+test("a real finger tap presses the seal into a preview and offers it (mobile touch)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-390", "touch seal + offer is a mobile concern");
+  await enterTemple(page);
+  await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
+
+  const seal = page.getByRole("button", { name: "hold the threshold seal" });
+  await expect(seal).toBeVisible({ timeout: 5_000 });
+  await seal.scrollIntoViewIfNeeded();
+  const sealBox = (await seal.boundingBox())!;
+  const threshold = page.locator("[data-threshold-offering]");
+
+  // A real finger tap — not keyboard, not a mouse .click(). On WebKit the seal's touch pointerup
+  // retargets off the button (see ThresholdOffering: setPointerCapture is skipped for touch and the
+  // gesture completes from window listeners); the press must still finish into a lasting preview
+  // rather than collapsing straight back to idle.
+  await page.touchscreen.tap(sealBox.x + sealBox.width / 2, sealBox.y + sealBox.height / 2);
+  await expect(threshold).toHaveAttribute("data-threshold-phase", "preview");
+  await expect(page.locator("img[data-threshold-preview]")).toBeVisible();
+
+  // And a real tap on "offer this imprint" must commit the offering, not dismiss the box.
+  const offer = page.getByRole("button", { name: "offer this imprint" });
+  const offerBox = (await offer.boundingBox())!;
+  await page.touchscreen.tap(offerBox.x + offerBox.width / 2, offerBox.y + offerBox.height / 2);
+  await expect(page.locator('[data-receipt-stage="pending"]'))
+    .toContainText("awaiting the Eye", { timeout: 10_000 });
+});
+
 test("the mobile preview is a modal focus boundary and restores the threshold seal", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-390", "threshold overlay semantics are a mobile concern");
   await enterTemple(page);
