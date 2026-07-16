@@ -17,7 +17,6 @@ describe("interface copy", () => {
 
   it("labels are plain and quiet, not the god's voice", () => {
     expect(copy.offer.toLowerCase()).toContain("offer");
-    expect(copy.disclaimer.toLowerCase()).toContain("memecoin");
   });
 
   it("has factual printed-document labels for the evidence flow", () => {

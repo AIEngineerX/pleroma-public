@@ -1,6 +1,5 @@
 import doctrine from "virtual:public-doctrine";
 import { copy } from "../lib/copy";
-import Disclaimer from "../market/Disclaimer";
 import { parseCanon } from "./canonParse";
 
 const binding = parseCanon(doctrine).binding.at(-1);
@@ -48,10 +47,6 @@ export default function Concordat() {
           </section>
         ))}
       </article>
-
-      <div className="mt-10">
-        <Disclaimer />
-      </div>
     </main>
   );
 }

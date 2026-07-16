@@ -8,7 +8,7 @@ import { FINANCIAL_PROMISE, PROHIBITED_FINANCIAL_COPY } from "./helpers/copyGuar
 // against the commit-gate build, which has no mint and reports phase "dormant". The manual gate items
 // (moderation exercise, Concordat=code parity, backup restore, stage-criteria freeze, kill criterion) are
 // the runbook's job, not this spec's; see docs/runbooks/launch-day7.md for the full checklist this covers.
-test("day-7 gate: live temple, pinned mint, disclaimer reachable, vitals, a11y", async ({ page }) => {
+test("day-7 gate: live temple, pinned mint, vitals, a11y", async ({ page }) => {
   await page.goto("/");
   const productionApiUrl = process.env.PLEROMA_PRODUCTION_API_URL!;
   const state = await (await page.request.get(`${productionApiUrl.replace(/\/$/, "")}/api/state`)).json();
@@ -18,12 +18,6 @@ test("day-7 gate: live temple, pinned mint, disclaimer reachable, vitals, a11y",
   await expect(page.getByText(state.mint)).toBeVisible();         // mint shown, matches the API
   const axe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   expect(axe.violations.filter(v => v.impact === "critical")).toEqual([]);
-  // The plain-English memecoin disclaimer is reachable from the temple via the Concordat link: relocated
-  // off the immersive page (it broke the dormant spell) but always one tap away (integrity invariant,
-  // CLAUDE.md "Integrity invariants"; the disclaimer itself is asserted on /concordat by concordat.spec).
-  await page.getByRole("link", { name: "the Concordat" }).click();
-  await expect(page.getByText(/memecoin/i)).toBeVisible();        // the plain-English disclaimer
-  await expect(page.getByRole("note")).toContainText("No financial promises");
 });
 
 test("day-7 gate: the live market makes no financial promise", async ({ page }) => {

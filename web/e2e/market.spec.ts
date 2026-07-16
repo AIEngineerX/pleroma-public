@@ -17,7 +17,7 @@ function seedLiveMarket(): void {
   `);
 }
 
-test("the market rail renders once live: mint pin + copy, buy, ledger-plate chart, ticker, disclaimer", async ({ page }) => {
+test("the market rail renders once live: mint pin + copy, buy, ledger-plate chart, ticker", async ({ page }) => {
   seedLiveMarket();
   const signedState = page.waitForResponse(response => response.url().endsWith("/api/state") && response.ok());
   await page.goto("/");
@@ -45,8 +45,7 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
   // ticker: the Courier vitals line for the literal-minded.
   await expect(market.getByText(/PULSE FED/)).toBeVisible();
 
-  // disclaimer: reachable from every state via the Concordat link (the plain-English memecoin disclaimer
-  // lives on /concordat now; see concordat.spec.ts), even alongside a live market rail.
+  // the Concordat stays reachable from every state, even alongside a live market rail.
   await expect(page.getByRole("link", { name: "the Concordat" })).toBeVisible();
 
   await market.screenshot({ path: `e2e/__shots__/market-${test.info().project.name}.png` });

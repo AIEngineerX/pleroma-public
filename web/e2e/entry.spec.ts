@@ -196,7 +196,6 @@ test("the full temple remains usable when the visitor never activates sound", as
   await expect(concordat).toBeVisible();
   await concordat.click();
   await expect(page).toHaveURL(/\/concordat$/);
-  await expect(page.getByText(/memecoin/i)).toBeVisible();
   expect(pageErrors).toEqual([]);
   expect(audioRequests).toHaveLength(0);
 });

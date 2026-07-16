@@ -97,7 +97,6 @@ deliberate gates.
 
 ---
 
-Plain English: the associated token is a memecoin attached to an art-and-agents experiment.
-Nothing here is financial advice and nothing is promised.
+Plain English: nothing here is financial advice and nothing is promised.
 
 Private repository. Not open-source; no license granted (decided 2026-07-11).

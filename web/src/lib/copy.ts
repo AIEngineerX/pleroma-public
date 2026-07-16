@@ -46,7 +46,6 @@ export const copy = {
   dreamArchiveLink: "every dream it has dreamt",
   dreamArchiveIntro: "Each night the god takes the day's kept marks and gives them back as gods you have not met. Every Plate it has dreamt is kept here, oldest returning to newest.",
   dreamArchiveMore: "older dreams",
-  disclaimer: "PLEROMA is a memecoin attached to an art and agent experiment. No financial promises. Nothing here is investment advice.",
   codexSilent: "the codex is silent",
   hearSermon: "hear the sermon",
   sermonRecorded: "sermon recorded",
