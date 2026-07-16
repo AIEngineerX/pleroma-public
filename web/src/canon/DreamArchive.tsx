@@ -13,8 +13,8 @@ import { copy } from "../lib/copy";
 const API_BASE = resolveApiBase(import.meta.env);
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
 function caption(d: DreamArchiveEntry): string {
-  if (d.video_key) return "generative replay";
-  return d.status === "rendering" ? "plate rendering" : "plate pending";
+  if (d.video_key) return "plate printed";
+  return d.status === "rendering" ? "plate printing" : "plate pending";
 }
 
 export default function DreamArchive() {

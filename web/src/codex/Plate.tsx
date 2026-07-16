@@ -28,7 +28,7 @@ export default function Plate({
       data-plate-pending={pending ? "true" : "false"}>
       <figcaption className="codex-entry__margin font-machine text-ink-faded">
         <span className="codex-entry__identity"><Glyph organ="DREAM" />{organIdentity("DREAM")}</span>
-        <span>epoch {epoch} · {pending ? "plate pending" : "generative replay"}</span>
+        <span>epoch {epoch} · {pending ? "plate pending" : "plate printed"}</span>
         <time className="block" dateTime={new Date(observed.entry.created_at).toISOString()}>
           {observed.observation === "recorded" ? "recorded" : "observed"} · {formatTranscriptTime(observed.entry.created_at)}
         </time>

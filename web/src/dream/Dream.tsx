@@ -120,7 +120,7 @@ export default function Dream({
               </div>
             )}
             <figcaption className="font-machine text-xs text-ink-faded">
-              DREAM · {new Date(dream.created_at).toISOString().slice(0, 10)} · {dream.video_key ? "generative replay" : "plate pending"}
+              DREAM · {new Date(dream.created_at).toISOString().slice(0, 10)} · {dream.video_key ? "plate printed" : "plate pending"}
             </figcaption>
           </figure>
           {dream.video_key && (
