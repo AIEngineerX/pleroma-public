@@ -8,7 +8,7 @@ describe("resolveApiBase", () => {
   });
 
   it("defaults to the pinned production Worker origin in a production build", () => {
-    expect(resolveApiBase({ PROD: true })).toBe("https://pleroma-worker-production.redacted.workers.dev");
+    expect(resolveApiBase({ PROD: true })).toBe("https://api.pleromachurch.xyz");
   });
 
   it("falls back to same-origin (empty string) outside of production", () => {

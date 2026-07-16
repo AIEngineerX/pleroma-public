@@ -3,6 +3,8 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const forbidden = [
+  "redacted",
+  "workers.dev",
   "worker/src/",
   "VOICE, STATIC SYSTEM PROMPT",
   "Reply with ONLY a JSON object",
