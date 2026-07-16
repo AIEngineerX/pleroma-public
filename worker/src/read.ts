@@ -114,11 +114,22 @@ export async function getDreams(env: Env, cursor: string | null): Promise<Respon
 export async function getTallies(env: Env, date: string): Promise<Response> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return Response.json({ error: "bad date" }, { status: 400 });
   const start = Date.parse(date + "T00:00:00.000Z"); const end = start + 86_400_000;
+  // The named roll: one tick per wallet whose mark the Eye has WITNESSED today (perceived_at set).
+  // Anonymous marks (wallet NULL) are witnessed too but carry no identity to name, so they never
+  // appear here — they are counted only in the `marks` total below. Witnessed, not merely offered,
+  // so the roll never counts a mark the Eye later refused (rejected marks are never perceived).
   const tallies = (await env.DB.prepare(
     `SELECT o.wallet AS wallet, COUNT(*) AS count, w.tally_name AS name
        FROM offerings o LEFT JOIN wallets w ON w.address = o.wallet
-      WHERE o.wallet IS NOT NULL AND o.created_at >= ?1 AND o.created_at < ?2
+      WHERE o.wallet IS NOT NULL AND o.perceived_at IS NOT NULL
+        AND o.created_at >= ?1 AND o.created_at < ?2
       GROUP BY o.wallet ORDER BY count DESC`
   ).bind(start, end).all<{ wallet: string; count: number; name: string | null }>()).results;
-  return Response.json({ date, communicants: tallies.length, tallies });
+  // The honest total: every mark the Eye witnessed today, wallet-bearing OR anonymous. This is what
+  // keeps the roll from reading dead when marks are offered without a connected wallet.
+  const marks = (await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM offerings
+      WHERE perceived_at IS NOT NULL AND created_at >= ?1 AND created_at < ?2`
+  ).bind(start, end).first<{ n: number }>())?.n ?? 0;
+  return Response.json({ date, marks, communicants: tallies.length, tallies });
 }
