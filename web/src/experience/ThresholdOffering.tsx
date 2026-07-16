@@ -181,6 +181,7 @@ export default function ThresholdOffering({
     const current = gesture.current;
     if (current === null || (pointerId !== undefined && current.pointerId !== pointerId)) return;
     gesture.current = null;
+    document.body.classList.remove("threshold-gesturing");
     generation.current += 1;
     const seal = sealRef.current;
     if (current.pointerId !== null && seal?.hasPointerCapture(current.pointerId)) {
@@ -213,6 +214,7 @@ export default function ThresholdOffering({
   useEffect(() => () => {
     generation.current += 1;
     gesture.current = null;
+    document.body.classList.remove("threshold-gesturing");
     const current = previewRef.current;
     if (current !== null) URL.revokeObjectURL(current.url);
     previewRef.current = null;
@@ -235,6 +237,9 @@ export default function ThresholdOffering({
       startedAt: performance.now(),
     };
     gesture.current = next;
+    // A pointer hold is what iOS reads as a selection gesture; hold the document's selection shut for its
+    // duration. A keyboard hold (key set) leaves selection alone so the page stays ordinarily selectable.
+    if (next.key === null) document.body.classList.add("threshold-gesturing");
     onEnter();
     setStatus(copy.imprintGathering);
     setPhase("holding");
@@ -246,6 +251,7 @@ export default function ThresholdOffering({
     const current = gesture.current;
     if (current === null) return;
     gesture.current = null;
+    document.body.classList.remove("threshold-gesturing");
     const releasingSeal = sealRef.current;
     if (current.pointerId !== null && releasingSeal?.hasPointerCapture(current.pointerId)) {
       releasingSeal.releasePointerCapture(current.pointerId);
@@ -494,7 +500,7 @@ export default function ThresholdOffering({
           aria-label={copy.seal}
           aria-pressed={phase === "holding"}
           aria-describedby={interactionOpen ? "threshold-terms" : undefined}
-          className="touch-none inline-flex h-11 w-11 shrink-0 items-center justify-center text-ink-faded transition-[color,opacity,transform] duration-300 ease-out hover:text-ink active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
+          className="threshold-seal touch-none inline-flex h-11 w-11 shrink-0 items-center justify-center text-ink-faded transition-[color,opacity,transform] duration-300 ease-out hover:text-ink active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
           onPointerDown={onPointerDown}
           onKeyDown={onKeyDown}
           onKeyUp={onKeyUp}
