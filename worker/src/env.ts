@@ -19,4 +19,7 @@ export interface Env {
   X_API_SECRET: string;
   X_ACCESS_TOKEN: string;
   X_ACCESS_SECRET: string;
+  // Maker-only on-demand trigger for the scheduled jobs (index.ts /api/admin/run). Optional: the
+  // endpoint 404s when unset, so the trigger simply does not exist until this secret is provisioned.
+  ADMIN_SECRET: string;
 }

@@ -34,6 +34,10 @@ bucket_name = "pleroma-relics"
 [triggers]
 crons = ["*/15 * * * *", "50 0 * * *", "0 3 * * *", "30 3 * * *"]
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [env.production]
 routes = [{ pattern = "api.pleromachurch.xyz", custom_domain = true }]
 vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleromachurch.xyz", VOICE_VENDOR = "xai", VIDEO_VENDOR = "xai", ELEVENLABS_VOICE_ID = "", PULSE_MINT = "", PULSE_POOLS = "" }
@@ -46,3 +50,6 @@ binding = "RELICS"
 bucket_name = "pleroma-relics-prod"
 [env.production.triggers]
 crons = ["*/15 * * * *", "50 0 * * *", "0 3 * * *", "30 3 * * *"]
+[env.production.observability]
+enabled = true
+head_sampling_rate = 1

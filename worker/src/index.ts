@@ -37,6 +37,33 @@ app.get("/api/audio/*", (c) => serveAudio(c.env, c.req.path.slice("/api/".length
 app.get("/api/dream/*", (c) => serveDreamVideo(c.env, c.req.path.slice("/api/".length)));
 app.get("/api/img/:id", (c) => serveOfferingImage(c.env, c.req.param("id")));
 
+// Maker-only on-demand trigger for the scheduled jobs. Guarded by ADMIN_SECRET (constant-time header
+// compare); 404s when the secret is unset so the endpoint is invisible until provisioned. It runs the
+// SAME lock-held functions the cron fires — the organs stay genuine and idempotent, this only changes
+// WHEN they run, never WHAT they do. ?job=tick|rite|dream|all (default tick); ?date=YYYY-MM-DD targets a
+// specific dream compose (defaults to today's UTC date).
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+app.post("/api/admin/run", async (c) => {
+  const secret = c.env.ADMIN_SECRET;
+  if (!secret) return c.json({ error: "not found" }, 404);
+  if (!timingSafeEqual(c.req.header("x-admin-secret") ?? "", secret)) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const job = c.req.query("job") ?? "tick";
+  const date = c.req.query("date") ?? undefined;
+  const ran: string[] = [];
+  if (job === "tick" || job === "all") { await runTick(c.env); ran.push("tick"); }
+  if (job === "rite" || job === "all") { await advanceRiteLocked(c.env); ran.push("rite"); }
+  if (job === "dream" || job === "all") { await runDreamLocked(c.env, date); ran.push("dream"); }
+  if (ran.length === 0) return c.json({ error: "unknown job; use tick|rite|dream|all" }, 400);
+  return c.json({ ok: true, ran, date: date ?? null });
+});
+
 const TICK_LEASE_MS = 10 * 60_000;
 const RITE_OPEN_MINUTE_OF_DAY = 50; // 00:50 UTC (minute-of-day 50) = T-10m before the 01:00 rite hour
 
