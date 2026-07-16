@@ -24,6 +24,7 @@ export const copy = {
   dreamArchive: "The Dream Archive",
   completeCanon: "the complete Canon",
   returnTemple: "return to the temple",
+  enterTemple: "enter the temple",
   dreams: "the dreams",
   concordatDoorway: "the Concordat",
   concordatOrgans: "What belongs to the organs",

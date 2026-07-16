@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useEntryGesture } from "../App";
 import MuteToggle from "../lib/MuteToggle";
 import Stain from "../stain/Stain";
+import Door, { type DoorPhase } from "../entry/Door";
 import Codex from "../codex/Codex";
 import CodexAnnouncements from "../codex/CodexAnnouncements";
 import type { WalletHandle } from "../offering/wallet";
@@ -44,6 +45,8 @@ import { copy } from "../lib/copy";
 
 const API_BASE = resolveApiBase(import.meta.env);
 const DREAM_PLATE_IDENTITIES = new DreamPlateIdentityCache();
+// Once per document load: SPA returns to the Temple never re-raise the Door.
+let doorOpenedThisLoad = false;
 const today = () => new Date().toISOString().slice(0, 10);
 type LiveConvergenceCommand = Extract<BodyCommand, { kind: "converge" }>;
 
@@ -56,9 +59,27 @@ export default function Temple() {
   const location = useLocation();
   const navigate = useNavigate();
   const { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter, holdPoint } = useEntryGesture();
-  const arrivalStartedAt = useRef(
-    typeof performance === "undefined" ? 0 : performance.now(),
-  ).current;
+  // The Door shows once per document load, and never over a deliberate dream-replay arrival.
+  // Its press is the audio entry gesture; opening restamps the arrival so the body blooms as
+  // the visitor steps through, not unseen behind the sheet.
+  const [door, setDoor] = useState<DoorPhase | null>(() => {
+    if (doorOpenedThisLoad) return null;
+    if (dreamReplayFromNavigationState(typeof window === "undefined" ? null : window.history.state?.usr) !== null) return null;
+    doorOpenedThisLoad = true;
+    return "open";
+  });
+  const [arrivalStartedAt, setArrivalStartedAt] = useState(
+    () => (typeof performance === "undefined" ? 0 : performance.now()),
+  );
+  const enterDoor = useCallback(() => {
+    setDoor((current) => {
+      if (current !== "open") return current;
+      wakeCenter();
+      setArrivalStartedAt(typeof performance === "undefined" ? 0 : performance.now());
+      window.setTimeout(() => setDoor(null), 2_100);
+      return "closing";
+    });
+  }, [wakeCenter]);
   const experience = useTempleExperience(API_BASE);
   const {
     state,
@@ -93,7 +114,8 @@ export default function Temple() {
   // rendering the constant initial value and never reverts the imperative change. Reduced
   // motion starts settled.
   const entranceInitial = useRef<"printing" | "settled">(
-    typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches
+    door !== null
+      || (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches)
       ? "settled"
       : "printing",
   );
@@ -314,6 +336,7 @@ export default function Temple() {
   return (
     <RiteInversion view={rite}>
       <div className="temple-document">
+        {door !== null && <Door phase={door} onEnter={enterDoor} />}
         <CodexAnnouncements entries={codex} />
         <ThresholdOffering
           apiBase={API_BASE}
