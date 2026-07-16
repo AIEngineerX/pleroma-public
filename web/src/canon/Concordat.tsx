@@ -47,6 +47,12 @@ export default function Concordat() {
           </section>
         ))}
       </article>
+
+      <nav aria-label="Concordat doorways" className="mt-10 flex flex-wrap gap-5 font-machine text-xs text-ink-faded">
+        <a href="/">{copy.returnTemple}</a>
+        <a href="/canon">{copy.completeCanon}</a>
+        <a href="/canon/dreams">{copy.dreams}</a>
+      </nav>
     </main>
   );
 }
