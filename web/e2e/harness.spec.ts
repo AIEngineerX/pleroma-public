@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { enterTemple } from "./helpers/door";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { E2E_PERSIST_PATH as STACK_PERSIST_PATH } from "../scripts/e2e-stack.mjs";
+import { E2E_PERSIST_PATH as STACK_PERSIST_PATH } from "../scripts/e2e-config.mjs";
 import {
   E2E_ORIGINS,
   E2E_PERSIST_PATH as FIXTURE_PERSIST_PATH,

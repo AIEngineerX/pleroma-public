@@ -2,20 +2,19 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import type { DreamArchiveEntry, RelicEntry, TranscriptEntry } from "../../src/state/types";
 import {
+  E2E_ORIGINS,
   E2E_PERSIST_PATH,
-  directoryBelongsToRun,
-  e2eOrigins,
-  readE2EPorts,
-} from "../../scripts/e2e-run-ownership.mjs";
+  E2E_PORTS,
+  REPOSITORY_ROOT,
+} from "../../scripts/e2e-config.mjs";
 
 const HELPER_PATH = fileURLToPath(import.meta.url);
+void HELPER_PATH;
 
-export const REPOSITORY_ROOT = path.resolve(path.dirname(HELPER_PATH), "../../..");
-export { E2E_PERSIST_PATH };
-export const E2E_PORTS = readE2EPorts(process.env);
-export const E2E_ORIGINS = e2eOrigins(E2E_PORTS);
+export { E2E_ORIGINS, E2E_PERSIST_PATH, E2E_PORTS, REPOSITORY_ROOT };
 
 const WORKER_ROOT = path.resolve(REPOSITORY_ROOT, "worker");
 const WRANGLER_CLI = path.resolve(WORKER_ROOT, "node_modules/wrangler/bin/wrangler.js");
@@ -37,10 +36,8 @@ function fixtureSha256(offeringId: string): string {
 }
 
 function wrangler(args: string[], input?: Buffer): Buffer {
-  const runToken = process.env.PLEROMA_E2E_RUN_TOKEN;
-  const acquisitionId = process.env.PLEROMA_E2E_ACQUISITION_ID;
-  if (!directoryBelongsToRun(E2E_PERSIST_PATH, runToken, E2E_PORTS, acquisitionId)) {
-    throw new Error("Refusing fixture access without this E2E run's token, acquisition, and ports");
+  if (!existsSync(E2E_PERSIST_PATH)) {
+    throw new Error(`E2E persistence missing at ${E2E_PERSIST_PATH} — is the stack running via Playwright?`);
   }
   return execFileSync(process.execPath, [WRANGLER_CLI, ...args], {
     cwd: WORKER_ROOT,

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { enterTemple } from "./helpers/door";
-import { TEST_PULSE_MINT } from "../scripts/e2e-stack.mjs";
+import { TEST_PULSE_MINT } from "../scripts/e2e-config.mjs";
 import { executeD1, resetStack } from "./helpers/workerFixture";
 import { FINANCIAL_PROMISE, PROHIBITED_FINANCIAL_COPY } from "./helpers/copyGuards";
 

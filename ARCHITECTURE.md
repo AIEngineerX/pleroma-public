@@ -358,8 +358,8 @@ configured production Worker origin in production, and same-origin in developmen
 | `npm run verify` (root) | both | `worker verify` + `web verify` — the commit gate |
 | `worker: verify` | worker | `compile:doctrine && vitest run` (excludes `*.live.test.ts`) |
 | `worker: verify:live` | worker | real-vendor suite (`test/live/`) — manual, pre-launch only |
-| `web: verify` | web | cross-platform harness-ownership suites + real-browser Tallies effect check + vitest + TypeScript + Vite build + Canon prerender + public-content guard |
-| `web: e2e` | web | project-owned Node runner + serial Playwright desktop/mobile-390 against built Vite and real isolated local Worker/D1/R2 — **separate**, not in `verify` |
+| `web: verify` | web | real-browser Tallies effect check + vitest + TypeScript + Vite build + Canon prerender + public-content guard |
+| `web: e2e` | web | stock Playwright webServer boots the real isolated Worker/D1/R2 + built site; serial desktop/mobile-390; single spec via `npm run e2e -- <file>` — **separate**, not in `verify` |
 | `worker: deploy` / `deploy:prod` | worker | `compile:doctrine && wrangler deploy [--env production]` |
 | `worker: migrate:local` / `migrate:prod` | worker | `wrangler d1 migrations apply …` |
 | web deploy | web | **runbook only** — `npx wrangler pages deploy dist --project-name pleroma-web` (no npm script) |
@@ -369,47 +369,17 @@ the Worker compiles it to `src/doctrine.generated.ts` (`compile:doctrine`); the 
 imports it `?raw` at runtime (`canonParse.ts`) and re-parses it at build time (`build-canon.mjs`) —
 the regex logic is duplicated in those two files and kept in sync by hand.
 
-`web/scripts/e2e-runner.mjs` owns local browser-gate lifecycle instead of Playwright `webServer`.
-It starts the stack, waits for the real Worker/D1/R2 and built preview, invokes serial Playwright,
-and requests teardown on normal completion, startup failure, or handled cancellation. Specs mutate
-the same D1/R2 through Wrangler; they do not intercept HTTP or fabricate API responses.
-The runner gives the harness and Playwright separate marked-tree ownership records and publishes each
-synchronously before returning control to cancellation. Playwright retirement is awaited before stack
-teardown begins. On Windows, each outer target is created suspended, assigned to a retained
-`KILL_ON_JOB_CLOSE` Job Object, and only then resumed; the gate and Job host remain alive until owned
-teardown, so a descendant cannot escape merely because an intermediate process exits. On every
-platform, compile, migration, build, Worker, and Vite targets wait behind inert marked IPC wrappers.
-The stack waits for wrapper readiness, publishes and revalidates the exact wrapper descriptor, and
-only then authorizes the target to start. Successful one-shot wrappers remain live and published until
-final teardown instead of leaving a leaderless descendant tree.
-
-The stack preflights its validated Worker/web ports (8787/4173 by default), exclusively creates the
-fixed `.tmp/e2e-worker` directory, and creates `run-owner.json` with exclusive file creation. A fresh
-32-byte acquisition ID distinguishes one persistence claim from another even if a run token is
-reused; owner record, manifest, shutdown request, and teardown must match token, acquisition ID, and
-ports. The stack never takes over or automatically reclaims an existing path. A crash between
-directory and owner publication therefore leaves ownerless residue that blocks the next run
-unchanged, and a same-token concurrent or pre-existing claim is left untouched. After an abrupt
-process or host failure, an operator must verify the configured ports and token-marked processes are
-inactive, inspect the path for links or reparse points, and remove only the repository's exact
-`.tmp/e2e-worker` directory.
-
-Token, acquisition ID, port, owner, and manifest checks gate every signal and deletion. POSIX managed
-wrappers are retained process-group leaders; if their parent IPC disappears, a started wrapper retires
-its own group. General POSIX teardown still checks that a marked leader is live, owned, and remains
-that group's leader immediately before signaling. If the leader is already absent while the numeric
-group remains live, PGID continuity is ambiguous and state is preserved without signaling. The
-leader/PGID checks and `kill(-pgid)` remain separate operations, so exit or reuse in that interval
-cannot be excluded without a retained kernel lifetime primitive. Windows teardown records
-full-resolution creation identity and admits a newly observed descendant only while the exact parent
-incarnation is still present and the child has strictly later creation ticks. Already captured
-descendants are terminated deepest first; a late orphan, PID reuse, or unavailable evidence preserves
-state instead of widening kill authority. The outer runner tree has the Job Object containment
-described above, but fixed-manifest cleanup still performs a final identity probe followed by an
-individual `taskkill /PID /F`; those are separate operations, so PID exit or reuse in that residual
-interval cannot be excluded. Filesystem containment uses lexical `path.resolve` checks only; it does
-not resolve or reject symlinks, Windows reparse points, or junctions and is not a hostile-filesystem
-boundary.
+The browser gate uses Playwright's stock `webServer` lifecycle (Maker decision 2026-07-16,
+replacing the former process-ownership runner): `scripts/e2e-worker.mjs` deletes the repository's
+exact `.tmp/e2e-worker` directory behind a path assertion, compiles the Doctrine, applies real D1
+migrations into it, and execs `wrangler dev` with the test vars; a second webServer entry builds
+the site against that Worker and serves the built copy on the fixed port. Playwright waits on both
+health URLs, owns both process trees, and kills them at exit. `reuseExistingServer: false` makes a
+busy port fail the run immediately — one E2E run at a time is the concurrency model. Specs mutate
+the same D1/R2 through Wrangler; they never intercept HTTP or fabricate API responses. Residual
+limits: a hard-killed run can orphan a wrangler process (clean by hand when the next run's port
+error names it), and the persistence path guard is a lexical containment check, not a
+hostile-filesystem boundary.
 
 **Env & secrets** (Worker `Env`): non-secret vars in `wrangler.toml` (`ENVIRONMENT`, `CORS_ORIGIN`,
 `VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `PULSE_MINT`, `PULSE_POOLS`); secrets via `wrangler secret put`
