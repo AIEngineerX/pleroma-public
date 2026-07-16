@@ -38,6 +38,7 @@ describe("Reliquary HTTP contracts", () => {
 
     const tallyServer = await serverFor(200, JSON.stringify({
       date: "2030-01-02",
+      marks: 1,
       communicants: 1,
       tallies: [{ wallet: "wallet-a", count: "1", name: null }],
     }));
@@ -61,6 +62,7 @@ describe("Reliquary HTTP contracts", () => {
         next: null,
       } : {
         date: "2030-01-02",
+        marks: 1,
         communicants: 1,
         tallies: [{ wallet: "wallet-a", count: 1, name: null }],
       }));

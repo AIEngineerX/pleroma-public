@@ -40,6 +40,9 @@ export const copy = {
   retryImprint: "the imprint remains at the threshold",
   rememberedAs: "remembered as",
   offerUnremembered: "or offer unremembered",
+  markReceived: "your mark is received",
+  markAwaiting: "the Eye perceives on its own cadence",
+  yourOfferings: "Your offerings",
   keptEmpty: "It has kept nothing yet. It is waiting to be given something worth keeping.",
   dreamEmpty: "It has not dreamed yet. It dreams on the marks it is given, and gives them back as gods you have not met.",
   dreamHeading: "THE DREAM",
@@ -50,4 +53,8 @@ export const copy = {
   codexSilent: "the codex is silent",
   hearSermon: "hear the sermon",
   sermonRecorded: "sermon recorded",
+  talliesQuiet: "No marks witnessed yet today. The Eye perceives on its own cadence.",
+  talliesNamed: "remembered by name",
+  talliesMark: "mark witnessed today",
+  talliesMarks: "marks witnessed today",
 } as const;

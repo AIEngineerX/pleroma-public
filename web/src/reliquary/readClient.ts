@@ -5,7 +5,7 @@ import { isRelicEntry, type RelicEntry, type Tally } from "../state/types";
 const CURSOR = /^\d+:[0-9A-HJKMNP-TV-Z]{26}$/;
 
 export interface RelicPage { entries: RelicEntry[]; next: string | null }
-export interface TallyPage { date: string; communicants: number; tallies: Tally[] }
+export interface TallyPage { date: string; marks: number; communicants: number; tallies: Tally[] }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -32,6 +32,7 @@ function isRelicPage(value: unknown): value is RelicPage {
 function isTallyPage(value: unknown, date: string): value is TallyPage {
   return isRecord(value)
     && value.date === date
+    && isNonnegativeSafeInteger(value.marks)
     && isNonnegativeSafeInteger(value.communicants)
     && Array.isArray(value.tallies)
     && value.tallies.every(isTally);

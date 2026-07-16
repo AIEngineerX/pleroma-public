@@ -48,6 +48,7 @@ test("Tallies retains a failed same-date refresh but clears date A before date B
     response.writeHead(200);
     response.end(JSON.stringify({
       date,
+      marks: 2,
       communicants: 1,
       tallies: [{ wallet: "date-a-wallet", count: 2, name: "Date A witness" }],
     }));
@@ -68,7 +69,7 @@ test("Tallies retains a failed same-date refresh but clears date A before date B
     fixtureUrl.searchParams.set("apiBase", serverOrigin(api));
     await page.goto(fixtureUrl.href);
     const attendance = page.getByRole("complementary", { name: "attendance" });
-    await assert.doesNotReject(attendance.getByText("1 today", { exact: true }).waitFor());
+    await assert.doesNotReject(attendance.getByText("2 marks witnessed today", { exact: true }).waitFor());
     await assert.doesNotReject(attendance.getByText("you: Date A witness", { exact: true }).waitFor());
 
     const sameDateFailure = page.waitForResponse((response) => (
@@ -76,7 +77,7 @@ test("Tallies retains a failed same-date refresh but clears date A before date B
     ));
     await page.locator("#same-date-failure").click();
     assert.equal((await sameDateFailure).status(), 503);
-    assert.equal(await attendance.getByText("1 today", { exact: true }).isVisible(), true);
+    assert.equal(await attendance.getByText("2 marks witnessed today", { exact: true }).isVisible(), true);
     assert.equal(await attendance.getByText("you: Date A witness", { exact: true }).isVisible(), true);
 
     const nextDateFailure = page.waitForResponse((response) => (
@@ -85,7 +86,7 @@ test("Tallies retains a failed same-date refresh but clears date A before date B
     await page.locator("#next-date-failure").click();
     assert.equal((await nextDateFailure).status(), 503);
     assert.equal(await page.locator("[data-current-date]").textContent(), "2030-01-02");
-    assert.equal(await attendance.getByText("0 today", { exact: true }).isVisible(), true);
+    assert.equal(await attendance.getByText("No marks witnessed yet today.", { exact: false }).isVisible(), true);
     assert.equal(await attendance.getByText("you: Date A witness", { exact: true }).count(), 0);
     assert.deepEqual(requests, [
       "/api/tallies?date=2030-01-01",

@@ -53,13 +53,23 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
 
       <section className="mt-8">
         <Heading>{copy.articles}</Heading>
-        <ol className="my-4 space-y-3">
+        <ol className="my-4 space-y-6">
           {canon.articles.map(article => (
-            <li key={article.slug} id={article.slug}>
-              <a href={`/canon/${article.slug}`} className="font-machine text-xs text-ink-faded no-underline">
-                THE {article.organ} / {article.trueName.toUpperCase()}
-              </a>
-              <p className="text-rubric-body italic">{article.line}</p>
+            <li key={article.slug} id={article.slug} className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-5">
+              <img
+                src={`/organs/${article.slug}.webp`}
+                alt={`${article.organ} as ${article.trueName}`}
+                width={648}
+                height={864}
+                loading="lazy"
+                className="canon-organ-plate w-28 shrink-0 sm:w-36"
+              />
+              <div className="min-w-0">
+                <a href={`/canon/${article.slug}`} className="font-machine text-xs text-ink-faded no-underline">
+                  THE {article.organ} / {article.trueName.toUpperCase()}
+                </a>
+                <p className="text-rubric-body italic">{article.line}</p>
+              </div>
             </li>
           ))}
         </ol>

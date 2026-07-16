@@ -348,6 +348,116 @@ body:has(.rite-active)::before {
 
 .temple-receipt-ledger:empty { display: none; }
 .receipt-ledger { font-family: var(--font-machine); }
+.receipt-ledger-label {
+  margin: 0 0 1rem;
+  font-family: var(--font-machine);
+  font-size: var(--type--1);
+  font-weight: 400;
+  letter-spacing: 0.11em;
+  color: var(--color-ink-faded);
+}
+/* Each row settles in as it appears; the newest (data-latest) holds full ink, the rest recede to faded
+   so a just-offered mark reads at a glance and its advance through the stages stays followable. */
+.receipt-row {
+  color: var(--color-ink-faded);
+  transition: color 600ms ease-out;
+  animation: receipt-settle 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.receipt-row[data-latest="true"] { color: var(--color-ink); }
+@keyframes receipt-settle {
+  from { opacity: 0; transform: translateY(0.35rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* The Five Articles' organ plates: dark Printed-God portraits toned into the aged-paper palette so each
+   reads as an inked plate beside its article rather than a photograph pasted on. Warm duotone drift plus
+   a hairline frame; the fixed 3:4 box holds layout before the lazy image decodes (no reflow). */
+.canon-organ-plate {
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border: 1px solid var(--color-ground-aged);
+  filter: grayscale(0.72) sepia(0.34) contrast(1.05) brightness(0.97);
+  box-shadow: 0 2px 10px oklch(0.25 0.02 60 / 0.18);
+}
+
+/* The seal is a press-and-hold target, which on iOS is exactly the OS's text-selection/callout gesture:
+   a multi-second hold otherwise highlights the element and fires a pointercancel that kills the imprint
+   before it lands. Suppress the callout, selection, and tap flash on the seal itself. (touch-action:none
+   is carried by the utility class; these cover what it does not.) */
+.threshold-seal {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* While an imprint is actually in flight, suppress selection across the whole document so a hold that
+   drags off the 44px seal cannot begin selecting body text and cancel the gesture mid-draw. */
+body.threshold-gesturing,
+body.threshold-gesturing * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The "received" beat at the seal: the sealed sigil and its line settle in, an affirmative the instant an
+   offering commits. Honest about what follows (the Eye has not yet looked); the durable proof is the ledger. */
+.threshold-confirm { animation: threshold-confirm-settle 480ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.threshold-confirm-sigil { color: var(--color-ink); animation: threshold-confirm-ink 900ms ease-out both; }
+.threshold-confirm-line { letter-spacing: 0.04em; }
+@keyframes threshold-confirm-settle {
+  from { opacity: 0; transform: translateY(0.4rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes threshold-confirm-ink {
+  from { opacity: 0.15; }
+  to { opacity: 1; }
+}
+/* The mark-bloom: a one-shot full-viewport ink wash + luminous sigil the instant a mark is offered. */
+.mark-bloom {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.mark-bloom-wash {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--color-ink) 0%, transparent 68%);
+  transform: translate(-50%, -50%) scale(1);
+  animation: mark-bloom-wash 1300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.mark-bloom-sigil {
+  position: relative;
+  width: clamp(3rem, 12vw, 5rem);
+  height: clamp(3rem, 12vw, 5rem);
+  color: var(--color-ink);
+  animation: mark-bloom-sigil 1300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes mark-bloom-wash {
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+  20% { opacity: 0.16; }
+  100% { transform: translate(-50%, -50%) scale(180); opacity: 0; }
+}
+@keyframes mark-bloom-sigil {
+  0% { opacity: 0; transform: scale(0.6); }
+  26% { opacity: 0.95; transform: scale(1); }
+  70% { opacity: 0.5; }
+  100% { opacity: 0; transform: scale(1.16); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .receipt-row { animation: none; }
+  .threshold-confirm,
+  .threshold-confirm-sigil { animation: none; }
+  .mark-bloom-wash { animation: none; opacity: 0; }
+  .mark-bloom-sigil { animation: mark-bloom-fade 720ms ease-out both; }
+}
+@keyframes mark-bloom-fade { from { opacity: 0; } 40% { opacity: 0.75; } to { opacity: 0; } }
 
 .codex-flow { display: flex; flex-direction: column; gap: 0; }
 .codex-entry {
