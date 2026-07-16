@@ -1,4 +1,4 @@
-import { ulid } from "ulid";
+import { ulid } from "./id";
 import type { Env } from "./env";
 import { nonceIsFresh } from "./nonce";
 import { verifyOffering } from "./signature";
