@@ -32,7 +32,6 @@ const WRANGLER_CLI = path.resolve(WORKER_ROOT, "node_modules/wrangler/bin/wrangl
 const WRANGLER_CONFIG = path.resolve(WORKER_ROOT, "wrangler.toml");
 const VITE_CLI = path.resolve(WEB_ROOT, "node_modules/vite/bin/vite.js");
 const MANAGED_COMMAND = path.resolve(WEB_ROOT, "scripts/e2e-managed-command.mjs");
-const TEST_ULID_MODULE = path.resolve(WEB_ROOT, "e2e/fixtures/worker-ulid.mjs");
 const MANAGED_READY_TIMEOUT_MS = 10_000;
 const managedChildren = [];
 let shuttingDown = false;
@@ -96,10 +95,12 @@ export function writeE2EWranglerConfig(persistencePath) {
     throw new Error("E2E Wrangler config expected one authoritative Worker main declaration");
   }
   const configPath = path.resolve(safePath, "wrangler.e2e.toml");
+  // No module aliases: the E2E stack must build the worker's real module graph. The old
+  // ulid alias masked a workerd crash that worker/src/id.ts now fixes at the source.
   const config = source.replace(
     mainDeclaration,
     `main = ${JSON.stringify(tomlPath(path.resolve(WORKER_ROOT, "src/index.ts")))}`,
-  ) + `\n[alias]\nulid = ${JSON.stringify(tomlPath(TEST_ULID_MODULE))}\n`;
+  );
   writeFileSync(configPath, config);
   return configPath;
 }

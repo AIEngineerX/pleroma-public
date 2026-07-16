@@ -321,8 +321,11 @@ async function unusedPort() {
 }
 
 function aliasProbeSource(version) {
+  // Imports the worker's own id module so the probe exercises the exact ULID path the
+  // shipped worker uses in workerd — no module aliases stand between the test and prod.
+  const idModule = path.resolve(WORKER_ROOT, "src/id.ts").replaceAll("\\", "/");
   return [
-    'import { ulid } from "ulid";',
+    `import { ulid } from ${JSON.stringify(idModule)};`,
     "export default {",
     `  fetch() { return new Response("${version}:" + ulid()); },`,
     "};",
@@ -658,7 +661,7 @@ test("a real stale-PPID process remains outside Windows kill authority", (contex
   assert.equal(isAlive(staleForeign.pid), true);
 });
 
-test("Wrangler keeps the test ULID alias before and after a source reload", async () => {
+test("Wrangler serves the worker's own ULID module before and after a source reload", async () => {
   const token = runToken();
   const fixtureRoot = path.resolve(E2E_TMP_ROOT, `e2e-alias-${token}`);
   const entryPath = path.resolve(fixtureRoot, "probe.mjs");
@@ -669,15 +672,8 @@ test("Wrangler keeps the test ULID alias before and after a source reload", asyn
   const configPath = writeE2EWranglerConfig(fixtureRoot);
   const authoritativeConfig = readFileSync(path.resolve(WORKER_ROOT, "wrangler.toml"), "utf8");
   const generatedConfig = readFileSync(configPath, "utf8");
-  const expectedAlias = path.resolve(
-    REPOSITORY_ROOT,
-    "web/e2e/fixtures/worker-ulid.mjs",
-  ).replaceAll("\\", "/");
-  const aliasBlock = `\n[alias]\nulid = ${JSON.stringify(expectedAlias)}\n`;
-  assert.equal(generatedConfig.endsWith(aliasBlock), true);
-  const withoutAlias = generatedConfig.slice(0, -aliasBlock.length);
   assert.equal(
-    withoutAlias.replace(
+    generatedConfig.replace(
       /^main = ".*\/worker\/src\/index\.ts"$/m,
       'main = "src/index.ts"',
     ),
