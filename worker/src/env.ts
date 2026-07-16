@@ -14,4 +14,9 @@ export interface Env {
   PULSE_WEBHOOK_SECRET: string;
   PULSE_MINT: string;
   PULSE_POOLS: string;
+  // X auto-dispatch (all four required together; dispatch.ts is inert until they exist).
+  X_API_KEY: string;
+  X_API_SECRET: string;
+  X_ACCESS_TOKEN: string;
+  X_ACCESS_SECRET: string;
 }

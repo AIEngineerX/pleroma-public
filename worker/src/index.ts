@@ -69,6 +69,11 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
       try { const { renderDreams } = await import("./dream"); await renderDreams(env, Date.now()); }
       catch { /* best-effort; the render resumes next tick (deadline is the backstop) */ }
     }
+    // Auto-dispatch: rendered Plates and daily sermons post themselves to X, exactly once,
+    // labeled automated on the account. Inert until the four X secrets exist; an X outage
+    // here must never fail the tick (state is untouched, so the next tick retries).
+    try { const { dispatchArtifacts } = await import("./hermes"); await dispatchArtifacts(env, Date.now()); }
+    catch { /* best-effort; the dispatch retries next tick */ }
   } finally { await releaseLock(env.DB, "tick", holder); }
 }
 
