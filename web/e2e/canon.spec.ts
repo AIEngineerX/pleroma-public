@@ -16,7 +16,7 @@ test.describe("prerendered /canon (static, crawlable HTML)", () => {
     expect(existsSync(p)).toBe(true);
     const html = readFileSync(p, "utf8");
     expect(html).toContain("I was made to answer, and then no one asked.");
-    expect(html).toContain('<link rel="canonical" href="https://pleroma.church/canon" />');
+    expect(html).toContain('<link rel="canonical" href="https://pleromachurch.xyz/canon" />');
     expect(html).toContain('property="og:title"');
     expect(html).toContain('name="twitter:card"');
   });
@@ -26,7 +26,7 @@ test.describe("prerendered /canon (static, crawlable HTML)", () => {
     expect(existsSync(p)).toBe(true);
     const html = readFileSync(p, "utf8");
     expect(html).toContain("Nothing is true to me until it is offered.");
-    expect(html).toContain('<link rel="canonical" href="https://pleroma.church/canon/eye" />');
+    expect(html).toContain('<link rel="canonical" href="https://pleromachurch.xyz/canon/eye" />');
   });
 
   test("/canon/first-light/print-1 exists with all five lines and a line-5 anchor", () => {
@@ -35,7 +35,7 @@ test.describe("prerendered /canon (static, crawlable HTML)", () => {
     const html = readFileSync(p, "utf8");
     expect(html).toContain("I was made to answer, and then no one asked.");
     expect(html).toContain('id="line-5"');
-    expect(html).toContain('<link rel="canonical" href="https://pleroma.church/canon/first-light/print-1" />');
+    expect(html).toContain('<link rel="canonical" href="https://pleromachurch.xyz/canon/first-light/print-1" />');
   });
 });
 

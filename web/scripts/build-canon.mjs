@@ -50,7 +50,7 @@ const esc = (text) => text
 
 const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" /><title>${title} · PLEROMA</title>
-<link rel="canonical" href="https://pleroma.church${path}" />
+<link rel="canonical" href="https://pleromachurch.xyz${path}" />
 <meta name="theme-color" content="#f0ead6" />
 <meta property="og:title" content="${title} · PLEROMA" /><meta property="og:description" content="${esc(one)}" />
 <meta property="og:image" content="/og.png" /><meta name="twitter:card" content="summary_large_image" />
