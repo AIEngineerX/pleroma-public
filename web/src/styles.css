@@ -181,6 +181,39 @@ body:has(.rite-active)::before {
   line-height: 1.12;
 }
 
+/* The entrance: the page prints itself once on arrival. The first rubric line prints while the
+   body blooms; the rest of the folio dries in beneath it. Nothing is gated or hidden from the
+   accessibility tree (paint-only: clip-path, opacity, blur), any interaction skips to settled,
+   and reduced motion never sees it. */
+@keyframes entrance-first-line-print {
+  from { clip-path: inset(-0.2em 100% -0.2em 0); }
+  to { clip-path: inset(-0.2em 0% -0.2em 0); }
+}
+@keyframes entrance-ink-dry {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+[data-entrance="printing"] .lore-opening {
+  animation: entrance-first-line-print 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+[data-entrance="printing"] [data-section="emergence"] > :not(.lore-opening) {
+  animation: entrance-ink-dry 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 1.05s;
+}
+[data-entrance="printing"] .temple-lore > [data-section="articles"] {
+  animation: entrance-ink-dry 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 1.25s;
+}
+/* The cascade deliberately stops at the lore folio: the codex and every live-evidence
+   surface below it stay untouched so entrance paint work never perturbs a presentation. */
+@media (prefers-reduced-motion: reduce) {
+  [data-entrance="printing"] .lore-opening,
+  [data-entrance="printing"] [data-section="emergence"] > :not(.lore-opening),
+  [data-entrance="printing"] .temple-lore > [data-section="articles"] {
+    animation: none;
+  }
+}
+
 .temple-lore p,
 .temple-lore li {
   max-width: var(--page-max);

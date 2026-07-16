@@ -87,6 +87,34 @@ export default function Temple() {
   }, [location.pathname, navigate, replayDream]);
   const presentationClock = useRef<{ id: string; startedAt: number } | null>(null);
   const [amplitude, setAmplitude] = useState(0);
+  // The entrance: "printing" runs the one-shot page-prints-itself choreography (styles.css);
+  // any interaction or a timer settles it. The flip is imperative (a DOM attribute, never
+  // React state) so settling injects no re-render into live presentation clocks. React keeps
+  // rendering the constant initial value and never reverts the imperative change. Reduced
+  // motion starts settled.
+  const entranceInitial = useRef<"printing" | "settled">(
+    typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "settled"
+      : "printing",
+  );
+  const templeSheetRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (entranceInitial.current === "settled") return;
+    const settle = () => templeSheetRef.current?.setAttribute("data-entrance", "settled");
+    const timer = setTimeout(settle, 3_200);
+    const options = { once: true, passive: true } as const;
+    window.addEventListener("wheel", settle, options);
+    window.addEventListener("pointerdown", settle, options);
+    window.addEventListener("keydown", settle, options);
+    window.addEventListener("touchstart", settle, options);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("wheel", settle);
+      window.removeEventListener("pointerdown", settle);
+      window.removeEventListener("keydown", settle);
+      window.removeEventListener("touchstart", settle);
+    };
+  }, []);
   const lastAmplitude = useRef(0);
   const sermonAmp = useRef(0);
   const [forceSettledRenderer, setForceSettledRenderer] = useState(false);
@@ -299,7 +327,7 @@ export default function Temple() {
           receiptMount={receiptMount}
         />
 
-        <main className="temple-sheet" data-temple-spread>
+        <main ref={templeSheetRef} className="temple-sheet" data-temple-spread data-entrance={entranceInitial.current}>
           <h1 className="sr-only">PLEROMA</h1>
           <section
             {...bindHold}
@@ -372,13 +400,13 @@ export default function Temple() {
 
             {view && !view.dormant && state?.mint && (
               <section aria-label="the market" className="temple-folio temple-market space-y-3">
-                <Mint mint={state.mint} />
                 <div className="flex min-w-0 items-center gap-4 flex-wrap">
                   <Buy mint={state.mint} />
                   <Ticker state={state} />
                 </div>
                 <Chart mint={state.mint} />
                 <HowToBuy mint={state.mint} />
+                <Mint mint={state.mint} />
               </section>
             )}
 

@@ -458,7 +458,22 @@ export default function ThresholdOffering({
               strokeWidth="1"
               strokeLinecap="round"
             />
-            <circle cx="22" cy="22" r={phase === "holding" ? "3" : "1.8"} fill="currentColor" />
+            {/* the sigil, inscribed: the mark a Waker presses at the Threshold */}
+            <path
+              d="M22 14.5 L22 31.3"
+              stroke="currentColor"
+              strokeWidth={phase === "holding" ? 1.7 : 1.1}
+              strokeLinecap="round"
+              className="transition-[stroke-width] duration-300"
+            />
+            <path
+              d="M15.6 20.8 C19.1 19.1 24.9 19.1 28.4 20.8"
+              stroke="currentColor"
+              strokeWidth={phase === "holding" ? 1.7 : 1.1}
+              strokeLinecap="round"
+              className="transition-[stroke-width] duration-300"
+            />
+            <circle cx="22" cy="12" r={phase === "holding" ? 1.9 : 1.4} fill="currentColor" />
           </svg>
         </button>
       )}
