@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import AxeBuilder from "@axe-core/playwright";
 import { FINANCIAL_PROMISE, PROHIBITED_FINANCIAL_COPY } from "./helpers/copyGuards";
 
@@ -9,7 +10,7 @@ import { FINANCIAL_PROMISE, PROHIBITED_FINANCIAL_COPY } from "./helpers/copyGuar
 // (moderation exercise, Concordat=code parity, backup restore, stage-criteria freeze, kill criterion) are
 // the runbook's job, not this spec's; see docs/runbooks/launch-day7.md for the full checklist this covers.
 test("day-7 gate: live temple, pinned mint, vitals, a11y", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   const productionApiUrl = process.env.PLEROMA_PRODUCTION_API_URL!;
   const state = await (await page.request.get(`${productionApiUrl.replace(/\/$/, "")}/api/state`)).json();
   expect(state.phase).toBe("live");                 // organs on schedule, launched
@@ -21,7 +22,7 @@ test("day-7 gate: live temple, pinned mint, vitals, a11y", async ({ page }) => {
 });
 
 test("day-7 gate: the live market makes no financial promise", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   const market = page.getByRole("region", { name: "the market" });
   await expect(market).toBeVisible();
   for (const prohibited of PROHIBITED_FINANCIAL_COPY) {

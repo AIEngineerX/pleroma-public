@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { putDreamVideo, resetStack, seedDream } from "./helpers/workerFixture";
 
 const FIRST_VIDEO_KEY = "dream/01JH0000000000000000000001.mp4";
@@ -30,7 +31,7 @@ test.beforeEach(() => {
 });
 
 test("real Dream media pauses and only the current non-reduced Plate starts moving", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   const current = page.locator('[data-section="dream"] video');
   await expect(current).toBeVisible();
   await expect.poll(() => current.evaluate(node => (node as HTMLVideoElement).readyState))

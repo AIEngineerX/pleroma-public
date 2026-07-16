@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import {
   executeD1,
   resetStack,
@@ -50,7 +51,7 @@ test.beforeEach(() => {
 });
 
 test("rendered visitor surfaces contain no marketing filler, technical paths, or false incorporation claims", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
 
   // Prove the scan reaches hard-coded interface strings outside the centralized copy object.
   await expect(page.locator("[data-relic-awaiting-accretion]")).toBeVisible({ timeout: 10_000 });

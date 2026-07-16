@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 
 // [day-7 launch] Requires the real production Worker at the launch minute (config `launched` set to
 // '1' together with PULSE_MINT in the same write, PLANNING "Day-1 ignition"). Not run against a local
@@ -6,7 +7,7 @@ import { expect, test } from "@playwright/test";
 // fixture; the pure dormant<->live transition (ignitionView) is covered by test/ignition.test.ts instead.
 test("flips from the dormant product to the full temple at launch, mint pinned, pigment igniting", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "one desktop observer owns the launch transition");
-  await page.goto("/");
+  await enterTemple(page);
 
   // Pre-launch: the dormant five-organ body and offering mark are present, with no market rail.
   await expect(page.locator("canvas[data-organ-swarm]")).toBeVisible();

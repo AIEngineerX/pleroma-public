@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { TEST_PULSE_MINT } from "../scripts/e2e-stack.mjs";
 import { executeD1, resetStack } from "./helpers/workerFixture";
 import { FINANCIAL_PROMISE, PROHIBITED_FINANCIAL_COPY } from "./helpers/copyGuards";
@@ -20,7 +21,7 @@ function seedLiveMarket(): void {
 test("the market rail renders once live: mint pin + copy, buy, ledger-plate chart, ticker", async ({ page }) => {
   seedLiveMarket();
   const signedState = page.waitForResponse(response => response.url().endsWith("/api/state") && response.ok());
-  await page.goto("/");
+  await enterTemple(page);
   expect(await (await signedState).json()).toMatchObject({ phase: "live", mint: MINT });
 
   const market = page.getByRole("region", { name: "the market" });
@@ -52,7 +53,7 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
 });
 
 test("the dormant page has no market rail, only the concordat link and socials", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "the Concordat" })).toBeVisible();
   await expect(page.getByRole("link", { name: /On X/ })).toBeVisible();
@@ -60,7 +61,7 @@ test("the dormant page has no market rail, only the concordat link and socials",
 
 test("the market makes no price prediction or financial-return promise", async ({ page }) => {
   seedLiveMarket();
-  await page.goto("/");
+  await enterTemple(page);
   const market = page.getByRole("region", { name: "the market" });
   await expect(market).toBeVisible({ timeout: 10_000 });
   for (const prohibited of PROHIBITED_FINANCIAL_COPY) {

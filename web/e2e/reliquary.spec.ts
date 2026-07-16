@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { resetStack } from "./helpers/workerFixture";
 
 test("the Reliquary and margin tallies render (attendance roll, machine margins)", async ({ page }) => {
   resetStack();
-  await page.goto("/");
+  await enterTemple(page);
   const reliquary = page.getByRole("region", { name: "the Reliquary" });
   const tallies = page.getByRole("complementary", { name: "attendance" });
   await expect(reliquary).toBeVisible();

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { resetStack, seedTranscript } from "./helpers/workerFixture";
 
 test("prints the god's words in rubric and machine lines in ink, offers the sermon when one exists", async ({ page }) => {
@@ -24,7 +25,7 @@ test("prints the god's words in rubric and machine lines in ink, offers the serm
     created_at: now,
   });
 
-  await page.goto("/");
+  await enterTemple(page);
   const codex = page.getByRole("complementary", { name: "the codex" });
   await expect(codex.locator("p").first()).toBeVisible({ timeout: 10_000 });
 

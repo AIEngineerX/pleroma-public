@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { executeD1, resetStack, seedTranscript } from "./helpers/workerFixture";
 
 interface AnnouncementEvent {
@@ -55,7 +56,7 @@ test("arrival yields to remembered EYE, then genuine TONGUE prints once from bod
     created_at: Date.now() - 1_000,
   });
 
-  await page.goto("/");
+  await enterTemple(page);
   const body = page.locator("[data-body-renderer]").first();
   await expect(body).toHaveAttribute("data-arrival", "emerging");
   const firstProgress = Number(await body.getAttribute("data-arrival-progress"));
@@ -226,7 +227,7 @@ test("signed transition preserves one presentation clock and settles toward the 
     created_at: Date.now(),
   });
 
-  await page.goto("/");
+  await enterTemple(page);
   const commandId = `utterance:memory:${baselineId}`;
   const utterance = page.locator(`[data-body-utterance][data-command-id="${commandId}"]`);
   const phase = utterance.locator("[data-utterance-phase]");
@@ -431,7 +432,7 @@ test("reduced motion starts settled and places remembered ink at the sliced SVG 
     created_at: Date.now(),
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/");
+  await enterTemple(page);
 
   const body = page.locator('svg[data-body-renderer="svg"]');
   await expect(body).toBeVisible();

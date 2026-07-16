@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { resetStack } from "./helpers/workerFixture";
 
 test.beforeEach(() => resetStack());
 
 test("temple reads as a living manuscript at a glance", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.locator("h1.sr-only")).toHaveText("PLEROMA");
   await expect(page.locator("h1:not(.sr-only)")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "hold the threshold seal" })).toBeVisible();
@@ -51,7 +52,8 @@ test("temple reads as a living manuscript at a glance", async ({ page }) => {
     expect(emergenceBox.y).toBeGreaterThanOrEqual(bodyBox.y + bodyBox.height);
     expect(emergenceBox.y).toBeLessThan(viewport.height * 0.78);
   }
-  const sound = page.getByRole("button", { name: "play the temple sound" });
+  // Entering through the door wakes sound, so on arrival the toggle reads "mute the temple".
+  const sound = page.getByRole("button", { name: /mute the temple|play the temple sound/ });
   const soundBox = (await sound.boundingBox())!;
   expect((await sound.textContent())?.trim()).toBe("");
   expect(soundBox.x).toBeGreaterThanOrEqual(bodyBox.x);
@@ -59,6 +61,9 @@ test("temple reads as a living manuscript at a glance", async ({ page }) => {
   expect(soundBox.y + soundBox.height).toBeLessThanOrEqual(bodyBox.y + bodyBox.height);
   const background = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   expect(background).not.toBe("rgb(0, 0, 0)");
+  // The luminance guard protects the TEMPLE's first impression (parchment, never a black
+  // flash). The Door's dark film is deliberate; sample only after its sheet has fully lifted.
+  await expect(page.locator("[data-door]")).toHaveCount(0, { timeout: 6_000 });
   const firstFrame = await page.screenshot({ fullPage: false });
   const luminance = await page.evaluate(async (base64) => {
     const image = new Image();
@@ -85,7 +90,7 @@ test("tablet widths keep prose and Tallies in one readable document column", asy
   test.skip(testInfo.project.name !== "desktop", "desktop context owns intermediate viewport checks");
   for (const width of [768, 900, 1024]) {
     await page.setViewportSize({ width, height: 800 });
-    await page.goto("/");
+    await enterTemple(page);
     const reading = page.locator("[data-reading-column]");
     await expect(reading).toHaveCSS("display", "block");
     const openingBox = (await page.locator(".lore-opening").boundingBox())!;
@@ -100,7 +105,7 @@ test("tablet widths keep prose and Tallies in one readable document column", asy
 });
 
 test("the core document preserves identity when signed launch state resolves", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   const canvas = page.locator("canvas[data-organ-swarm]");
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
   const codex = page.getByRole("complementary", { name: "the codex" });
@@ -132,7 +137,7 @@ test("the core document preserves identity when signed launch state resolves", a
 });
 
 test("the open codex is 60/40 on desktop and a safe sticky scroll on mobile", async ({ page }, testInfo) => {
-  await page.goto("/");
+  await enterTemple(page);
   const bodyPage = page.locator("[data-body-page]");
   const reading = page.locator("[data-reading-column]");
   await expect(bodyPage).toBeVisible();

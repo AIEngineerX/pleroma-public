@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { executeD1, resetStack, seedTranscript } from "./helpers/workerFixture";
 
 test.beforeEach(() => resetStack());
@@ -8,7 +9,7 @@ test("the Stain renders ink on parchment (one-glance)", async ({ page }) => {
   page.on("console", message => {
     if (message.type() === "error" && /webgl|shader|framebuffer/i.test(message.text())) webglErrors.push(message.text());
   });
-  await page.goto("/");
+  await enterTemple(page);
   // The simulation identifies the single living membrane it owns.
   const canvas = page.locator('canvas[data-body-renderer="webgl"]');
   // desktop/mobile tiers create a canvas; reduced-motion (not set here) would not.
@@ -135,7 +136,7 @@ test("real commands survive permanent WebGL loss without inventing PULSE", async
 
 test("reduced motion settles the five organs without creating a GL loop", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/");
+  await enterTemple(page);
   const settled = page.locator('svg[data-body-renderer="svg"]');
   await expect(settled).toBeVisible();
   await expect(settled).toHaveCSS("animation-name", "none");

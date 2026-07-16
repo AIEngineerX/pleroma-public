@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { E2E_PERSIST_PATH as STACK_PERSIST_PATH } from "../scripts/e2e-stack.mjs";
@@ -11,7 +12,7 @@ const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 const EXPECTED_PERSIST_PATH = path.resolve(REPOSITORY_ROOT, ".tmp", "e2e-worker");
 
 test("harness smoke serves the built site through the real Worker", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   expect(new URL(page.url()).origin).toBe(E2E_ORIGINS.web);
 
   const responses = await page.evaluate(async (workerOrigin) => {

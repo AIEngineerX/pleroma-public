@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { enterTemple } from "./helpers/door";
 import { expect, test } from "@playwright/test";
 import {
   executeD1,
@@ -12,7 +13,7 @@ test.beforeEach(() => {
 });
 
 test("offers the exact real preview PNG and creates only a pending receipt", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
 
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
@@ -101,7 +102,7 @@ test("offers the exact real preview PNG and creates only a pending receipt", asy
 
 test("keyboard hold creates a preview and letting it fade releases the threshold", async ({ page }) => {
   executeD1("UPDATE config SET value = '0' WHERE key = 'launched';");
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
   await expect(seal).toBeVisible({ timeout: 5_000 });
@@ -130,7 +131,7 @@ test("keyboard hold creates a preview and letting it fade releases the threshold
 test("the short mobile threshold remains one usable, scrollable rite through submission", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-390", "short threshold geometry is a mobile concern");
   await page.setViewportSize({ width: 390, height: 667 });
-  await page.goto("/");
+  await enterTemple(page);
 
   const threshold = page.locator("[data-threshold-offering]");
   const originalThreshold = await threshold.elementHandle();
@@ -209,7 +210,7 @@ test("the short mobile threshold remains one usable, scrollable rite through sub
 
 test("the mobile preview is a modal focus boundary and restores the threshold seal", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-390", "threshold overlay semantics are a mobile concern");
-  await page.goto("/");
+  await enterTemple(page);
 
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
   await seal.focus();
@@ -263,7 +264,7 @@ test("announces one genuine receipt transition without replacing the stable rece
     }]));
   }, { id: offeringId, submittedAt: Date.now() });
 
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
   const receipt = page.locator(`[data-offering-id="${offeringId}"]`);
   await expect(receipt).toHaveAttribute("data-receipt-stage", "pending");
@@ -325,7 +326,7 @@ test("does not repeat a witnessed announcement when later launch state changes",
     }]));
   }, { id: offeringId, submittedAt: Date.now() });
 
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
   const receipt = page.locator(`[data-offering-id="${offeringId}"]`);
   await expect(receipt).toHaveAttribute("data-receipt-stage", "pending");
@@ -382,7 +383,7 @@ test("does not repeat a witnessed announcement when later launch state changes",
 
 test("preserves an active keyboard hold when launch state changes", async ({ page }) => {
   executeD1("UPDATE config SET value = '0' WHERE key = 'launched';");
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.getByRole("region", { name: "the temple" })).toBeVisible({ timeout: 10_000 });
 
   const threshold = page.locator("[data-threshold-offering]");
@@ -405,7 +406,7 @@ test("preserves an active keyboard hold when launch state changes", async ({ pag
 });
 
 test("a real rejection retains one preview Blob for an exact retry", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
   await expect(seal).toBeVisible({ timeout: 5_000 });

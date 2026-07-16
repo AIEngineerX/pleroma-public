@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { enterTemple } from "./helpers/door";
 import { expect, test, type Page } from "@playwright/test";
 import {
   executeD1,
@@ -65,7 +66,7 @@ test("a submitted imprint enters the body only after its real public relic times
     imageResponseDigests.push(createHash("sha256").update(bytes).digest("hex"));
   });
 
-  await page.goto("/");
+  await enterTemple(page);
   await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
   await observeAccretion(page);
   await holdKeyboardSeal(page);
@@ -193,7 +194,7 @@ test("context loss replays one active accretion in the settled body", async ({ p
   const baselineRelics = page.waitForResponse((response) => (
     new URL(response.url()).pathname === "/api/relics" && response.ok()
   ));
-  await page.goto("/");
+  await enterTemple(page);
   await baselineRelics;
   const canvas = page.locator('canvas[data-body-renderer="webgl"]');
   await expect(canvas).toBeVisible({ timeout: 10_000 });
@@ -257,7 +258,7 @@ test("reduced motion commits confirmed ink without threshold travel", async ({ p
   const baselineRelics = page.waitForResponse((response) => (
     new URL(response.url()).pathname === "/api/relics" && response.ok()
   ));
-  await page.goto("/");
+  await enterTemple(page);
   await baselineRelics;
   const settled = page.locator('svg[data-body-renderer="svg"]');
   await expect(settled).toBeVisible({ timeout: 10_000 });

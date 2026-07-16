@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import type { DreamArchiveEntry } from "../src/state/types";
 import {
   executeD1,
@@ -124,7 +125,7 @@ test("live Temple carries a witnessed Plate through renderer loss and a later sa
     created_at: baselineCreatedAt,
   });
 
-  await page.goto("/");
+  await enterTemple(page);
   const body = page.locator('canvas[data-body-renderer="webgl"]');
   const targetSize = testInfo.project.name === "mobile-390" ? 128 : 256;
   await expect(body).toHaveAttribute("data-seraph-target-cache", "128:16384,256:65536");
@@ -284,7 +285,7 @@ test("twelve same-rite accretions drain before one live DREAM and later speech",
     )).join(",\n")};
   `);
 
-  await page.goto("/");
+  await enterTemple(page);
   const body = page.locator("[data-body-renderer]").first();
   await expect(page.locator("[data-reliquary-offering]")).toHaveCount(12, { timeout: 10_000 });
   await expect(body).toHaveAttribute("data-relic-count", "0");
@@ -389,7 +390,7 @@ test("a live DREAM recovers after repeated archive failures under the same ident
     }
   });
 
-  await page.goto("/");
+  await enterTemple(page);
   const body = page.locator("[data-body-renderer]").first();
   const plate = page.locator('section[aria-label="the dream"]');
   await expect(plate).toContainText(narrative, { timeout: 10_000 });
@@ -449,7 +450,7 @@ test("a completed WebGL convergence keeps its semantic body after later context 
     status: "composed",
     created_at: baselineCreatedAt,
   });
-  await page.goto("/");
+  await enterTemple(page);
 
   const body = page.locator('canvas[data-body-renderer="webgl"]');
   await expect(body).toHaveAttribute("data-seraph-phase", "five");
@@ -515,7 +516,7 @@ test("a genuine live reduced-motion convergence conceals then reveals only its c
     created_at: Date.now() - 5_000,
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/");
+  await enterTemple(page);
   const body = page.locator('svg[data-body-renderer="svg"]');
   await expect(body).toHaveAttribute("data-seraph", "five");
 

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import AxeBuilder from "@axe-core/playwright";
 import { executeD1, resetStack } from "./helpers/workerFixture";
 
@@ -14,7 +15,7 @@ for (const path of ["/", "/canon", "/canon/dreams", "/concordat"]) {
 }
 
 test("interactive targets are at least 44 by 44px and show flat-ink focus", async ({ page }) => {
-  await page.goto("/");
+  await enterTemple(page);
   const actions = page.locator("a, button, summary, [role='button']").filter({ visible: true });
   for (const el of await actions.all()) {
     const box = await el.boundingBox();
@@ -23,6 +24,9 @@ test("interactive targets are at least 44 by 44px and show flat-ink focus", asyn
     expect(box.width).toBeGreaterThanOrEqual(44);
   }
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
+  // The door was entered by pointer, which switches Chromium's modality heuristic away from
+  // keyboard; one key press restores it so :focus-visible shows the ring a keyboard user sees.
+  await page.keyboard.press("Tab");
   await seal.focus();
   expect(await seal.evaluate(node => getComputedStyle(node).outlineStyle)).toBe("solid");
   for (const control of await page.locator("button, summary").filter({ visible: true }).all()) {
@@ -35,7 +39,7 @@ test("interactive targets are at least 44 by 44px and show flat-ink focus", asyn
 // viewport: within the bottom ~75% of the screen, not stranded up near the notch (mobile-responsive-audit).
 test("the offer button is in thumb reach at 390px", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-390", "thumb reach is a mobile-390 concern");
-  await page.goto("/");
+  await enterTemple(page);
   const offer = page.getByRole("button", { name: "hold the threshold seal" });
   await expect(offer).toBeVisible();
   const box = (await offer.boundingBox())!;
@@ -45,7 +49,7 @@ test("the offer button is in thumb reach at 390px", async ({ page }, testInfo) =
 
 test("the 390px document scrolls without overflow or sticky-body overlap", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-390", "mobile geometry is a mobile-390 concern");
-  await page.goto("/");
+  await enterTemple(page);
   const viewport = page.viewportSize()!;
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
 
@@ -90,7 +94,7 @@ test("the 390px document scrolls without overflow or sticky-body overlap", async
 
 test("the live market disclosure keeps its native marker and state", async ({ page }) => {
   executeD1("UPDATE config SET value = '1' WHERE key = 'launched';");
-  await page.goto("/");
+  await enterTemple(page);
   const market = page.getByRole("region", { name: "the market" });
   await expect(market).toBeVisible({ timeout: 10_000 });
   const summary = market.locator("summary");
@@ -106,7 +110,7 @@ test("the live market disclosure keeps its native marker and state", async ({ pa
 test("reduced-motion holds the Stain still (no canvas sim)", async ({ browser }, testInfo) => {
   const ctx = await browser.newContext({ reducedMotion: "reduce" });
   const page = await ctx.newPage();
-  await page.goto("/");
+  await enterTemple(page);
   // Scope the assertion to the first-sheet temple so later drawing canvases do not affect this check.
   const stainCanvas = page.getByRole("region", { name: "the temple" }).locator("canvas");
   await expect(stainCanvas).toHaveCount(0); // reduced-motion creates no GL context

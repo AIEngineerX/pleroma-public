@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { executeD1, resetStack } from "./helpers/workerFixture";
 
 test.beforeEach(() => {
@@ -17,7 +18,7 @@ test("polls every 2s during an active rite", async ({ page }) => {
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/state") hits.push(Date.now());
   });
-  await page.goto("/");
+  await enterTemple(page);
   await page.waitForTimeout(7000);
   expect(hits.length).toBeGreaterThanOrEqual(3);
   const gaps = hits.slice(1).map((t, i) => t - hits[i]);

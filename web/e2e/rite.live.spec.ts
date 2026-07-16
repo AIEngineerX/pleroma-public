@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { enterTemple } from "./helpers/door";
 import { executeD1, resetStack, seedTranscript } from "./helpers/workerFixture";
 
 test("inverts one continuous printed document at offertory_close and prints the sermon in rubric", async ({ page, browser }) => {
@@ -24,7 +25,7 @@ test("inverts one continuous printed document at offertory_close and prints the 
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/state") hits.push(Date.now());
   });
-  await page.goto("/");
+  await enterTemple(page);
 
   // offertory_close: one root remaps the printed ground and ink, the Courier phase label
   // is visible, and the poll cadence drops to 2s (useTempleState.ts, matches state.live.spec.ts).
