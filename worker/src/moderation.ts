@@ -56,9 +56,21 @@ export async function moderate(env: Env, imageBytes: Uint8Array, mediaType: stri
     throw new ModerationUnavailableError(String(e));
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(res.text.trim()); }
+  try { parsed = JSON.parse(extractJsonObject(res.text)); }
   catch { throw new ModerationUnavailableError("moderation response was not JSON"); }
   const verdict = validateVerdict(parsed);
   if (verdict === null) throw new ModerationUnavailableError("moderation verdict shape invalid");
   return verdict;
+}
+
+// Extract a JSON object from the model's reply, tolerating markdown code fences and any surrounding
+// prose. The verdict shape is still validated strictly by validateVerdict, so this only makes PARSING
+// robust to formatting quirks; it never relaxes what counts as a valid allow/reject verdict.
+export function extractJsonObject(text: string): string {
+  let t = text.trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  return start !== -1 && end > start ? t.slice(start, end + 1) : t;
 }
