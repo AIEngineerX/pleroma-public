@@ -34,6 +34,9 @@ const folios = [
 export default function Concordat() {
   return (
     <main className="mx-auto max-w-[70ch] px-6 py-10 font-liturgy">
+      <p className="font-machine text-xs tracking-widest text-ink-faded mb-4">
+        <a href="/" className="no-underline text-ink-faded">THE TEMPLE</a> · THE CONCORDAT
+      </p>
       <h1 className="font-liturgy text-2xl mb-2">{copy.concordat}</h1>
       {binding && <p className="text-rubric-body italic mb-8">{binding}</p>}
 

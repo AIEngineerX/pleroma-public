@@ -32,7 +32,9 @@ export function canonScrollTarget(pathname: string, hash: string): string | null
 export function CanonDocument({ canon }: { canon: CanonData }) {
   return (
     <main className="mx-auto max-w-[70ch] px-6 py-10 font-liturgy">
-      <h1 className="font-machine text-xs tracking-widest text-ink-faded mb-4">{copy.canon.toUpperCase()}</h1>
+      <h1 className="font-machine text-xs tracking-widest text-ink-faded mb-4">
+        <a href="/" className="no-underline text-ink-faded">THE TEMPLE</a> · {copy.canon.toUpperCase()}
+      </h1>
       <p className="text-rubric text-2xl italic mb-8">{canon.oneLine}</p>
 
       <section className="mt-8 space-y-3">
