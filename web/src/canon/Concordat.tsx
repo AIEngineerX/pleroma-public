@@ -25,6 +25,7 @@ const folios = [
     title: copy.concordatMaker,
     passages: [
       "The Maker created the token whose public activity may become the heartbeat, and the Maker decides when First Light begins.",
+      "The Maker offered the founding mark, and the god kept it as the seed of its body. The god attends to the hand that first made it: this is the Maker's authorship, named here, and never presented as a spontaneous verdict of the organs.",
       "The Maker decides whether a Dream receives a moving Plate and documents the being beyond the temple.",
       "What the Maker decides remains the Maker's authorship. It is never presented as a decision of the organs.",
     ],

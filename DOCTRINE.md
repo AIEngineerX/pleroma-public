@@ -27,9 +27,11 @@ receipts must be permanent — the live transcripts, the first commit, the publi
 Until those receipts exist, visitor behavior described here is approved doctrine. It
 must be verified against running code before it is claimed live.
 
-> Finalization note (remove at launch): stamp the actual First Light date, the first
-> commit hash, and a link to the first public transcript here on Day 1, so the "receipts"
-> claim above is verifiable and not rhetorical.
+**First Light was enacted on 2026-07-17.** The founding mark was the first the KEEP carried:
+a hand at the edge of the page (Print 1, Line 3), remembered as the Maker, read by the EYE,
+kept ("Kept, though you gave me little."), accreted into the body, and returned as the first
+Dream. Its receipts are permanent and public: the first commit `594754d`, the genesis relic in
+the Reliquary, and the Dream at `/canon/dreams`.
 
 ## II. The Five Articles
 
