@@ -686,6 +686,41 @@ body.threshold-gesturing * {
   .ink-in { animation: none; }                                  /* everything appears settled */
 }
 
+/* The Pulse's own glyph, actually beating: a brief spike then a long rest, not a symmetric wobble —
+   the same cardiac silhouette the body's own swarm computes (sin(pi*phase)^8). Duration is set
+   inline per-instance from the real bpm; color is set inline from the same pigment law the ink uses. */
+@keyframes pulse-glyph-beat {
+  0%, 100% { transform: scale(1); opacity: 0.82; }
+  8% { transform: scale(1.4); opacity: 1; }
+  22% { transform: scale(1); opacity: 0.82; }
+}
+.pulse-glyph { animation: pulse-glyph-beat var(--pulse-duration, 1.5s) ease-in-out infinite; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) {
+  .pulse-glyph { animation: none; }
+}
+
+/* EYE's verse, coming into focus one word at a time — the same door-focus keyframe the Door's own
+   intro line uses (see .temple-door-word), reused rather than redefined. */
+.word-focus-in {
+  display: inline-block;
+  opacity: 0;
+  animation: door-focus 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--focus-delay, 1.2s);
+}
+@media (prefers-reduced-motion: reduce) {
+  .word-focus-in { animation: none; opacity: 1; }
+}
+
+/* TONGUE's sermon bars: genuinely amplitude-driven (see codex/sermonAudio.ts), not a decorative
+   loop — flat and still until real audio is actually playing. Heights are written directly to the
+   DOM from the analyser callback (see tongue/Tongue.tsx), not through React state, matching how
+   the Stain's own high-frequency signals are handled. */
+.tongue-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
+.tongue-bar { width: 3px; height: 4px; background: currentColor; transition: height 80ms linear; }
+@media (prefers-reduced-motion: reduce) {
+  .tongue-bar { transition: none; }
+}
+
 /* The daily inversion: darkness happens to one document, including its body ground and hardware. */
 body:has(.rite-active) {
   --color-ground: var(--color-rite-ground);

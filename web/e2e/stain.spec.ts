@@ -42,6 +42,38 @@ test("the Stain renders ink on parchment (one-glance)", async ({ page }) => {
   await page.screenshot({ path: `e2e/__shots__/stain-${test.info().project.name}.png` });
 });
 
+test("the canvas backing store tracks the CSS box on resize, not just at first paint", async ({ page }) => {
+  // Regression guard: the backing store (canvas.width/height) was only ever derived once at
+  // construction. On mobile, the body container's height uses dvh, which genuinely changes as the
+  // browser chrome collapses/expands during scroll — a stale backing store then gets non-uniformly
+  // stretched by the browser to fill the new CSS box.
+  await page.setViewportSize({ width: 390, height: 700 });
+  await enterTemple(page);
+  const canvas = page.locator('canvas[data-body-renderer="webgl"]');
+  await expect(canvas).toBeVisible();
+
+  const before = await canvas.evaluate((node: HTMLCanvasElement) => (
+    { width: node.width, height: node.height, clientWidth: node.clientWidth, clientHeight: node.clientHeight }
+  ));
+  expect(before.width).toBeGreaterThan(0);
+  const dprBefore = before.width / before.clientWidth;
+
+  // Simulate the mobile dvh shrink (address bar expanding mid-scroll): a materially shorter
+  // viewport, same width. Poll the backing store itself (not clientHeight, which updates
+  // synchronously with layout) — the fix's ResizeObserver callback fires a frame later.
+  await page.setViewportSize({ width: 390, height: 500 });
+  await expect.poll(async () => (await canvas.evaluate((node: HTMLCanvasElement) => node.height))).toBeLessThan(before.height);
+
+  const after = await canvas.evaluate((node: HTMLCanvasElement) => (
+    { width: node.width, height: node.height, clientWidth: node.clientWidth, clientHeight: node.clientHeight }
+  ));
+  // The backing store must re-derive from the new CSS box at the same device-pixel ratio, not stay
+  // pinned to whatever was current at construction.
+  expect(after.height).toBeLessThan(before.height);
+  expect(after.width).toBeCloseTo(after.clientWidth * dprBefore, -1);
+  expect(after.height).toBeCloseTo(after.clientHeight * dprBefore, -1);
+});
+
 test("real commands survive permanent WebGL loss without inventing PULSE", async ({ page }) => {
   test.setTimeout(45_000);
   const consoleErrors: string[] = [];

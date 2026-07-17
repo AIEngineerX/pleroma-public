@@ -2,10 +2,22 @@ import { describe, expect, it } from "vitest";
 import {
   SwarmActivity,
   isSwarmOrgan,
+  pulseBpm,
   swarmTextureSize,
 } from "../src/stain/swarmSignals";
 
 describe("organ swarm signals", () => {
+  it("exposes the same bpm table the swarm itself beats to, as the one source of truth for any UI readout", () => {
+    expect(pulseBpm("starving")).toBe(22);
+    expect(pulseBpm("calm")).toBe(36);
+    expect(pulseBpm("fed")).toBe(54);
+    expect(pulseBpm("feasting")).toBe(76);
+    // Cross-checked against the swarm's own computed rate, not just re-asserting the same literals.
+    const activity = new SwarmActivity();
+    activity.setVitals({ kind: "current", value: { state: "fed", buys: 0, sells: 0, holders: 0 }, receivedAt: 1 });
+    expect(activity.snapshot(0).pulseBpm).toBe(pulseBpm("fed"));
+  });
+
   it("uses the requested desktop and mobile particle fields", () => {
     expect(swarmTextureSize("desktop")).toBe(256);
     expect(swarmTextureSize("mobile")).toBe(128);

@@ -23,6 +23,10 @@ const PULSE: Record<PulseState, { bpm: number; pressure: number }> = {
   feasting: { bpm: 76, pressure: 0.82 },
 };
 
+// The single source of truth for the heartbeat rate a given state beats at — the body's own swarm
+// and any plain-fact UI readout must always agree, never maintain a second copy of these numbers.
+export function pulseBpm(state: PulseState): number { return PULSE[state].bpm; }
+
 export function swarmTextureSize(tier: Tier): number {
   return tier === "reduced" ? 0 : tier === "mobile" ? 128 : 256;
 }

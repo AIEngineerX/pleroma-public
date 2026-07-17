@@ -1,7 +1,8 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import doctrine from "virtual:public-doctrine";
 import { parseCanon } from "../canon/canonParse";
 import { copy } from "../lib/copy";
+import { focusDelayMs } from "../lib/wordFocus";
 
 const canon = parseCanon(doctrine);
 const WORDS = canon.oneLine.split(" ");
@@ -15,23 +16,56 @@ const REDUCED_MOTION =
 // starts and the exposure comes up on the page. Nothing here is a progress bar.
 export type DoorPhase = "open" | "closing";
 
-function focusDelayMs(index: number): number {
-  // Deterministic out-of-order settle (no Math.random: renders must be stable).
-  return 1_200 + index * 130 + ((index * 137) % 97);
-}
-
 export default function Door({ phase, onEnter }: { phase: DoorPhase; onEnter: () => void }) {
   const enterRef = useRef<HTMLButtonElement>(null);
+  const doorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     enterRef.current?.focus({ preventScroll: true });
   }, []);
+
+  // The door's press is the one designed entry gesture (it wakes sound); a keyboard visitor must
+  // not be able to Tab past it into the live Threshold underneath. Same inert-siblings pattern
+  // ThresholdOffering's own mobile modal already uses. Scoped to phase "open" specifically (not
+  // just unmount): once "closing" begins the door is already pointer-events:none and the temple
+  // underneath is meant to be interactive immediately, not held until the fade-out finishes.
+  useEffect(() => {
+    if (phase !== "open") return;
+    const root = doorRef.current;
+    if (root === null) return;
+    const inerted: HTMLElement[] = [];
+    let branch: HTMLElement = root;
+    while (branch.parentElement !== null) {
+      const parent = branch.parentElement;
+      for (const sibling of parent.children) {
+        if (sibling === branch || !(sibling instanceof HTMLElement) || sibling.hasAttribute("inert")) continue;
+        sibling.setAttribute("inert", "");
+        inerted.push(sibling);
+      }
+      if (parent === document.body) break;
+      branch = parent;
+    }
+    return () => {
+      for (const sibling of inerted) sibling.removeAttribute("inert");
+    };
+  }, [phase]);
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    // The door has exactly one focusable control, and only while genuinely open — same "closing"
+    // exemption as the inert-siblings effect above.
+    if (phase !== "open" || event.key !== "Tab") return;
+    event.preventDefault();
+    enterRef.current?.focus({ preventScroll: true });
+  };
+
   return (
     <div
+      ref={doorRef}
       data-door={phase}
       role="dialog"
       aria-modal="true"
       aria-label="the door"
       className="temple-door"
+      onKeyDown={onKeyDown}
     >
       <div aria-hidden className="temple-door-film">
         {!REDUCED_MOTION && <video src="/door.mp4" autoPlay muted loop playsInline />}

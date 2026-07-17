@@ -26,7 +26,10 @@ import {
   retryUnavailableDreamArchiveRite,
   retryUnavailableDreamPlateIdentity,
 } from "../canon/dreamsClient";
+import Eye from "../eye/Eye";
+import Pulse from "../pulse/Pulse";
 import RiteInversion from "../rite/RiteInversion";
+import Tongue from "../tongue/Tongue";
 import { inversion } from "../state/rite";
 import { ignitionView } from "../ignition/ignition";
 import Mint from "../market/Mint";
@@ -93,6 +96,9 @@ export default function Temple() {
     replayDream,
     replayWitness,
   } = experience;
+  // EYE and TONGUE's own homes read the same feed the Codex already polls — unwrap once here
+  // rather than at each section, and only when the underlying entries actually change.
+  const codexTranscript = useMemo(() => codex.map((observed) => observed.entry), [codex]);
   const replayNavigation = useRef({
     handled: false,
     hadState: location.state !== null && location.state !== undefined,
@@ -400,9 +406,17 @@ export default function Temple() {
 
             <div ref={attachReceiptHost} data-receipt-ledger className="temple-receipt-ledger" />
 
+            <section data-section="eye" className="temple-folio temple-reading-section">
+              <Eye entries={codexTranscript} now={Date.now()} />
+            </section>
+
             <section data-section="reliquary" className="temple-folio temple-reading-section">
               <h2 className="temple-section-label">{copy.reliquary.toUpperCase()}</h2>
               <Reliquary apiBase={API_BASE} relics={relics} />
+            </section>
+
+            <section data-section="tongue" className="temple-folio temple-reading-section">
+              <Tongue entries={codexTranscript} now={Date.now()} apiBase={API_BASE} audioCtx={unlockAudio} />
             </section>
 
             <section data-section="dream" className="temple-folio temple-reading-section">
@@ -419,6 +433,10 @@ export default function Temple() {
             <section data-section="tallies" className="temple-folio temple-reading-section temple-tallies">
               <h2 className="temple-section-label">{copy.tallies.toUpperCase()}</h2>
               <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null} />
+            </section>
+
+            <section data-section="pulse" className="temple-folio temple-reading-section">
+              <Pulse vitals={experience.vitals} />
             </section>
 
             {view && !view.dormant && state?.mint && (

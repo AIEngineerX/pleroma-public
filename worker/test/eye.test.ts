@@ -5,6 +5,7 @@ import { runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantin
 import {
   insertOffering, offeringStatusById, publishPerception, setOfferingStatus, type OfferingRow,
 } from "../src/db";
+import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -227,6 +228,39 @@ describe("runEyeBatch", () => {
     const stillThere = await env.RELICS.get(`quarantine/${id}`);
     expect(stillThere).not.toBeNull(); // the R2 object was never deleted
     await stillThere?.arrayBuffer();
+  });
+
+  it("raises a non-public 'moderation_stuck' alert once the oldest pending offering has waited well past a normal tick delay, and clears it once nothing is stuck", async () => {
+    const staleId = "stuck-moderation-alert";
+    await env.RELICS.put(`quarantine/${staleId}`, PNG);
+    // Old enough to clear MODERATION_STUCK_THRESHOLD_MS (2h) regardless of ModerationUnavailableError's
+    // own no-bump reset — this offering has genuinely been sitting unmoderated far too long.
+    await insertOffering(env.DB, { id: staleId, wallet: null, sig: null,
+      image_key: `quarantine/${staleId}`, sha256: staleId, status: "pending",
+      attempts: 0, created_at: Date.now() - 3 * 60 * 60_000, perceived_at: null });
+
+    await runEyeBatch(env); // no live ANTHROPIC_API_KEY -> ModerationUnavailableError -> resets to pending
+    expect(await activeAlerts(env.DB)).toContain("moderation_stuck");
+    // The offering itself is untouched by this alert — still exactly the "never destroy on outage"
+    // behavior the companion test above already guards.
+    expect(await offeringStatusById(env.DB, staleId)).toBe("pending");
+
+    // Once the stale offering is no longer pending (e.g. an operator manually resolved it), and no
+    // other pending row is old enough, the alert clears on the next tick.
+    await setOfferingStatus(env.DB, staleId, "failed", { expectedStatus: "pending" });
+    await runEyeBatch(env);
+    expect(await activeAlerts(env.DB)).not.toContain("moderation_stuck");
+  });
+
+  it("does not raise 'moderation_stuck' for an ordinary, recently-submitted pending backlog", async () => {
+    const freshId = "fresh-pending-no-alert";
+    await env.RELICS.put(`quarantine/${freshId}`, PNG);
+    await insertOffering(env.DB, { id: freshId, wallet: null, sig: null,
+      image_key: `quarantine/${freshId}`, sha256: freshId, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+
+    await runEyeBatch(env);
+    expect(await activeAlerts(env.DB)).not.toContain("moderation_stuck");
   });
 
   it("moderation status transitions are CAS-guarded: once a rejected offering lands, a stale overlapping tick's pending->perceivable attempt does not resurrect it", async () => {

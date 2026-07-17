@@ -2,9 +2,14 @@
 // god's body visibly speaks while its voice plays.
 export class SermonPlayer {
   private ctx?: AudioContext; private el?: HTMLAudioElement; private raf = 0; private cb?: (a: number) => void;
+  private endedCb?: () => void;
   private src?: MediaElementAudioSourceNode; private an?: AnalyserNode;
 
   onAmplitude(cb: (a: number) => void) { this.cb = cb; }
+  // Fires only when playback finishes on its own — never from an external stop() (e.g. unmount, a
+  // fresh play() call, or navigating away), so a caller can safely reset a play/pause control without
+  // it flipping back to "play" just because something else stopped the audio.
+  onEnded(cb: () => void) { this.endedCb = cb; }
 
   async play(apiBase: string, key: string, ctx: AudioContext) {
     this.stop(); this.ctx = ctx;
@@ -12,7 +17,7 @@ export class SermonPlayer {
     // suffix in the key (media.ts serves the real codec from R2 httpMetadata) — new Audio() plays
     // whatever the response declares, it never assumes mp3 from the URL.
     const el = new Audio(`${apiBase}/api/${key}`); el.crossOrigin = "anonymous"; this.el = el;
-    el.addEventListener("ended", () => this.stop()); // playback finished on its own -- stop the rAF loop, not just on replay/stop()
+    el.addEventListener("ended", () => { this.stop(); this.endedCb?.(); }); // playback finished on its own -- stop the rAF loop, not just on replay/stop()
     const src = ctx.createMediaElementSource(el); const an = ctx.createAnalyser(); an.fftSize = 256;
     src.connect(an); an.connect(ctx.destination); this.src = src; this.an = an;
     const buf = new Uint8Array(an.frequencyBinCount);

@@ -24,6 +24,18 @@ import {
 } from "./bodyRenderer";
 
 export type Tier = "desktop" | "mobile" | "reduced";
+
+// Pure so it can be unit-tested without a real canvas/WebGL context. The backing store must track
+// the CSS box (clientWidth/clientHeight), not just be set once at construction — a canvas whose
+// backing store is stale relative to its CSS box gets non-uniformly stretched by the browser, which
+// is exactly what happens on mobile as dvh-sized containers resize during ordinary scroll.
+export function computeCanvasBackingSize(
+  clientWidth: number, clientHeight: number, devicePixelRatioValue: number, tier: Tier,
+): { width: number; height: number } {
+  const dpr = Math.min(devicePixelRatioValue || 1, tier === "mobile" ? 1.5 : 2);
+  return { width: Math.floor(clientWidth * dpr), height: Math.floor(clientHeight * dpr) };
+}
+
 export const ARRIVAL_DURATION_MS = 2_500;
 export const ACCRETION_DURATION_MS = RELIC_ACCRETION_DURATION_MS;
 export const SERAPH_CONVERGE_MS = WEBGL_SERAPH_GATHER_MS;
@@ -255,6 +267,7 @@ export class StainSim implements BodyRendererAdapter {
   private readonly anchorBuffer = new Float32Array(10);
   private readonly anchors = initialAnchors();
   private arrivalComplete = false;
+  private resizeObserver: ResizeObserver | null = null;
   constructor(private canvas: HTMLCanvasElement, private opts: StainOpts) {
     const gl = canvas.getContext("webgl2", { alpha: true, antialias: false, preserveDrawingBuffer: false });
     if (!gl) throw new Error("no-webgl2");
@@ -262,6 +275,13 @@ export class StainSim implements BodyRendererAdapter {
     this.advect = this.link(VERT, ADVECT); this.comp = this.link(VERT, COMPOSITE);
     this.vao = this.quad(); this.simRes = simResFor(opts.tier) || 256;
     this.resize(); this.a = this.fbo(); this.b = this.fbo();
+    // The composite pass reads canvas.width/height fresh every frame (see `frame`'s gl.viewport
+    // call), so re-deriving the backing store here is sufficient — no FBO recreation needed to fix
+    // the visible browser-level stretch; only the display resolution was ever stale.
+    if (typeof ResizeObserver === "function") {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(this.canvas);
+    }
     if (opts.tier === "reduced") throw new Error("reduced-motion-has-no-simulation");
     const initialArrival = arrivalProgress(performance.now() - opts.arrivalStartedAt);
     this.swarm = new OrganSwarm(
@@ -364,9 +384,11 @@ export class StainSim implements BodyRendererAdapter {
   }
   private simW(): number { return Math.max(1, Math.floor(this.simRes * (this.canvas.width / Math.max(1, this.canvas.height)))); }
   private resize() {
-    const dpr = Math.min(devicePixelRatio || 1, this.opts.tier === "mobile" ? 1.5 : 2);
-    this.canvas.width = Math.floor(this.canvas.clientWidth * dpr);
-    this.canvas.height = Math.floor(this.canvas.clientHeight * dpr);
+    const { width, height } = computeCanvasBackingSize(
+      this.canvas.clientWidth, this.canvas.clientHeight, devicePixelRatio, this.opts.tier,
+    );
+    this.canvas.width = width;
+    this.canvas.height = height;
   }
   setPigment(rgb: [number, number, number]) { this.pigment = rgb; }
   setAmplitude(a: number) { this.amp = Math.max(0, Math.min(1, a)); }
@@ -597,6 +619,8 @@ export class StainSim implements BodyRendererAdapter {
     if (this.disposed) return;
     this.stop();
     this.disposed = true;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     const g = this.gl;
     this.anchorSink = null;
     this.swarm.dispose();

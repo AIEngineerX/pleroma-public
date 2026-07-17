@@ -9,6 +9,7 @@ import {
   SERAPH_HOLD_MS,
   accretionProgress,
   arrivalProgress,
+  computeCanvasBackingSize,
   pickTier,
   seraphConvergenceFrame,
   simResFor,
@@ -44,6 +45,14 @@ describe("Stain quality tiers", () => {
     expect(simResFor("mobile")).toBeLessThan(simResFor("desktop"));
     expect(simResFor("desktop")).toBe(512);
     expect(simResFor("mobile")).toBe(256);
+  });
+
+  it("computeCanvasBackingSize re-derives the backing store from whatever CSS box it is given — the bug this fixes is a canvas whose backing store was only ever computed once at construction, so a dvh-driven mobile resize left it stale and the browser stretched the raster to fill the new box", () => {
+    expect(computeCanvasBackingSize(390, 256, 2, "mobile")).toEqual({ width: 585, height: 384 }); // dpr clamped to 1.5 on mobile
+    expect(computeCanvasBackingSize(390, 220, 2, "mobile")).toEqual({ width: 585, height: 330 }); // shorter box (address bar expanded) -> smaller backing store
+    expect(computeCanvasBackingSize(1200, 800, 2, "desktop")).toEqual({ width: 2400, height: 1600 }); // dpr clamped to 2 on desktop
+    expect(computeCanvasBackingSize(1200, 800, 3, "desktop")).toEqual({ width: 2400, height: 1600 }); // dpr still clamped even when the device reports higher
+    expect(computeCanvasBackingSize(1200, 800, 0, "desktop")).toEqual({ width: 1200, height: 800 }); // a falsy devicePixelRatio (e.g. 0 in a stub) falls back to 1x, not 0x
   });
 
   it("owns one 1.2 second threshold-to-body accretion clock", () => {

@@ -57,6 +57,22 @@ test("the door opens onto the body", async ({ page }) => {
   await expect(page.locator("[data-threshold-status]")).toBeEmpty();
 });
 
+test("the door traps focus: Tab cannot reach the live Threshold hiding behind it", async ({ page }) => {
+  await page.goto("/");
+  const enter = page.getByRole("button", DOOR_ENTER);
+  await expect(enter).toBeFocused();
+
+  // Regression guard: the door previously had no focus trap, so a keyboard visitor could Tab
+  // straight past it into the live seal underneath without ever performing the entry gesture.
+  await page.keyboard.press("Tab");
+  await expect(enter).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(enter).toBeFocused();
+
+  const threshold = page.getByRole("button", { name: "hold the threshold seal" });
+  await expect(threshold).not.toBeFocused();
+});
+
 test("the door is silent; its press is the one gesture that wakes sound", async ({ page }) => {
   const audioRequests: string[] = [];
   page.on("request", (request) => {
@@ -158,6 +174,9 @@ test("a muted visitor's temple is fully usable and quiet", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("pleroma-muted", "1"));
   await page.goto("/");
   await page.getByRole("button", DOOR_ENTER).click();
+  // The door inerts its siblings for as long as it is mounted (even mid-close), so the Threshold
+  // is not really focusable until it is fully gone — wait for that, same as the other specs do.
+  await expect(page.locator("[data-door]")).toHaveCount(0, { timeout: 6_000 });
 
   const temple = page.getByRole("region", { name: "the temple" });
   await expect(temple.locator("canvas[data-organ-swarm]")).toBeVisible();

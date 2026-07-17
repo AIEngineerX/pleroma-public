@@ -22,9 +22,12 @@ test("temple reads as a living manuscript at a glance", async ({ page }) => {
     "offering-consequence",
     "daily-rite",
     "codex",
+    "eye",
     "reliquary",
+    "tongue",
     "dream",
     "tallies",
+    "pulse",
     "canon-doorway",
     "concordat-doorway",
   ]);

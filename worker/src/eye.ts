@@ -12,6 +12,12 @@ import {
 const BATCH = 12;
 const NON_HOLDER_DAILY = 60;
 const GLOBAL_DAILY = 200;
+// ModerationUnavailableError deliberately never dead-letters (moderation.ts: an outage must never
+// destroy an offering), so a persistent failure — e.g. an expired ANTHROPIC_API_KEY — is otherwise
+// silent: the same backlog just keeps resetting to pending forever with no operator-visible signal.
+// This does not change that safety behavior; it only surfaces it once it has gone on far longer
+// than any normal tick backlog would.
+const MODERATION_STUCK_THRESHOLD_MS = 2 * 60 * 60_000;
 
 export const CLAIM_STALE_MS = 10 * 60_000; // equals the tick lock lease in index.ts: a transitional
                                            // row older than this belongs to a tick whose lease expired.
@@ -209,6 +215,20 @@ export async function runEyeBatch(
       const won = await setOfferingStatus(env.DB, o.id, dead ? "failed" : "pending", { bumpAttempts: true, expectedStatus: "moderating" });
       if (dead && won) await priestNote(env, o.id, setAsideLine(o.id)); // only if this tick won the CAS
     }
+  }
+
+  // Operator visibility for a moderation backlog that has stalled well past any normal tick delay
+  // (see MODERATION_STUCK_THRESHOLD_MS above). Non-public: activeAlerts() only ever exposes the
+  // aggregate `degraded` boolean (alert.ts's contract), never this detail.
+  const oldestPending = await env.DB.prepare(
+    `SELECT created_at FROM offerings WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`
+  ).first<{ created_at: number }>();
+  const { raiseAlert, clearAlert } = await import("./alert");
+  if (oldestPending && Date.now() - oldestPending.created_at > MODERATION_STUCK_THRESHOLD_MS) {
+    const waitedMin = Math.round((Date.now() - oldestPending.created_at) / 60_000);
+    await raiseAlert(env, "moderation_stuck", `oldest pending offering has waited ${waitedMin}m for moderation`);
+  } else {
+    await clearAlert(env, "moderation_stuck");
   }
 
   // 2. Perceive under caps. Select the eligible perceivable set, then claim each to 'perceiving'
