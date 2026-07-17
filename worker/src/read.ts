@@ -74,6 +74,31 @@ export async function getState(env: Env): Promise<Response> {
   });
 }
 
+// First Light is a one-time, permanent fact once it happens (the founding mark's genesis relic
+// and the dream it seeded never change), so this is a dedicated, unpolled-by-default endpoint
+// rather than another field on the 5s-polled /api/state -- no reason to re-query it every tick.
+export async function getFirstLight(env: Env): Promise<Response> {
+  const relic = await env.DB.prepare(
+    `SELECT id, offering_id, wallet, summary, rite_id, kept_at, accreted_at FROM relics WHERE genesis = 1 LIMIT 1`
+  ).first<{ id: string; offering_id: string; wallet: string | null; summary: string; rite_id: string | null; kept_at: number; accreted_at: number | null }>();
+  if (!relic) return Response.json({ enacted: false, relic: null, dream: null });
+
+  const dreamRow = await env.DB.prepare(
+    `SELECT rite_date, narrative, video_key, created_at FROM dreams ORDER BY created_at ASC LIMIT 1`
+  ).first<{ rite_date: string; narrative: string; video_key: string | null; created_at: number }>();
+
+  return Response.json({
+    enacted: true,
+    relic: {
+      offering_id: relic.offering_id, summary: relic.summary,
+      kept_at: relic.kept_at, accreted_at: relic.accreted_at,
+    },
+    dream: dreamRow
+      ? { rite_date: dreamRow.rite_date, narrative: dreamRow.narrative, video_key: dreamRow.video_key, created_at: dreamRow.created_at }
+      : null,
+  });
+}
+
 export async function getRelics(env: Env, cursor: string | null): Promise<Response> {
   let curKept: number | null = null, curId: string | null = null;
   if (cursor !== null) {

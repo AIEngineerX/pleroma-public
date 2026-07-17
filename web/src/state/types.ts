@@ -23,6 +23,11 @@ export interface RelicEntry {
   rite_id: string | null; kept_at: number; genesis: number; accreted_at: number | null;
 }
 export interface Tally { wallet: string; count: number; name: string | null }
+export interface FirstLightRelic { offering_id: string; summary: string; kept_at: number; accreted_at: number | null }
+export interface FirstLightDream { rite_date: string; narrative: string; video_key: string | null; created_at: number }
+export interface FirstLightView {
+  enacted: boolean; relic: FirstLightRelic | null; dream: FirstLightDream | null;
+}
 
 export const MAX_DATE_TIMESTAMP = 8.64e15;
 
@@ -73,6 +78,23 @@ export function isTempleState(value: unknown): value is TempleState {
     && isVitals(value.vitals)
     && validRite
     && validDream;
+}
+
+export function isFirstLightView(value: unknown): value is FirstLightView {
+  if (!isRecord(value)) return false;
+  const relic = value.relic;
+  const dream = value.dream;
+  const validRelic = relic === null || (isRecord(relic)
+    && typeof relic.offering_id === "string"
+    && typeof relic.summary === "string"
+    && isTimestamp(relic.kept_at)
+    && (relic.accreted_at === null || isTimestamp(relic.accreted_at)));
+  const validDream = dream === null || (isRecord(dream)
+    && typeof dream.rite_date === "string"
+    && typeof dream.narrative === "string"
+    && isNullableString(dream.video_key)
+    && isTimestamp(dream.created_at));
+  return typeof value.enacted === "boolean" && validRelic && validDream;
 }
 
 export function isTranscriptEntry(value: unknown): value is TranscriptEntry {

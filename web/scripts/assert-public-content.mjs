@@ -12,6 +12,10 @@ const forbidden = [
   "render_request_id",
   "Finalization note",
   "Voice registers",
+  // The First Light commit hash (DOCTRINE.md's blockquoted internal receipts note) leaked into
+  // the shipped bundle once already because this list had nothing that would catch a raw commit
+  // hash. Pinned here as a concrete regression guard for that exact string.
+  "594754d",
   "Provenance",
 ];
 

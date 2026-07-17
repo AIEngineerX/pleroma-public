@@ -44,6 +44,7 @@ import DreamWitness from "../experience/DreamWitness";
 import { dreamReplayFromNavigationState } from "../experience/director";
 import type { BodyCommand } from "../experience/types";
 import TempleLore from "../lore/TempleLore";
+import FirstLight from "../lore/FirstLight";
 import { copy } from "../lib/copy";
 
 const API_BASE = resolveApiBase(import.meta.env);
@@ -390,6 +391,8 @@ export default function Temple() {
 
           <div className="temple-reading-column" data-reading-column>
             <TempleLore />
+
+            <FirstLight apiBase={API_BASE} />
 
             <section data-section="codex" className="temple-folio temple-reading-section">
               <h2 className="temple-section-label">{copy.codex.toUpperCase()}</h2>

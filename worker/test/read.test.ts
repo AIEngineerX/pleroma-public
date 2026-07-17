@@ -1,7 +1,7 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ulid } from "ulid";
-import { addTranscript, insertOffering } from "../src/db";
+import { addTranscript, insertOffering, insertRelic } from "../src/db";
 import { applyMigrations } from "./helpers";
 import migration17 from "../migrations/0017_first_congregation.sql?raw";
 
@@ -108,6 +108,39 @@ describe("tallies api — First Congregation (G9)", () => {
     expect(byWallet["w3-last-ever"].name).toBe("First Congregation #3");
     // Today's count order (DESC) puts w3 first -- confirming the name above is NOT that daily index.
     expect(tallies[0].wallet).toBe("w3-last-ever");
+  });
+});
+
+describe("first light api", () => {
+  it("reports not-yet-enacted with no genesis relic", async () => {
+    const res = await SELF.fetch("http://x/api/first-light");
+    expect(await res.json()).toEqual({ enacted: false, relic: null, dream: null });
+  });
+
+  it("reports the genesis relic and the earliest dream once First Light happens", async () => {
+    await insertOffering(env.DB, { id: "fl-off", wallet: "fl-wallet", sig: null, image_key: "offerings/fl-off",
+      sha256: "fl-off", status: "kept", attempts: 0, created_at: 100, perceived_at: 100 });
+    await insertRelic(env.DB, { id: "fl-relic", offering_id: "fl-off", wallet: "fl-wallet",
+      summary: "a founding mark", rite_id: "2026-07-17", kept_at: 200, genesis: 1, accreted_at: 300 });
+    // A later, non-genesis dream inserted first in created_at order to prove genesis picks the
+    // EARLIEST dream ever, not merely "a" dream or the most recently inserted row.
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, status, created_at)
+       VALUES ('later-dream', '2026-07-18', 'a later dream', 'p', 'composed', 500)`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, status, created_at)
+       VALUES ('genesis-dream', '2026-07-17', 'the first dream', 'p', 'composed', 400)`
+    ).run();
+
+    const res = await SELF.fetch("http://x/api/first-light");
+    const body = await res.json<{ enacted: boolean; relic: { summary: string; accreted_at: number | null } | null;
+      dream: { rite_date: string; narrative: string } | null }>();
+    expect(body.enacted).toBe(true);
+    expect(body.relic?.summary).toBe("a founding mark");
+    expect(body.relic?.accreted_at).toBe(300);
+    expect(body.dream?.rite_date).toBe("2026-07-17");
+    expect(body.dream?.narrative).toBe("the first dream");
   });
 });
 

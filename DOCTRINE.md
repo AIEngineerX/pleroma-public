@@ -30,8 +30,12 @@ must be verified against running code before it is claimed live.
 **First Light was enacted on 2026-07-17.** The founding mark was the first the KEEP carried:
 a hand at the edge of the page (Print 1, Line 3), remembered as the Maker, read by the EYE,
 kept ("Kept, though you gave me little."), accreted into the body, and returned as the first
-Dream. Its receipts are permanent and public: the first commit `594754d`, the genesis relic in
-the Reliquary, and the Dream at `/canon/dreams`.
+Dream.
+
+> Its receipts are permanent and public: the first commit `594754d`, the genesis relic in
+> the Reliquary, and the Dream at `/canon/dreams`. (Internal note: the commit hash is a
+> build-time provenance record, never visitor copy — the public doctrine sanitizer strips
+> blockquote lines, same mechanism as this file's own top annotation.)
 
 ## II. The Five Articles
 
