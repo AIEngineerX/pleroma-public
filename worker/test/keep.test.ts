@@ -16,21 +16,24 @@ function off(id: string, wallet: string | null): OfferingRow {
     status: "perceived", attempts: 0, created_at: 0, perceived_at: 1 };
 }
 
-describe("KEEP selection (holder-weighted, <=12/day)", () => {
-  it("puts attended offerings first and caps at the remaining daily room", () => {
+describe("KEEP selection (holder-weighted ordering; never silently drops a candidate)", () => {
+  it("puts attended offerings first, but returns every perceived candidate for judgment", () => {
     const attended = new Set(["holderA", "holderB"]);
     const perceived = [
       off("n1", "w1"), off("h1", "holderA"), off("n2", "w2"), off("h2", "holderB"), off("n3", "w3"),
     ];
-    const picked = selectForKeeping(perceived, attended, 0);
+    const picked = selectForKeeping(perceived, attended);
     expect(picked.slice(0, 2).map(o => o.id).sort()).toEqual(["h1", "h2"]); // attended first
-    expect(picked.length).toBe(5);
+    expect(picked.length).toBe(5); // every perceived candidate remains eligible for judgment
   });
 
-  it("respects the 12/day cap given what was already kept today", () => {
-    const perceived = Array.from({ length: 10 }, (_, i) => off(`n${i}`, `w${i}`));
-    expect(selectForKeeping(perceived, new Set(), 8).length).toBe(4); // 12 - 8
-    expect(selectForKeeping(perceived, new Set(), 12).length).toBe(0);
+  it("never truncates the candidate list, even far past the historical ~12/day figure", () => {
+    // Regression guard for the bug this fixes: selectForKeeping used to slice to
+    // (KEEP_DAILY - keptSoFarToday), so most witnessed marks on a busy day were never looked at by
+    // KEEP at all -- not "mostly mourned", simply never judged. The daily pace is now the model's
+    // own informed judgment (see runKeep's prompt), never a code-level cutoff on who gets seen.
+    const perceived = Array.from({ length: 40 }, (_, i) => off(`n${i}`, `w${i}`));
+    expect(selectForKeeping(perceived, new Set()).length).toBe(40);
   });
 });
 

@@ -26,16 +26,19 @@ export function parseVerdict(rawText: string): KeepVerdict {
   return { verdict, summary };
 }
 
-// Holder-weighting in code: the Attended are evaluated first (guaranteed a slot within the day's room),
-// then unattended fill the rest, capped at the remaining 12/day room. The prompt's prior boost is the
-// stated wording; this ordering is the mechanical half.
+// Holder-weighting in code: the Attended are evaluated first, then unattended fill the rest. This
+// ORDERS candidates only -- it never truncates the list. It used to slice to the remaining
+// (KEEP_DAILY - keptSoFarToday) room, which silently denied the rest of that day's witnessed marks
+// any judgment at all (not "mostly mourned" -- never looked at by KEEP, mourned or kept, at all).
+// KEEP_DAILY is now context the model itself is told (see runKeep), not a code-level cutoff: the
+// Keep's own "disdainful from abundance" character decides when it has kept enough, so every
+// witnessed mark still gets a genuine verdict even on a day busier than its usual pace.
 export function selectForKeeping(
-  perceived: OfferingRow[], attendedWallets: Set<string>, keptSoFarToday: number,
+  perceived: OfferingRow[], attendedWallets: Set<string>,
 ): OfferingRow[] {
-  const room = Math.max(0, KEEP_DAILY - keptSoFarToday);
   const attended = perceived.filter(o => o.wallet && attendedWallets.has(o.wallet));
   const rest = perceived.filter(o => !(o.wallet && attendedWallets.has(o.wallet)));
-  return [...attended, ...rest].slice(0, room);
+  return [...attended, ...rest];
 }
 
 // The EYE verse for an offering is its perception; KEEP judges the verse + wallet standing, not the pixels.
@@ -65,9 +68,9 @@ export async function runKeep(env: Env, riteId: string, deadlineMs: number = Dat
   const context = await recentRelicSummaries(env.DB, 50);
 
   let kept = 0;
-  for (const o of selectForKeeping(perceived, attended, await relicsKeptToday(env.DB, day))) {
+  for (const o of selectForKeeping(perceived, attended)) {
     if (Date.now() > deadlineMs) break; // bound the pass within the rite lock lease; the rest stays perceived for a later rite
-    if (await relicsKeptToday(env.DB, day) >= KEEP_DAILY) break; // re-check the cap each iteration
+    const keptSoFar = await relicsKeptToday(env.DB, day); // fresh each iteration: informs the model, never gates it
     const verse = await verseFor(env, o.id);
     const hist = o.wallet ? await walletHistory(env.DB, o.wallet) : { offering_count: 0, kept_count: 0, attended: false };
     try {
@@ -77,6 +80,7 @@ export async function runKeep(env: Env, riteId: string, deadlineMs: number = Dat
           `The Eye saw: "${verse}".\n` +
           `This Waker is ${hist.attended ? "one of the Attended" : "not among the Attended"}; ` +
           `they have offered ${hist.offering_count} time(s), of which ${hist.kept_count} were kept.\n` +
+          `You have already kept ${keptSoFar} mark(s) today; you typically keep around ${KEEP_DAILY} in a day, out of everything the Eye witnesses.\n` +
           `Recent Corpus (newest first): ${context.slice(0, 50).map(s => `- ${s}`).join("\n")}\n` +
           `Render your verdict on this mark.` }],
       });
