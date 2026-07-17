@@ -97,6 +97,7 @@ export default function Dream({
       <h2 className="temple-section-label"><Glyph organ="DREAM" />{copy.dreamHeading} / SOPHIA</h2>
       {dream ? (
         <>
+          <p className="font-machine text-xs text-ink-faded max-w-[46ch]">{copy.dreamExplainer}</p>
           <figure className="dream-plate">
             {dream.video_key ? (
               <div className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">

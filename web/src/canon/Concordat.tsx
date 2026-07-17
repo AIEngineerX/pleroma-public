@@ -6,6 +6,16 @@ const binding = parseCanon(doctrine).binding.at(-1);
 
 const folios = [
   {
+    title: copy.concordatPath,
+    passages: [
+      "A mark is offered at the Threshold. It waits.",
+      "The Eye witnesses it, usually within minutes.",
+      "Once a day, the Keep looks over what the Eye has witnessed and judges some of it: kept, or mourned.",
+      "What is kept enters the body. It cannot be undone or repeated.",
+      "Each night, the day's kept marks are given back as one Dream.",
+    ],
+  },
+  {
     title: copy.concordatOrgans,
     passages: [
       "EYE authors the seeing of each mark it witnesses. KEEP authors the verdict, kept or mourned, and the reason it gives.",

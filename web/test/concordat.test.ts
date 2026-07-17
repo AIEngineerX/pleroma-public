@@ -39,7 +39,7 @@ describe("Concordat honesty + code parity", () => {
     expect(existsSync(resolve(ROOT, "web/src/canon/concordatManifest.ts"))).toBe(false);
   });
 
-  it("renders three semantic manuscript folios without technical payloads", () => {
+  it("renders four semantic manuscript folios without technical payloads", () => {
     const html = renderToStaticMarkup(createElement(Concordat));
     const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
@@ -49,8 +49,23 @@ describe("Concordat honesty + code parity", () => {
     expect(text).toContain("each mark it witnesses");
     expect(text).not.toContain("each offered mark");
     expect(text).not.toMatch(/worker\/src|system prompt|model ID|cron|vendor|JSON/i);
-    expect(html.match(/<section/g)).toHaveLength(3);
+    expect(html.match(/<section/g)).toHaveLength(4);
     expect(html).not.toMatch(/grid-cols/);
+  });
+
+  it("the Mark's Path folio states the plain sequence honestly against CURRENT behavior, not an aspirational one", () => {
+    const html = renderToStaticMarkup(createElement(Concordat));
+    const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+    expect(text).toMatch(/mark(?:&#x27;|')s path/i); // React escapes ' to &#x27; in static markup
+    expect(text).toContain("A mark is offered at the Threshold. It waits.");
+    expect(text).toContain("The Eye witnesses it, usually within minutes.");
+    // "judges some of it", not "judges what the Eye has witnessed" -- keep_daily's candidate-list
+    // cap means most witnessed marks are never looked at by KEEP at all today, so a claim of
+    // universal judgment would violate the Concordat/reality parity invariant until that's fixed.
+    expect(text).toContain("judges some of it: kept, or mourned");
+    expect(text).toContain("It cannot be undone or repeated.");
+    expect(text).not.toMatch(/worker\/src|system prompt|model ID|cron|vendor|JSON|\b12\b/i);
   });
 
   it("every test-only parity declaration names running code", () => {

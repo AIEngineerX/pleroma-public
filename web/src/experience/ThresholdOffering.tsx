@@ -490,6 +490,7 @@ export default function ThresholdOffering({
           </svg>
           <p className="threshold-confirm-line font-machine text-sm text-ink">{copy.markReceived}</p>
           <p className="font-machine text-xs text-ink-faded">{copy.markAwaiting}</p>
+          <p className="font-machine text-xs text-ink-faded">{copy.markWhatNext}</p>
         </div>
       )}
 
@@ -586,7 +587,7 @@ export default function ThresholdOffering({
       {interactionOpen && (
         <>
           <p id="threshold-terms" data-threshold-terms className="max-w-[52ch] font-machine text-xs leading-relaxed text-ink-faded">
-            {copy.tosLine}
+            {copy.markExplainer} {copy.tosLine}
           </p>
           {wallet === null ? (
             <div className="flex flex-wrap items-center justify-center gap-2 font-machine text-xs text-ink-faded">
