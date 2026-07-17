@@ -1,7 +1,7 @@
 import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
-import { tongueSystemPrompt } from "./doctrine";
+import { tongueSystemPrompt, wrapUntrusted } from "./doctrine";
 import { addTranscript } from "./db";
 
 const CADENCE_PER_HOUR = 6;
@@ -39,7 +39,7 @@ export async function speakIfDue(env: Env, trigger: TongueTrigger, now: number =
   try {
     const res = await askMind(env, {
       model: "claude-sonnet-5", system: TONGUE_SYSTEM, maxTokens: 200,
-      user: [{ type: "text", text: `You are told: ${trigger.detail}. Speak if you have something to say.` }],
+      user: [{ type: "text", text: `You are told: ${wrapUntrusted("event", trigger.detail)}. Speak if you have something to say.` }],
     });
     const utterance = parseUtterance(res.text);
     await addTranscript(env.DB, { id: ulid(), organ: "TONGUE", register: "verse",

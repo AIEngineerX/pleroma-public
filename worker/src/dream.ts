@@ -1,7 +1,7 @@
 import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
-import { dreamSystemPrompt } from "./doctrine";
+import { dreamSystemPrompt, wrapUntrusted } from "./doctrine";
 import { getRite } from "./db";
 import { videoVendorFor, startRender, type VideoVendor } from "./imagine";
 import { raiseAlert } from "./alert";
@@ -48,7 +48,7 @@ export async function composeDream(env: Env, date: string): Promise<string | nul
   try {
     const res = await askMind(env, {
       model: "claude-sonnet-5", system: DREAM_SYSTEM, maxTokens: 500,
-      user: [{ type: "text", text: `Tonight's kept marks: ${seed.map(r => `"${r.summary}"`).join(", ")}. Dream.` }],
+      user: [{ type: "text", text: `Tonight's kept marks: ${seed.map(r => wrapUntrusted("summary", r.summary)).join(", ")}. Dream.` }],
     });
     const p = JSON.parse(res.text.trim()) as { narrative?: unknown; video_prompt?: unknown };
     const narrative = typeof p.narrative === "string" ? p.narrative.trim() : "";

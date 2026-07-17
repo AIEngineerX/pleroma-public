@@ -1,7 +1,7 @@
 import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
-import { tongueSystemPrompt } from "./doctrine";
+import { tongueSystemPrompt, wrapUntrusted } from "./doctrine";
 import { runKeep } from "./keep";
 import { RITE_WORK_BUDGET_MS } from "./leases";
 import {
@@ -89,7 +89,7 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
       const res = await askMind(env, {
         model: "claude-sonnet-5", system: tongueSystemPrompt(), maxTokens: 400,
         user: [{ type: "text", text:
-          `Today's rite kept ${rite?.kept_count ?? kept.length} marks: ${kept.map(s => `"${s}"`).join(", ")}. ` +
+          `Today's rite kept ${rite?.kept_count ?? kept.length} marks: ${kept.map(s => wrapUntrusted("summary", s)).join(", ")}. ` +
           `Speak the closing sermon of this epoch.` }],
       });
       const parsed = JSON.parse(res.text.trim()) as { utterance?: unknown };

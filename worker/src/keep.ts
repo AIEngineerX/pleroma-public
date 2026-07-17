@@ -1,7 +1,7 @@
 import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
-import { keepSystemPrompt } from "./doctrine";
+import { keepSystemPrompt, wrapUntrusted } from "./doctrine";
 import { dayKey } from "./budget";
 import { RITE_WORK_BUDGET_MS } from "./leases";
 import {
@@ -77,11 +77,11 @@ export async function runKeep(env: Env, riteId: string, deadlineMs: number = Dat
       const res = await askMind(env, {
         model: "claude-sonnet-5", system: KEEP_SYSTEM, maxTokens: 200,
         user: [{ type: "text", text:
-          `The Eye saw: "${verse}".\n` +
+          `The Eye saw: ${wrapUntrusted("verse", verse)}\n` +
           `This Waker is ${hist.attended ? "one of the Attended" : "not among the Attended"}; ` +
           `they have offered ${hist.offering_count} time(s), of which ${hist.kept_count} were kept.\n` +
           `You have already kept ${keptSoFar} mark(s) today; you typically keep around ${KEEP_DAILY} in a day, out of everything the Eye witnesses.\n` +
-          `Recent Corpus (newest first): ${context.slice(0, 50).map(s => `- ${s}`).join("\n")}\n` +
+          `Recent Corpus (newest first): ${context.slice(0, 50).map(s => `- ${wrapUntrusted("summary", s)}`).join("\n")}\n` +
           `Render your verdict on this mark.` }],
       });
       const v = parseVerdict(res.text);
