@@ -72,16 +72,19 @@ export default function Door({ phase, onEnter }: { phase: DoorPhase; onEnter: ()
       </div>
       <div aria-hidden className="temple-door-veil" />
       <p className="temple-door-line italic">
-        {WORDS.map((word, index) => (
+        {WORDS.flatMap((word, index) => [
           <span
             key={`${word}-${index}`}
             className="temple-door-word"
             style={{ "--focus-delay": `${focusDelayMs(index)}ms` } as CSSProperties}
           >
             {word}
-            {index < WORDS.length - 1 ? " " : ""}
-          </span>
-        ))}
+          </span>,
+          // A plain space kept OUTSIDE the inline-block span, not trailing inside it: the separator
+          // here used to be a non-breaking space embedded in the span's own text, which rendered with
+          // no visible width in this font/layout — every word ran together with no gap at all.
+          index < WORDS.length - 1 ? " " : null,
+        ])}
       </p>
       <button
         ref={enterRef}

@@ -27,15 +27,21 @@ export default function Eye({ entries, now }: { entries: readonly TranscriptEntr
       ) : (
         <div key={verse.id}>
           <p className="font-liturgy text-rubric-body leading-relaxed max-w-[46ch]">
-            {words.map((word, index) => (
+            {words.flatMap((word, index) => [
               <span
                 key={index}
                 className="word-focus-in"
                 style={{ "--focus-delay": `${focusDelayMs(index)}ms` } as CSSProperties}
               >
-                {word}{index < words.length - 1 ? " " : ""}
-              </span>
-            ))}
+                {word}
+              </span>,
+              // The space is a plain sibling text node, NOT trailing content inside the span above:
+              // each .word-focus-in is display:inline-block, and a browser collapses whitespace at the
+              // trailing edge of an inline-block's own content — a space placed inside the span
+              // renders with zero width, gluing every word together. Kept outside, it's ordinary
+              // inline flow between two boxes and is never collapsed.
+              index < words.length - 1 ? " " : null,
+            ])}
           </p>
           <p className="font-machine text-xs text-ink-faded">{copy.eyeWitnessed} {elapsedLabel(verse.created_at, now)}</p>
         </div>

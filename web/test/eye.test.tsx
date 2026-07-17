@@ -31,6 +31,14 @@ describe("Eye — the always-visible home for EYE, the last mark it witnessed", 
     expect(html).toContain("witnessed 1m ago");
   });
 
+  it("keeps the space between words OUTSIDE each word-focus-in span (regression: display:inline-block collapses trailing whitespace placed inside it, gluing every word together)", () => {
+    const html = render([
+      { id: "v1", organ: "EYE", register: "verse", text: "a quiet mark", offering_id: null, rite_id: null, created_at: 900_000 },
+    ]);
+    expect(html).not.toMatch(/quiet<\/span>mark/);
+    expect(html).toMatch(/quiet<\/span> <span/);
+  });
+
   it("ignores other organs' entries and picks the newest EYE verse, not the newest overall", () => {
     const html = render([
       { id: "old-eye", organ: "EYE", register: "verse", text: "first witness", offering_id: null, rite_id: null, created_at: 1 },

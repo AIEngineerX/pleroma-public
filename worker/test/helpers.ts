@@ -13,6 +13,7 @@ import migration12 from "../migrations/0012_pulse_idempotent_vitals.sql?raw";
 import migration13 from "../migrations/0013_one_sermon_per_rite.sql?raw";
 import migration14 from "../migrations/0014_dream_render.sql?raw";
 import migration15 from "../migrations/0015_video_budget.sql?raw";
+import migration17 from "../migrations/0017_first_congregation.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -99,6 +100,13 @@ export async function applyMigrations(db: D1Database): Promise<void> {
 
   // 0015 rebuilds spend to add the 'video' category; same handling as 0014.
   for (const stmt of migration15.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0017 backfills wallets.tally_name (G9); strip its leading `-- ...` comment block first (same
+  // reason as 0007-0015), then collapse whitespace before exec. (0016 only adds dreams.posted_at,
+  // unrelated to any current test and not yet wired into this helper.)
+  for (const stmt of migration17.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }

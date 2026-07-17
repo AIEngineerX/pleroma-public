@@ -1,8 +1,9 @@
 import { SELF, env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ulid } from "ulid";
-import { addTranscript } from "../src/db";
+import { addTranscript, insertOffering } from "../src/db";
 import { applyMigrations } from "./helpers";
+import migration17 from "../migrations/0017_first_congregation.sql?raw";
 
 beforeAll(async () => {
   await applyMigrations(env.DB);
@@ -62,6 +63,51 @@ describe("read api", () => {
     const s = await res.json<{ phase: string; asleep: boolean }>();
     expect(s.phase).toBe("dormant");
     expect(s.asleep).toBe(false);
+  });
+});
+
+describe("tallies api — First Congregation (G9)", () => {
+  it("names a wallet from its permanent first-ever rank, never from today's count order", async () => {
+    // W3 is the LAST wallet to ever appear (highest first_seen) but offers the MOST today, so a
+    // daily count-DESC list would rank it first -- exactly the bug the 0017 backfill closes. Its
+    // real historical rank (#3) must win over its position in today's tally regardless.
+    const wallets = [
+      { address: "w1-first-ever", first_seen: 100 },
+      { address: "w2-second-ever", first_seen: 200 },
+      { address: "w3-last-ever", first_seen: 300 },
+    ];
+    for (const w of wallets) {
+      await env.DB.prepare(`INSERT INTO wallets (address, first_seen, offering_count) VALUES (?1, ?2, 1)`)
+        .bind(w.address, w.first_seen).run();
+    }
+    // Re-run just the 0017 backfill now that these wallets exist (the full applyMigrations chain
+    // already ran once in this file's beforeAll, before any wallets existed to name).
+    for (const stmt of migration17.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+      await env.DB.exec(stmt.replace(/\s+/g, " ").trim());
+    }
+
+    const date = "2026-08-01";
+    const dayStart = Date.parse(date + "T00:00:00.000Z");
+    const counts = { "w1-first-ever": 1, "w2-second-ever": 2, "w3-last-ever": 3 };
+    for (const [wallet, n] of Object.entries(counts)) {
+      for (let i = 0; i < n; i++) {
+        const id = ulid();
+        await insertOffering(env.DB, { id, wallet, sig: null, image_key: `offerings/${id}`, sha256: id,
+          status: "perceived", attempts: 0, created_at: dayStart + i, perceived_at: dayStart + i });
+        // insertOffering's INSERT deliberately omits perceived_at (it starts NULL on the real path,
+        // set later by publishPerception); set it directly here since getTallies requires it non-null.
+        await env.DB.prepare(`UPDATE offerings SET perceived_at = ?2 WHERE id = ?1`).bind(id, dayStart + i).run();
+      }
+    }
+
+    const res = await SELF.fetch(`http://x/api/tallies?date=${date}`);
+    const { tallies } = await res.json<{ tallies: Array<{ wallet: string; count: number; name: string | null }> }>();
+    const byWallet = Object.fromEntries(tallies.map(t => [t.wallet, t]));
+    expect(byWallet["w1-first-ever"].name).toBe("First Congregation #1");
+    expect(byWallet["w2-second-ever"].name).toBe("First Congregation #2");
+    expect(byWallet["w3-last-ever"].name).toBe("First Congregation #3");
+    // Today's count order (DESC) puts w3 first -- confirming the name above is NOT that daily index.
+    expect(tallies[0].wallet).toBe("w3-last-ever");
   });
 });
 
