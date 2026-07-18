@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { copy } from "../lib/copy";
+import { scrollToId } from "../lib/smoothScroll";
 
 interface IndexEntry { href: string; label: string }
 
@@ -60,7 +61,18 @@ export default function TempleIndex({ marketLive }: { marketLive: boolean }) {
         <ol>
           {entries.map((e) => (
             <li key={e.href}>
-              <a href={e.href} onClick={() => setOpen(false)} className="temple-link-quiet text-ink-faded">
+              <a
+                href={e.href}
+                onClick={(event) => {
+                  // Lenis (App.tsx's useSmoothScroll) owns the real scroll position from wheel/touch
+                  // input only; a plain anchor jump or window.scrollTo gets overwritten on its next
+                  // tick. Route through it directly -- see lib/smoothScroll.ts.
+                  event.preventDefault();
+                  scrollToId(e.href.slice(1));
+                  setOpen(false);
+                }}
+                className="temple-link-quiet text-ink-faded"
+              >
                 {e.label}
               </a>
             </li>

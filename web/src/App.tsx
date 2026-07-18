@@ -8,6 +8,7 @@ import Canon from "./canon/Canon";
 import DreamArchive from "./canon/DreamArchive";
 import Concordat from "./canon/Concordat";
 import { Ambient } from "./lib/ambient";
+import { setActiveLenis } from "./lib/smoothScroll";
 import {
   createPressHold,
   ENTRY_HOLD_MS,
@@ -30,7 +31,8 @@ function useSmoothScroll() {
     const onTick = (time: number) => lenis.raf(time * 1000);   // gsap ticker is seconds; lenis wants ms
     gsap.ticker.add(onTick);
     gsap.ticker.lagSmoothing(0);
-    return () => { gsap.ticker.remove(onTick); lenis.destroy(); };
+    setActiveLenis(lenis);
+    return () => { gsap.ticker.remove(onTick); lenis.destroy(); setActiveLenis(null); };
   }, []);
 }
 
