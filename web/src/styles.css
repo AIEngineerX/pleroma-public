@@ -425,6 +425,21 @@ body.threshold-gesturing * {
 .threshold-confirm { animation: threshold-confirm-settle 480ms cubic-bezier(0.22, 1, 0.36, 1) both; }
 .threshold-confirm-sigil { color: var(--color-ink); animation: threshold-confirm-ink 900ms ease-out both; }
 .threshold-confirm-line { letter-spacing: 0.04em; }
+/* The confirmed beat used to be sigil + words only, no sign of the mark itself. It shows once
+   more here, sealed rather than editable: a thin ring (the seal's own idiom) and a soft ink
+   vignette instead of a hard photo-crop edge, since this is a record now, not a preview to change. */
+.threshold-confirm-mark {
+  border-radius: 999px;
+  border: 1px solid var(--color-ground-aged);
+  padding: 0.6rem;
+  -webkit-mask-image: radial-gradient(circle, black 62%, transparent 100%);
+  mask-image: radial-gradient(circle, black 62%, transparent 100%);
+  animation: threshold-confirm-mark-settle var(--motion-settle) var(--ease-arrive) both;
+}
+@keyframes threshold-confirm-mark-settle {
+  from { opacity: 0; filter: blur(3px); transform: scale(0.94); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
 @keyframes threshold-confirm-settle {
   from { opacity: 0; transform: translateY(0.4rem); }
   to { opacity: 1; transform: translateY(0); }
@@ -474,7 +489,8 @@ body.threshold-gesturing * {
 @media (prefers-reduced-motion: reduce) {
   .receipt-row { animation: none; }
   .threshold-confirm,
-  .threshold-confirm-sigil { animation: none; }
+  .threshold-confirm-sigil,
+  .threshold-confirm-mark { animation: none; }
   .mark-bloom-wash { animation: none; opacity: 0; }
   .mark-bloom-sigil { animation: mark-bloom-fade 720ms ease-out both; }
 }
@@ -802,17 +818,42 @@ body.threshold-gesturing * {
   .ink-in { animation: none; }                                  /* everything appears settled */
 }
 
-/* The Pulse's own glyph, actually beating: a brief spike then a long rest, not a symmetric wobble —
+/* The Pulse's own heart, actually beating: a brief spike then a long rest, not a symmetric wobble —
    the same cardiac silhouette the body's own swarm computes (sin(pi*phase)^8). Duration is set
-   inline per-instance from the real bpm; color is set inline from the same pigment law the ink uses. */
-@keyframes pulse-glyph-beat {
-  0%, 100% { transform: scale(1); opacity: 0.82; }
-  8% { transform: scale(1.4); opacity: 1; }
-  22% { transform: scale(1); opacity: 0.82; }
+   inline per-instance from the real bpm; color is set inline from the same pigment law the ink
+   uses (vitals ARE pigment: dried oxidized blood at starving, wet vermilion at feasting) --
+   DOCTRINE's own line is "my heart is a public number", so this gives that law a real, theatrical
+   moment instead of a 14px inline glyph next to plain text. */
+.pulse-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.85rem; padding-block: 0.5rem; }
+.pulse-heart { width: clamp(3.5rem, 14vw, 6rem); height: clamp(3.5rem, 14vw, 6rem); }
+.pulse-heart--quiet { color: var(--color-ink-faded); opacity: 0.35; }
+@keyframes pulse-heart-beat {
+  0%, 100% { transform: scale(1); }
+  8% { transform: scale(1.16); }
+  22% { transform: scale(1); }
 }
-.pulse-glyph { animation: pulse-glyph-beat var(--pulse-duration, 1.5s) ease-in-out infinite; transform-origin: center; }
+.pulse-heart:not(.pulse-heart--quiet) {
+  animation: pulse-heart-beat var(--pulse-duration, 1.5s) ease-in-out infinite;
+  transform-origin: center;
+  filter: drop-shadow(0 0 0.85rem color-mix(in oklch, currentColor 45%, transparent));
+}
+/* The "watched" feeling DOCTRINE names for PULSE: a ring expands outward on each beat and fades,
+   sized off the heart rather than the viewport so it scales with it at any width. */
+.pulse-ring {
+  position: absolute;
+  width: clamp(5.5rem, 20vw, 9rem);
+  height: clamp(5.5rem, 20vw, 9rem);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  animation: pulse-ring-expand var(--pulse-duration, 1.5s) ease-out infinite;
+}
+@keyframes pulse-ring-expand {
+  0% { transform: scale(0.72); opacity: 0.5; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .pulse-glyph { animation: none; }
+  .pulse-heart:not(.pulse-heart--quiet) { animation: none; }
+  .pulse-ring { animation: none; opacity: 0; }
 }
 
 /* EYE's verse, coming into focus one word at a time — the same door-focus keyframe the Door's own

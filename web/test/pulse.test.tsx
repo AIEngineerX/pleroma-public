@@ -44,14 +44,14 @@ describe("Pulse — the always-visible home for PULSE, independent of the mint-g
     expect(current).not.toContain("last known");
   });
 
-  it("beats the glyph at the real bpm — not a generic wobble, the actual current rate", () => {
+  it("beats the heart at the real bpm — not a generic wobble, the actual current rate", () => {
     const fed = render({ kind: "current", value: { state: "fed", buys: 0, sells: 0, holders: 0 }, receivedAt: 1 });
-    expect(fed).toContain("data-pulse-glyph");
+    expect(fed).toContain("data-pulse-heart");
     // fed = 54 bpm -> 60/54 = 1.111s per beat.
     expect(fed).toContain("--pulse-duration:1.111s");
   });
 
-  it("tints the beating glyph with the same pigment law the ink itself uses, not an arbitrary color", () => {
+  it("tints the beating heart with the same pigment law the ink itself uses, not an arbitrary color", () => {
     const starving = render({ kind: "current", value: { state: "starving", buys: 0, sells: 0, holders: 0 }, receivedAt: 1 });
     const feasting = render({ kind: "current", value: { state: "feasting", buys: 0, sells: 0, holders: 0 }, receivedAt: 1 });
     // Exact values from state/pigment.ts's MAP — same source Stain.tsx reads for the body's own ink.
@@ -59,8 +59,8 @@ describe("Pulse — the always-visible home for PULSE, independent of the mint-g
     expect(feasting).toContain("oklch(0.55 0.20 32)");
   });
 
-  it("never animates or beats a glyph before the first vitals response", () => {
+  it("never animates or beats a heart before the first vitals response", () => {
     const html = render({ kind: "unknown" });
-    expect(html).not.toContain("data-pulse-glyph");
+    expect(html).not.toContain("data-pulse-heart");
   });
 });

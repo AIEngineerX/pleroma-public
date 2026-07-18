@@ -104,6 +104,9 @@ export default function ThresholdOffering({
   const [status, setStatus] = useState("");
   const [receiptAnnouncement, setReceiptAnnouncement] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  // The just-offered mark, shown once more (sealed, not editable) during the confirmed window.
+  // Deliberately NOT revoked by clearPreview's normal path -- see submit()'s success branch.
+  const [confirmedMarkUrl, setConfirmedMarkUrl] = useState<string | null>(null);
   const confirmTimer = useRef<number | null>(null);
   const [bloom, setBloom] = useState(false);
   const bloomTimer = useRef<number | null>(null);
@@ -218,6 +221,10 @@ export default function ThresholdOffering({
     const current = previewRef.current;
     if (current !== null) URL.revokeObjectURL(current.url);
     previewRef.current = null;
+    setConfirmedMarkUrl((url) => {
+      if (url !== null) URL.revokeObjectURL(url);
+      return null;
+    });
     if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
     if (bloomTimer.current !== null) clearTimeout(bloomTimer.current);
     if (thresholdLocked.current) {
@@ -375,7 +382,13 @@ export default function ThresholdOffering({
       if (generation.current !== submissionGeneration) return;
       if ("id" in result) {
         onSubmitted(result.id);
-        clearPreview();
+        // Deliberately not clearPreview() here: that revokes the blob URL immediately, but the
+        // confirmed seal below shows this exact mark once more for the length of the confirmed
+        // window. Ownership of the URL transfers to confirmedMarkUrl and is revoked when that
+        // window closes, below -- never both, never neither.
+        previewRef.current = null;
+        setPreview(null);
+        setConfirmedMarkUrl(current.url);
         setPhase("receipt");
         setStatus("");
         setLocked(false);
@@ -384,6 +397,10 @@ export default function ThresholdOffering({
         confirmTimer.current = window.setTimeout(() => {
           confirmTimer.current = null;
           setConfirmed(false);
+          setConfirmedMarkUrl((url) => {
+            if (url !== null) URL.revokeObjectURL(url);
+            return null;
+          });
         }, 6500);
         if (bloomTimer.current !== null) clearTimeout(bloomTimer.current);
         setBloom(true);
@@ -482,6 +499,13 @@ export default function ThresholdOffering({
     >
       {confirmed && (
         <div data-threshold-confirm className="threshold-confirm flex flex-col items-center gap-1.5">
+          {confirmedMarkUrl && (
+            <img
+              src={confirmedMarkUrl}
+              alt="the mark you just offered, now sealed"
+              className="threshold-confirm-mark h-20 w-20 object-contain"
+            />
+          )}
           <svg aria-hidden viewBox="0 0 44 44" className="threshold-confirm-sigil h-9 w-9" fill="none">
             <circle cx="22" cy="22" r="14.6" stroke="currentColor" strokeWidth="1" />
             <path d="M22 15.4 L22 28.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
