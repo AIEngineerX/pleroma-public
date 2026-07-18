@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEntryGesture } from "../App";
 import MuteToggle from "../lib/MuteToggle";
+import XCorner from "../market/XCorner";
 import Stain from "../stain/Stain";
 import Door, { type DoorPhase } from "../entry/Door";
 import Codex from "../codex/Codex";
@@ -473,6 +474,7 @@ export default function Temple() {
         </main>
 
         <MuteToggle active={awake && !muted} onToggle={toggleMute} />
+        <XCorner />
       </div>
     </RiteInversion>
   );
