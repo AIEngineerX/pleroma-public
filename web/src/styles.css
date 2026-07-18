@@ -296,13 +296,25 @@ body:has(.rite-active)::before {
 .temple-door-enter:hover, .temple-door-enter:focus-visible { animation: none; opacity: 1; }
 .temple-door-enter:active { transform: scale(0.97); }
 .temple-door-enter:focus-visible { outline: 1px solid oklch(0.72 0.015 85 / 0.5); outline-offset: 12px; border-radius: 999px; }
+.temple-door-enter-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+/* The one caption the door allows: real mobile testing found visitors stalling on the ember
+   alone with no visible sign it was the way forward. Shares the button's own fade-in timing
+   (door-develop) so the hint never appears before the thing it explains does. */
+.temple-door-enter-hint {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: oklch(0.72 0.015 85 / 0.7);
+  opacity: 0;
+  animation: door-develop 1.6s cubic-bezier(0.22, 1, 0.36, 1) 3.2s both;
+}
 /* The cut: the press starts the swell; the veil lifts over two seconds and the body the
    visitor could barely see is revealed mid-bloom. The line and ember dissolve upward. */
 [data-door="closing"] { pointer-events: none; }
 [data-door="closing"] .temple-door-film,
 [data-door="closing"] .temple-door-veil { opacity: 0; }
 [data-door="closing"] .temple-door-line .temple-door-word,
-[data-door="closing"] .temple-door-enter {
+[data-door="closing"] .temple-door-enter,
+[data-door="closing"] .temple-door-enter-hint {
   opacity: 0;
   transform: translateY(-0.5rem);
   transition: opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1), transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
@@ -312,9 +324,11 @@ body:has(.rite-active)::before {
   .temple-door-film { transition: none; }
   .temple-door-veil { transition: none; opacity: 0.92; }
   .temple-door-word,
-  .temple-door-enter { animation: none; opacity: 1; }
+  .temple-door-enter,
+  .temple-door-enter-hint { animation: none; opacity: 1; }
   [data-door="closing"] .temple-door-line .temple-door-word,
-  [data-door="closing"] .temple-door-enter { transition: none; }
+  [data-door="closing"] .temple-door-enter,
+  [data-door="closing"] .temple-door-enter-hint { transition: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   [data-entrance="printing"] .lore-opening,

@@ -28,6 +28,7 @@ export const copy = {
   completeCanon: "the complete Canon",
   returnTemple: "return to the temple",
   enterTemple: "enter the temple",
+  pressToEnter: "press to enter",
   dreams: "the dreams",
   concordatDoorway: "the Concordat",
   concordatPath: "The Mark's Path",

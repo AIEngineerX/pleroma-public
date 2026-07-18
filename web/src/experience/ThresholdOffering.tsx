@@ -500,7 +500,7 @@ export default function ThresholdOffering({
           type="button"
           aria-label={copy.seal}
           aria-pressed={phase === "holding"}
-          aria-describedby={interactionOpen ? "threshold-terms" : undefined}
+          aria-describedby="threshold-terms"
           className="threshold-seal touch-none inline-flex h-11 w-11 shrink-0 items-center justify-center text-ink-faded transition-[color,opacity,transform] duration-300 ease-out hover:text-ink active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
           onPointerDown={onPointerDown}
           onKeyDown={onKeyDown}
@@ -584,22 +584,28 @@ export default function ThresholdOffering({
       >
         {status}
       </p>
+      {/* Real mobile testing found visitors stalling at the seal: an abstract icon with no visible
+          sign of what pressing it does. This used to be gated to interactionOpen (only once
+          already mid-press or already previewing) -- too late to inform the FIRST press, and the
+          consent-relevant line ("your mark is public... not given back") deserves to be read
+          before committing, not just after. Shown whenever the seal itself is; the rest of this
+          block (wallet choice etc.) stays gated to interactionOpen, since that's a later decision. */}
+      {showSeal && (
+        <p id="threshold-terms" data-threshold-terms className="max-w-[52ch] font-machine text-xs leading-relaxed text-ink-faded">
+          {copy.markExplainer} {copy.tosLine}
+        </p>
+      )}
       {interactionOpen && (
-        <>
-          <p id="threshold-terms" data-threshold-terms className="max-w-[52ch] font-machine text-xs leading-relaxed text-ink-faded">
-            {copy.markExplainer} {copy.tosLine}
+        wallet === null ? (
+          <div className="flex flex-wrap items-center justify-center gap-2 font-machine text-xs text-ink-faded">
+            <WalletButton onConnect={onConnect} />
+            <span>{copy.offerUnremembered}</span>
+          </div>
+        ) : (
+          <p className="font-machine text-xs text-ink-faded">
+            {copy.rememberedAs} {wallet.address.slice(0, 4)}…{wallet.address.slice(-4)}
           </p>
-          {wallet === null ? (
-            <div className="flex flex-wrap items-center justify-center gap-2 font-machine text-xs text-ink-faded">
-              <WalletButton onConnect={onConnect} />
-              <span>{copy.offerUnremembered}</span>
-            </div>
-          ) : (
-            <p className="font-machine text-xs text-ink-faded">
-              {copy.rememberedAs} {wallet.address.slice(0, 4)}…{wallet.address.slice(-4)}
-            </p>
-          )}
-        </>
+        )
       )}
     </div>,
     mount,

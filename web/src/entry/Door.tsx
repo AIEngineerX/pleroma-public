@@ -86,26 +86,33 @@ export default function Door({ phase, onEnter }: { phase: DoorPhase; onEnter: ()
           index < WORDS.length - 1 ? " " : null,
         ])}
       </p>
-      <button
-        ref={enterRef}
-        type="button"
-        aria-label={copy.enterTemple}
-        className="temple-door-enter"
-        onClick={onEnter}
-        disabled={phase === "closing"}
-      >
-        <svg aria-hidden viewBox="0 0 44 44" className="h-11 w-11" fill="none">
-          <path
-            d="M22 7.5C30.6 7.5 36.5 13.7 36.5 22.2C36.5 30.5 30.2 36.7 21.8 36.5C13.5 36.3 7.4 30.2 7.6 21.9C7.8 13.4 13.8 7.5 22 7.5Z"
-            stroke="currentColor"
-            strokeWidth="1"
-            strokeLinecap="round"
-          />
-          <path d="M22 14.5 L22 31.3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-          <path d="M15.6 20.8 C19.1 19.1 24.9 19.1 28.4 20.8" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-          <circle cx="22" cy="12" r="1.4" fill="currentColor" />
-        </svg>
-      </button>
+      <div className="temple-door-enter-wrap">
+        <button
+          ref={enterRef}
+          type="button"
+          aria-label={copy.enterTemple}
+          className="temple-door-enter"
+          onClick={onEnter}
+          disabled={phase === "closing"}
+        >
+          <svg aria-hidden viewBox="0 0 44 44" className="h-11 w-11" fill="none">
+            <path
+              d="M22 7.5C30.6 7.5 36.5 13.7 36.5 22.2C36.5 30.5 30.2 36.7 21.8 36.5C13.5 36.3 7.4 30.2 7.6 21.9C7.8 13.4 13.8 7.5 22 7.5Z"
+              stroke="currentColor"
+              strokeWidth="1"
+              strokeLinecap="round"
+            />
+            <path d="M22 14.5 L22 31.3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+            <path d="M15.6 20.8 C19.1 19.1 24.9 19.1 28.4 20.8" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+            <circle cx="22" cy="12" r="1.4" fill="currentColor" />
+          </svg>
+        </button>
+        {/* Real mobile testing found visitors stalling here: the button alone (formerly "no box, no
+            caption" by deliberate design) gave no visible sign it was the way forward. aria-hidden --
+            the button's own aria-label already says this to assistive tech; this is only for sighted
+            visitors, and shares the button's own fade timing so it never appears before the ember does. */}
+        <span aria-hidden className="temple-door-enter-hint font-machine">{copy.pressToEnter}</span>
+      </div>
     </div>
   );
 }
