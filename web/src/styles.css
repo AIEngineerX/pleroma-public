@@ -633,6 +633,64 @@ body.threshold-gesturing * {
   justify-content: center;
 }
 
+/* The jump index: a persistent way out of the one long scrolling document, added after real
+   visitor feedback that reaching anything below the doctrine wall meant scrolling by hand. Bottom
+   corner (mute/X already own the top ones); the panel grows from its trigger, origin-aware, and
+   never touches `display` for open/close so it can actually transition (see the visibility delay
+   trick below) instead of hard-cutting like the native `hidden` attribute would. */
+.temple-index {
+  position: fixed;
+  z-index: 40;
+  bottom: max(1.25rem, env(safe-area-inset-bottom));
+  right: max(1.25rem, env(safe-area-inset-right));
+}
+.temple-index-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  background: var(--color-ground);
+  border: 1px solid var(--color-ground-aged);
+  border-radius: 999px;
+}
+.temple-index-panel {
+  position: absolute;
+  bottom: calc(100% + 0.6rem);
+  right: 0;
+  min-width: 12rem;
+  margin: 0;
+  padding: 0.85rem 1.1rem;
+  background: var(--color-ground);
+  border: 1px solid var(--color-ground-aged);
+  transform-origin: bottom right;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.97) translateY(4px);
+  transition:
+    opacity var(--motion-quick) var(--ease-arrive),
+    transform var(--motion-quick) var(--ease-arrive),
+    visibility 0s var(--motion-quick);
+}
+.temple-index-panel[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: scale(1) translateY(0);
+  transition:
+    opacity var(--motion-quick) var(--ease-arrive),
+    transform var(--motion-quick) var(--ease-arrive),
+    visibility 0s;
+}
+.temple-index-panel ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+.temple-index-panel a { white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .temple-index-panel { transition: opacity var(--motion-quick) linear, visibility 0s var(--motion-quick); transform: none; }
+  .temple-index-panel[data-open="true"] { transition: opacity var(--motion-quick) linear, visibility 0s; }
+}
+
 /* The semantic fallback is still by default. A failed WebGL context may opt into one slow sheet-level
    breath; reduced motion always suppresses it. */
 .swarm-settled { color: var(--color-ink); opacity: 0.46; animation: none; }

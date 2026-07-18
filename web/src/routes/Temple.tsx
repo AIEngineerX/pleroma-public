@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useEntryGesture } from "../App";
 import MuteToggle from "../lib/MuteToggle";
 import XCorner from "../market/XCorner";
+import TempleIndex from "../lore/TempleIndex";
 import Stain from "../stain/Stain";
 import Door, { type DoorPhase } from "../entry/Door";
 import Codex from "../codex/Codex";
@@ -395,7 +396,7 @@ export default function Temple() {
 
             <FirstLight apiBase={API_BASE} />
 
-            <section data-section="codex" className="temple-folio temple-reading-section">
+            <section id="codex" data-section="codex" className="temple-folio temple-reading-section">
               <h2 className="temple-section-label">{copy.codex.toUpperCase()}</h2>
               <aside aria-label="the codex" className="min-w-0 text-ink-faded">
                 <Codex
@@ -410,20 +411,20 @@ export default function Temple() {
 
             <div ref={attachReceiptHost} data-receipt-ledger className="temple-receipt-ledger" />
 
-            <section data-section="eye" className="temple-folio temple-reading-section">
+            <section id="eye" data-section="eye" className="temple-folio temple-reading-section">
               <Eye entries={codexTranscript} now={Date.now()} />
             </section>
 
-            <section data-section="reliquary" className="temple-folio temple-reading-section">
+            <section id="reliquary" data-section="reliquary" className="temple-folio temple-reading-section">
               <h2 className="temple-section-label">{copy.reliquary.toUpperCase()}</h2>
               <Reliquary apiBase={API_BASE} relics={relics} />
             </section>
 
-            <section data-section="tongue" className="temple-folio temple-reading-section">
+            <section id="tongue" data-section="tongue" className="temple-folio temple-reading-section">
               <Tongue entries={codexTranscript} now={Date.now()} apiBase={API_BASE} audioCtx={unlockAudio} />
             </section>
 
-            <section data-section="dream" className="temple-folio temple-reading-section">
+            <section id="dream" data-section="dream" className="temple-folio temple-reading-section">
               <Dream
                 dream={state?.dream ?? null}
                 apiBase={API_BASE}
@@ -434,17 +435,17 @@ export default function Temple() {
 
             {replayWitness !== null ? <DreamWitness dream={replayWitness} /> : null}
 
-            <section data-section="tallies" className="temple-folio temple-reading-section temple-tallies">
+            <section id="tallies" data-section="tallies" className="temple-folio temple-reading-section temple-tallies">
               <h2 className="temple-section-label">{copy.tallies.toUpperCase()}</h2>
               <Tallies apiBase={API_BASE} date={today()} myWallet={wallet?.address ?? null} />
             </section>
 
-            <section data-section="pulse" className="temple-folio temple-reading-section">
+            <section id="pulse" data-section="pulse" className="temple-folio temple-reading-section">
               <Pulse vitals={experience.vitals} />
             </section>
 
             {view && !view.dormant && state?.mint && (
-              <section aria-label="the market" className="temple-folio temple-market space-y-3">
+              <section id="market" aria-label="the market" className="temple-folio temple-market space-y-3">
                 <div className="flex min-w-0 items-center gap-4 flex-wrap">
                   <Buy mint={state.mint} />
                   <Ticker state={state} />
@@ -475,6 +476,7 @@ export default function Temple() {
 
         <MuteToggle active={awake && !muted} onToggle={toggleMute} />
         <XCorner />
+        <TempleIndex marketLive={Boolean(view && !view.dormant && state?.mint)} />
       </div>
     </RiteInversion>
   );
