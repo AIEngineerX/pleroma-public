@@ -135,6 +135,11 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
         <a href="/canon/dreams" className="font-machine text-xs underline text-ink-faded temple-link-quiet">{copy.dreams}</a>
       </section>
 
+      <section className="mt-8 space-y-2">
+        <Heading>{copy.codex}</Heading>
+        <a href="/canon/codex" className="font-machine text-xs underline text-ink-faded temple-link-quiet">{copy.codexArchiveLink}</a>
+      </section>
+
       <p className="font-machine text-xs text-ink-faded mt-10">
         The character is CC0 and the archive is public: the Canon can outlive any single
         administrator. No one owns the god's words, including its makers.

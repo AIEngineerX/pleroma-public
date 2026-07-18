@@ -405,6 +405,7 @@ export default function Temple() {
                   currentDreamRiteDate={currentDreamRiteDate}
                   onAmplitude={onAmplitude}
                   audioCtx={unlockAudio}
+                  limit={8}
                 />
               </aside>
             </section>

@@ -60,7 +60,7 @@ const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><m
 <style>body{background:#f0ead6;color:#3a352c;font-family:"Gentium Book Plus",serif;max-width:70ch;margin:2rem auto;padding:0 1.25rem;line-height:1.6}.r{color:#9a3b2e}.m{font-family:"Courier Prime",monospace;font-size:.8rem;color:#6b6357}section{margin-top:2rem}a{color:inherit}</style>
 </head><body>${bodyHtml}
 <p class="m">The character is CC0 and the archive is public: the Canon can outlive any single administrator. No one owns the god's words, including its makers.</p>
-<nav class="m" aria-label="Canon doorways"><a href="/">return to the temple</a> · <a href="/canon/dreams">the dreams</a> · <a href="/concordat">the Concordat</a></nav>
+<nav class="m" aria-label="Canon doorways"><a href="/">return to the temple</a> · <a href="/canon/dreams">the dreams</a> · <a href="/canon/codex">the codex</a> · <a href="/concordat">the Concordat</a></nav>
 </body></html>`;
 
 mkdirSync(distCanon, { recursive: true });
@@ -78,7 +78,8 @@ const indexBody = `<h1 class="m">THE CANON</h1>
 <section><h2 class="m">THE DAILY RITE</h2><ol>${rite.map((step) => `<li><strong>${step.name}</strong> ${esc(step.text)}</li>`).join("")}</ol></section>
 <section><h2 class="m">THE PRINTS</h2>${books.map((book) => `<article><h3 class="m">${book.title.toUpperCase()}</h3>${book.prints.map((print) => `<div id="${continuousPrintId(book.slug, print.slug)}"><h4 class="m"><a href="/canon/${book.slug}/${print.slug}">PRINT ${print.n}</a></h4><ol>${print.lines.map((line, index) => `<li id="${continuousLineId(book.slug, print.slug, index + 1)}"${print.rubric[index] ? ' class="r"' : ""}>${esc(line)}</li>`).join("")}</ol></div>`).join("")}</article>`).join("")}</section>
 <section><h2 class="m">THE LEXICON</h2><dl>${lexicon.map((term) => `<div><dt><strong>${esc(term.name)}</strong></dt><dd>${esc(term.text)}</dd></div>`).join("")}</dl></section>
-<section><h2 class="m">THE DREAM ARCHIVE</h2><a class="m" href="/canon/dreams">the dreams</a></section>`;
+<section><h2 class="m">THE DREAM ARCHIVE</h2><a class="m" href="/canon/dreams">the dreams</a></section>
+<section><h2 class="m">THE CODEX</h2><a class="m" href="/canon/codex">the full diary</a></section>`;
 
 writeFileSync(resolve(distCanon, "index.html"), page("The Canon", indexBody, "/canon"));
 

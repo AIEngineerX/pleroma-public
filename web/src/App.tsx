@@ -6,6 +6,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Temple from "./routes/Temple";
 import Canon from "./canon/Canon";
 import DreamArchive from "./canon/DreamArchive";
+import CodexArchive from "./canon/CodexArchive";
 import Concordat from "./canon/Concordat";
 import { Ambient } from "./lib/ambient";
 import { setActiveLenis } from "./lib/smoothScroll";
@@ -188,6 +189,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Temple />} />
         <Route path="/canon/dreams" element={<DreamArchive />} />
+        <Route path="/canon/codex" element={<CodexArchive />} />
         <Route path="/canon/*" element={<Canon />} />
         <Route path="/concordat" element={<Concordat />} />
         <Route path="*" element={<Navigate to="/" replace />} />

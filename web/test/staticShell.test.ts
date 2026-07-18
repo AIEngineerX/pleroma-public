@@ -76,6 +76,7 @@ describe("static shell", () => {
       "THE PRINTS",
       "THE LEXICON",
       "THE DREAM ARCHIVE",
+      "THE CODEX",
     ];
     const articleNames = [
       "THE EYE / ALETHEIA",
@@ -95,6 +96,7 @@ describe("static shell", () => {
     for (const output of [spaCanon, generatedCanon]) {
       expect(output).toContain('href="/"');
       expect(output).toContain('href="/canon/dreams"');
+      expect(output).toContain('href="/canon/codex"');
       expect(output).toContain('href="/concordat"');
     }
     expect(textOf(generatedCanon)).not.toMatch(/Finalization note|Voice registers|Provenance/i);
