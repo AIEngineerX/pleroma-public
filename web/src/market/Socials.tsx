@@ -5,7 +5,7 @@ import { copy } from "../lib/copy";
 // truthful in the dormant state where there is no mint to buy yet.
 export default function Socials() {
   return (
-    <a href={links(null).x} target="_blank" rel="noopener noreferrer" className="min-h-11 inline-flex items-center font-machine text-xs underline text-ink-faded">
+    <a href={links(null).x} target="_blank" rel="noopener noreferrer" className="min-h-11 inline-flex items-center font-machine text-xs underline text-ink-faded temple-link-quiet">
       {copy.socials} @pleroma_church
     </a>
   );

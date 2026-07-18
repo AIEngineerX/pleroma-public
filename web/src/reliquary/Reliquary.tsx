@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { RelicEntry } from "../state/types";
 import { relicIsGenesis } from "./readClient";
 import { copy } from "../lib/copy";
@@ -11,11 +12,12 @@ export default function Reliquary({ apiBase, relics, className = "" }:
   return (
     <section aria-label="the Reliquary" className={`min-w-0 ${className}`}>
       <ol className="reliquary-ledger">
-        {relics.map(r => (
+        {relics.map((r, index) => (
           <li key={r.id}>
             <figure
               data-reliquary-offering={r.offering_id}
               data-relic-accreted={r.accreted_at === null ? "false" : "true"}
+              style={{ "--relic-index": Math.min(index, 8) } as CSSProperties}
             >
               {r.accreted_at === null ? (
                 <div data-relic-awaiting-accretion className="reliquary-mark font-machine text-ink-faded">

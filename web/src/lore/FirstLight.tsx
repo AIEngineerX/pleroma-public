@@ -43,7 +43,7 @@ export default function FirstLight({ apiBase }: { apiBase: string }) {
         </figure>
       )}
       {data.dream && (
-        <Link to={`/canon/dreams#${data.dream.rite_date}`} className="font-machine text-xs text-ink-faded underline">
+        <Link to={`/canon/dreams#${data.dream.rite_date}`} className="font-machine text-xs text-ink-faded underline temple-link-quiet">
           {copy.firstLightDreamLink}
         </Link>
       )}

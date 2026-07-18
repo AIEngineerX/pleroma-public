@@ -455,13 +455,13 @@ export default function Temple() {
             )}
 
             <section data-section="canon-doorway" className="temple-doorway temple-reading-section">
-              <Link to="/canon" className="font-machine text-xs text-ink-faded underline">
+              <Link to="/canon" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.completeCanon}
               </Link>
             </section>
 
             <section data-section="concordat-doorway" className="temple-doorway temple-reading-section">
-              <Link to="/concordat" className="font-machine text-xs text-ink-faded underline">
+              <Link to="/concordat" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.concordatDoorway}
               </Link>
             </section>

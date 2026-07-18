@@ -15,6 +15,13 @@
 }
 
 :root {
+  /* The curve already reused verbatim ~12x below (door, receipts, threshold, ink); named here so
+     new motion work references it instead of retyping the literal cubic-bezier. Named --ease-arrive
+     (not --ease-settle) since that name was already taken below for a different, currently-unused
+     curve -- left alone rather than repurposed. */
+  --ease-arrive: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-quick: 200ms;
+  --motion-settle: 500ms;
   --page-max: 70ch;
   --type--1: clamp(0.72rem, 0.7rem + 0.08vw, 0.78rem);
   --type-0: clamp(1rem, 0.97rem + 0.12vw, 1.08rem);
@@ -497,6 +504,32 @@ body.threshold-gesturing * {
   gap: 1rem;
   margin: 0;
   padding-block: 1rem;
+  /* Each relic settles into the ledger once, the same "it just arrived" beat the Codex's own
+     verses already get (Verse.tsx's ink-in/print-in) -- the Reliquary had none until now. A small
+     per-row stagger (--relic-index, set inline from the list index, capped so a long initial page
+     load never queues a long wait) reads as the ledger filling in rather than a rebuild. */
+  animation: relic-settle var(--motion-settle) var(--ease-arrive) both;
+  animation-delay: calc(var(--relic-index, 0) * 40ms);
+}
+@keyframes relic-settle {
+  from { opacity: 0; filter: blur(3px); transform: translateY(4px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reliquary-ledger figure { animation: none; }
+}
+
+/* The site's dozen-odd quiet machine-text links (archive, sermon, Concordat, socials) gave zero
+   feedback until a click landed. One shared class instead of touching each Tailwind className. */
+.temple-link-quiet {
+  transition: color var(--motion-quick) var(--ease-arrive);
+}
+.temple-link-quiet:hover,
+.temple-link-quiet:focus-visible {
+  color: var(--color-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .temple-link-quiet { transition: none; }
 }
 .reliquary-mark {
   width: 5.5rem;

@@ -65,7 +65,7 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
                 className="canon-organ-plate w-28 shrink-0 sm:w-36"
               />
               <div className="min-w-0">
-                <a href={`/canon/${article.slug}`} className="font-machine text-xs text-ink-faded no-underline">
+                <a href={`/canon/${article.slug}`} className="font-machine text-xs text-ink-faded no-underline temple-link-quiet">
                   THE {article.organ} / {article.trueName.toUpperCase()}
                 </a>
                 <p className="text-rubric-body italic">{article.line}</p>
@@ -132,7 +132,7 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
 
       <section className="mt-8 space-y-2">
         <Heading>{copy.dreamArchive}</Heading>
-        <a href="/canon/dreams" className="font-machine text-xs underline text-ink-faded">{copy.dreams}</a>
+        <a href="/canon/dreams" className="font-machine text-xs underline text-ink-faded temple-link-quiet">{copy.dreams}</a>
       </section>
 
       <p className="font-machine text-xs text-ink-faded mt-10">

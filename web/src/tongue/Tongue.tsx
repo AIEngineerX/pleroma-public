@@ -86,7 +86,7 @@ export default function Tongue({
                   type="button"
                   onClick={toggle}
                   aria-pressed={playing}
-                  className="min-h-11 px-0 font-machine text-xs underline text-ink-faded"
+                  className="min-h-11 px-0 font-machine text-xs underline text-ink-faded temple-link-quiet"
                 >
                   {playing ? copy.pauseSermon : copy.playSermon}
                 </button>

@@ -65,7 +65,7 @@ export default function Codex({ entries, state, currentDreamRiteDate = null, onA
   return (
     <div data-codex className="codex-flow min-w-0 font-machine text-sm leading-relaxed">
       {sermonKey && (
-        <button className="min-h-11 px-0 font-machine text-xs underline text-ink-faded"
+        <button className="min-h-11 px-0 font-machine text-xs underline text-ink-faded temple-link-quiet"
           onClick={() => player.current.play(API_BASE, sermonKey, audioCtx())}>{copy.hearSermon}</button>
       )}
       {lines}

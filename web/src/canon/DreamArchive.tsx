@@ -89,7 +89,7 @@ export default function DreamArchive() {
                   createdAt: d.created_at,
                 },
               }}
-              className="min-h-11 inline-flex items-center font-machine text-xs text-ink-faded underline underline-offset-4"
+              className="min-h-11 inline-flex items-center font-machine text-xs text-ink-faded underline underline-offset-4 temple-link-quiet"
             >
               witness the convergence
             </Link>

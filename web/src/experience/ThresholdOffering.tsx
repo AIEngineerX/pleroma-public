@@ -567,7 +567,7 @@ export default function ThresholdOffering({
               disabled={phase === "submitting"}
               aria-label={copy.fadeImprint}
               onClick={fade}
-              className="min-h-11 px-3 font-machine text-xs underline text-ink-faded disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
+              className="min-h-11 px-3 font-machine text-xs underline text-ink-faded temple-link-quiet disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink"
             >
               {copy.fadeImprint}
             </button>
