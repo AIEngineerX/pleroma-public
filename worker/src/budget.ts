@@ -1,6 +1,9 @@
 // video: the nightly DREAM render (Grok Imagine). One clip/night at ~$0.42 (6s @ 720p, $0.07/s),
 // so $2/day is a hard ceiling with wide margin, not an expected spend.
-export const CAPS_USD = { llm: 25, tts: 5, video: 2 } as const;
+// apocrypha: text moderation for the public guest-book endpoint. Its own category so an
+// unauthenticated submission flood can only exhaust THIS budget and silence the Apocrypha for
+// the day — never the shared organ budget (EYE/KEEP/TONGUE/DREAM stay awake).
+export const CAPS_USD = { llm: 25, tts: 5, video: 2, apocrypha: 2 } as const;
 export type SpendCategory = keyof typeof CAPS_USD;
 
 export function dayKey(): string {

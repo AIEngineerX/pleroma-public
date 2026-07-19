@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { dayKey, recordSpend, reserveEstimate } from "./budget";
+import { dayKey, recordSpend, reserveEstimate, type SpendCategory } from "./budget";
 import { withTimeout } from "./timeouts";
 
 export class MindAsleepError extends Error {}
@@ -18,6 +18,9 @@ export interface MindRequest {
   system: string;
   user: Array<TextPart | ImagePart>;
   maxTokens: number;
+  // Spend category the call reserves against. Defaults to the shared organ budget ("llm");
+  // the public apocrypha moderation path passes its own category so it can never starve the organs.
+  category?: SpendCategory;
 }
 export interface MindResponse { text: string; usd: number }
 
@@ -50,24 +53,27 @@ export function estimateCostUsd(req: MindRequest): number {
 // Budget reservation is atomic (see budget.ts reserveEstimate): the reservation writes the
 // estimate up front, and this call settles the difference against actual spend once the
 // billed call resolves, or releases the reservation in full if the call never billed.
-// askMind is still only ever called from the lock-held scheduled tick (see index.ts
-// scheduled + lock.ts); do not call from fetch handlers.
+// Organ calls (EYE/KEEP/TONGUE/DREAM/sermon) run only from the lock-held scheduled tick (see
+// index.ts scheduled + lock.ts). The one fetch-handler caller is apocrypha text moderation,
+// which is why it reserves against its own small spend category (req.category): a public
+// submission flood can only exhaust the guest book's budget, never put the organs to sleep.
 export async function askMind(env: Env, req: MindRequest): Promise<MindResponse> {
   const reserved = estimateCostUsd(req);
   if (reserved > PER_CALL_USD_MAX) throw new NonRetryableError(`per-call ceiling exceeded ($${reserved.toFixed(4)} > $${PER_CALL_USD_MAX})`);
+  const category = req.category ?? "llm";
   // Pinned once so the reservation and its settlement always land on the same accounting day,
   // even if the call straddles UTC midnight (dayKey() recomputed later would settle a delta
   // against the wrong day's row).
   const day = dayKey();
-  if (!(await reserveEstimate(env.DB, "llm", reserved, day))) {
-    throw new MindAsleepError("llm budget cap reached (reservation)");
+  if (!(await reserveEstimate(env.DB, category, reserved, day))) {
+    throw new MindAsleepError(`${category} budget cap reached (reservation)`);
   }
 
   let settled = false;
   const settle = async (actualUsd: number) => {
     if (settled) return; settled = true;
     const delta = actualUsd - reserved;
-    if (delta !== 0) await recordSpend(env.DB, "llm", delta, day);
+    if (delta !== 0) await recordSpend(env.DB, category, delta, day);
   };
 
   try {
