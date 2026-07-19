@@ -174,7 +174,11 @@ describe("static shell", () => {
       .map(match => match[1]);
 
     expect(printLinks(spaCanon)).toEqual(printLinks(generatedCanon));
-    expect(printLinks(spaCanon)).toEqual(["/canon/first-light/print-1", "/canon/first-light/print-2"]);
+    expect(printLinks(spaCanon)).toEqual([
+      "/canon/first-light/print-1",
+      "/canon/first-light/print-2",
+      "/canon/first-light/print-3",
+    ]);
   });
 
   it("renders two Books with duplicate Print numbers without id collisions", () => {

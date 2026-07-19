@@ -14,10 +14,18 @@ import { buildOffering, postOffering, type WalletHandle } from "../offering/wall
 import { pigmentAtIntensity } from "../state/pigment";
 import {
   IMPRINT_SIZE,
+  KNOCK_MAX_PRESSES,
+  KNOCK_MIN_PRESSES,
+  buildApproachPath,
   buildImprintPaths,
+  buildKnockPaths,
   imprintHold,
+  knockMatches,
+  knockSignature,
   renderImprintBlob,
+  type GestureSample,
   type ImprintGesture,
+  type KnockPress,
 } from "./thresholdImprint";
 import type { OfferingReceipt, ReceiptStage } from "./types";
 import OfferingReceipts, { receiptCopy } from "./OfferingReceipts";
@@ -38,6 +46,33 @@ interface GestureDraft {
   end: { x: number; y: number };
   startedAt: number;
   pressure: number;
+  // True once the device reported a genuine (non-default) pressure value during this gesture.
+  pressureReal: boolean;
+  // The Quiver: coalesced seal-relative drift of the holding hand, ms since the press began.
+  tremor: GestureSample[];
+  // The Hesitation: the pointer's wander in the seconds before this press, snapshotted at begin.
+  approach: GestureSample[];
+}
+
+// A press shorter than this is a knock's blow, not a hold. Anything at or past it gathers an
+// imprint exactly as before. A knock resolves when the hand goes still for the window: three or
+// more blows become the rhythm mark; fewer resolve to the last blow's own imprint, so a lone tap
+// still yields a mark (the tested behavior), a beat later.
+const TAP_MAX_MS = 160;
+const KNOCK_WINDOW_MS = 1_200;
+const KNOCK_STORAGE_KEY = "pleroma-knock-rhythm";
+// The Hesitation's memory: only the recent approach, only in this tab, only attached if a mark
+// is actually gathered (the terms line names the capture).
+const APPROACH_KEEP_MS = 5_000;
+const APPROACH_GAP_MS = 30;
+const APPROACH_MAX_SAMPLES = 240;
+const TREMOR_MAX_SAMPLES = 900;
+const FORMING_SIZE = 128;
+
+interface KnockDraft {
+  firstDownAt: number;
+  presses: KnockPress[];
+  lastDraft: GestureDraft;
 }
 
 const MOBILE_THRESHOLD_QUERY = "(max-width: 767px)";
@@ -121,8 +156,14 @@ export default function ThresholdOffering({
   ));
   const sealRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const formingRef = useRef<HTMLCanvasElement>(null);
   const modalWasOpen = useRef(false);
   const gesture = useRef<GestureDraft | null>(null);
+  const approachTrail = useRef<GestureSample[]>([]);
+  const lastApproachAt = useRef(0);
+  const knock = useRef<KnockDraft | null>(null);
+  const knockTimer = useRef<number | null>(null);
+  const pendingKnockSignature = useRef<number[] | null>(null);
   const previewRef = useRef<Preview | null>(null);
   const generation = useRef(0);
   const thresholdLocked = useRef(false);
@@ -201,6 +242,11 @@ export default function ThresholdOffering({
     if (current.pointerId !== null && seal?.hasPointerCapture(current.pointerId)) {
       seal.releasePointerCapture(current.pointerId);
     }
+    // A canceled press mid-knock does not end the knock: the stillness window resumes so the
+    // blows already struck can still resolve.
+    if (knock.current !== null && knockTimer.current === null) {
+      knockTimer.current = window.setTimeout(() => { void resolveKnockRef.current(); }, KNOCK_WINDOW_MS);
+    }
     setPhase(idlePhase());
     setStatus("");
     setLocked(false);
@@ -228,6 +274,8 @@ export default function ThresholdOffering({
   useEffect(() => () => {
     generation.current += 1;
     gesture.current = null;
+    knock.current = null;
+    if (knockTimer.current !== null) clearTimeout(knockTimer.current);
     document.body.classList.remove("threshold-gesturing");
     const current = previewRef.current;
     if (current !== null) URL.revokeObjectURL(current.url);
@@ -244,15 +292,32 @@ export default function ThresholdOffering({
     }
   }, []);
 
-  const beginGesture = useCallback((draft: Omit<GestureDraft, "generation" | "seed" | "startedAt">) => {
+  const beginGesture = useCallback((
+    draft: Omit<GestureDraft, "generation" | "seed" | "startedAt" | "pressureReal" | "tremor" | "approach">,
+    initialPressureReal = false,
+  ) => {
     if (gesture.current !== null || previewRef.current !== null || phaseRef.current === "submitting") return false;
     dismissConfirmed();
+    // A press mid-knock-window is the next blow (or a hold that supersedes the knock): pause the
+    // window while the hand is down; release or cancel re-arms it.
+    if (knockTimer.current !== null) {
+      clearTimeout(knockTimer.current);
+      knockTimer.current = null;
+    }
+    const startedAt = performance.now();
+    // The Hesitation, snapshotted at the press: only the recent wander, re-stamped relative to
+    // its own beginning. Attached to the mark only if this gesture completes into one.
+    const recent = approachTrail.current.filter((sample) => startedAt - sample.t <= APPROACH_KEEP_MS);
+    const approach = recent.map((sample) => ({ x: sample.x, y: sample.y, t: sample.t - (recent[0]?.t ?? 0) }));
     const seed = crypto.getRandomValues(new Uint32Array(4));
     const next: GestureDraft = {
       ...draft,
       generation: ++generation.current,
       seed,
-      startedAt: performance.now(),
+      startedAt,
+      pressureReal: initialPressureReal,
+      tremor: [],
+      approach,
     };
     gesture.current = next;
     // A pointer hold is what iOS reads as a selection gesture; hold the document's selection shut for its
@@ -265,6 +330,94 @@ export default function ThresholdOffering({
     return true;
   }, [dismissConfirmed, onEnter, setLocked]);
 
+  // Renders a held gesture into its imprint preview: the five threads shaped by the hand's own
+  // tremor, with the approach's wander ghosted beneath the strike when there was one to keep.
+  const presentGesturePreview = useCallback(async (
+    current: GestureDraft, holdMs: number, statusLine = "",
+  ) => {
+    const imprint: ImprintGesture = {
+      seed: current.seed,
+      start: current.start,
+      end: current.end,
+      holdMs,
+      pressure: current.pressure,
+      pressureReal: current.pressureReal,
+      tremor: current.tremor,
+      approach: current.approach,
+    };
+    try {
+      const threads = buildImprintPaths(imprint);
+      const ghost = buildApproachPath(imprint);
+      const paths = ghost === null ? threads : [ghost, ...threads];
+      const blob = await renderImprintBlob(paths, pigmentAtIntensity(imprintHold(imprint)));
+      if (generation.current !== current.generation) return;
+      clearPreview();
+      const next = { blob, url: URL.createObjectURL(blob) };
+      previewRef.current = next;
+      setPreview(next);
+      setStatus(statusLine);
+      setPhase("preview");
+      setLocked(true);
+    } catch {
+      if (generation.current !== current.generation) return;
+      clearPreview();
+      setStatus(copy.imprintFailure);
+      setPhase(idlePhase());
+      setLocked(false);
+    }
+  }, [clearPreview, idlePhase, setLocked]);
+
+  // A knock's window has closed with the hand still: three or more blows are the rhythm mark;
+  // fewer resolve to the last blow's own imprint, so a lone tap still yields a mark, a beat later.
+  const resolveKnock = useCallback(async () => {
+    knockTimer.current = null;
+    const active = knock.current;
+    if (active === null || gesture.current !== null || previewRef.current !== null) return;
+    knock.current = null;
+    if (active.presses.length < KNOCK_MIN_PRESSES) {
+      const last = active.presses[active.presses.length - 1];
+      const draft = { ...active.lastDraft, generation: ++generation.current };
+      await presentGesturePreview(draft, Math.max(0, last.upMs - last.downMs));
+      return;
+    }
+    const presses = active.presses.slice(0, KNOCK_MAX_PRESSES);
+    const draftGeneration = ++generation.current;
+    const signature = knockSignature(presses);
+    let known = false;
+    try {
+      const stored = localStorage.getItem(KNOCK_STORAGE_KEY);
+      known = stored !== null && knockMatches(signature, JSON.parse(stored) as number[]);
+    } catch { /* a browser without storage simply never recognizes a returning rhythm */ }
+    try {
+      const color = pigmentAtIntensity(clamp(presses.length / KNOCK_MAX_PRESSES, 0, 1));
+      const blob = await renderImprintBlob(buildKnockPaths(presses), color);
+      if (generation.current !== draftGeneration) return;
+      clearPreview();
+      const next = { blob, url: URL.createObjectURL(blob) };
+      previewRef.current = next;
+      setPreview(next);
+      pendingKnockSignature.current = signature;
+      setStatus(known ? copy.knockKnown : "");
+      setPhase("preview");
+      setLocked(true);
+    } catch {
+      if (generation.current !== draftGeneration) return;
+      setStatus(copy.imprintFailure);
+      setPhase(idlePhase());
+      setLocked(false);
+    }
+  }, [clearPreview, idlePhase, presentGesturePreview, setLocked]);
+
+  const armKnockWindow = useCallback(() => {
+    if (knockTimer.current !== null) clearTimeout(knockTimer.current);
+    knockTimer.current = window.setTimeout(() => { void resolveKnock(); }, KNOCK_WINDOW_MS);
+  }, [resolveKnock]);
+
+  // cancelGesture is declared above resolveKnock (it participates in the tracking effect), so it
+  // reaches the resolver through this always-current ref instead of a stale closure.
+  const resolveKnockRef = useRef(resolveKnock);
+  resolveKnockRef.current = resolveKnock;
+
   const finishGesture = useCallback(async () => {
     const current = gesture.current;
     if (current === null) return;
@@ -274,30 +427,23 @@ export default function ThresholdOffering({
     if (current.pointerId !== null && releasingSeal?.hasPointerCapture(current.pointerId)) {
       releasingSeal.releasePointerCapture(current.pointerId);
     }
-    const imprint: ImprintGesture = {
-      seed: current.seed,
-      start: current.start,
-      end: current.end,
-      holdMs: Math.max(0, performance.now() - current.startedAt),
-      pressure: current.pressure,
-    };
-    try {
-      const blob = await renderImprintBlob(buildImprintPaths(imprint), pigmentAtIntensity(imprintHold(imprint)));
-      if (generation.current !== current.generation) return;
-      clearPreview();
-      const next = { blob, url: URL.createObjectURL(blob) };
-      previewRef.current = next;
-      setPreview(next);
-      setStatus("");
-      setPhase("preview");
-    } catch {
-      if (generation.current !== current.generation) return;
-      clearPreview();
-      setStatus(copy.imprintFailure);
+    const released = performance.now();
+    const holdMs = Math.max(0, released - current.startedAt);
+    if (holdMs < TAP_MAX_MS) {
+      // A blow, not a hold: the Knock accumulates it and waits for the hand to go still.
+      const firstDownAt = knock.current?.firstDownAt ?? current.startedAt;
+      const presses = knock.current?.presses ?? [];
+      presses.push({ downMs: current.startedAt - firstDownAt, upMs: released - firstDownAt });
+      knock.current = { firstDownAt, presses, lastDraft: current };
       setPhase(idlePhase());
+      setStatus(copy.knockAgain);
       setLocked(false);
+      armKnockWindow();
+      return;
     }
-  }, [clearPreview, idlePhase, setLocked]);
+    knock.current = null; // a real hold supersedes any knock in progress
+    await presentGesturePreview(current, holdMs);
+  }, [armKnockWindow, idlePhase, presentGesturePreview, setLocked]);
 
   // Pointer capture keeps a MOUSE drag tracking after the cursor leaves the 44px seal. It is
   // deliberately NOT set for touch: WebKit (iOS Safari) mis-handles setPointerCapture() on a touch
@@ -316,7 +462,7 @@ export default function ThresholdOffering({
       start: point,
       end: point,
       pressure: pointerPressure(event),
-    })) return;
+    }, event.pressure > 0 && event.pressure !== 0.5)) return;
     if (event.pointerType !== "touch") event.currentTarget.setPointerCapture(event.pointerId);
   };
 
@@ -326,15 +472,53 @@ export default function ThresholdOffering({
   // matches a real pointerId, so it is untouched. No-op whenever no pointer gesture is in flight.
   useEffect(() => {
     const readPressure = (pressure: number) => clamp(pressure > 0 ? pressure : 0.5, 0, 1);
+    const sealCenter = (): { x: number; y: number } | null => {
+      const seal = sealRef.current;
+      if (seal === null) return null;
+      const bounds = seal.getBoundingClientRect();
+      if (bounds.width <= 0) return null;
+      return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+    };
     const track = (event: PointerEvent): boolean => {
       const current = gesture.current;
       if (current === null || current.pointerId !== event.pointerId) return false;
       const seal = sealRef.current;
       if (seal !== null) current.end = pointFromClient(seal, event.clientX, event.clientY);
-      current.pressure = Math.max(current.pressure, readPressure(event.pressure));
+      // The Quiver: every coalesced sample of the holding hand, seal-relative, since the browser
+      // batches sub-frame movement -- exactly the involuntary drift the mark now keeps.
+      const center = sealCenter();
+      const events = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [event];
+      for (const sample of events.length > 0 ? events : [event]) {
+        if (sample.pressure > 0 && sample.pressure !== 0.5) current.pressureReal = true;
+        current.pressure = Math.max(current.pressure, readPressure(sample.pressure));
+        if (center !== null && current.tremor.length < TREMOR_MAX_SAMPLES) {
+          current.tremor.push({
+            x: sample.clientX - center.x,
+            y: sample.clientY - center.y,
+            t: performance.now() - current.startedAt,
+          });
+        }
+      }
       return true;
     };
-    const onMove = (event: PointerEvent) => { track(event); };
+    // The Hesitation: while no gesture is in flight, remember the pointer's recent wander near
+    // the page (throttled, bounded, this tab only). It reaches a mark only through beginGesture's
+    // snapshot when a press actually completes; otherwise it simply ages out.
+    const recordApproach = (event: PointerEvent) => {
+      const now = performance.now();
+      if (now - lastApproachAt.current < APPROACH_GAP_MS) return;
+      const center = sealCenter();
+      if (center === null) return;
+      lastApproachAt.current = now;
+      const trail = approachTrail.current;
+      trail.push({ x: event.clientX - center.x, y: event.clientY - center.y, t: now });
+      while (trail.length > 0 && (now - trail[0].t > APPROACH_KEEP_MS || trail.length > APPROACH_MAX_SAMPLES)) {
+        trail.shift();
+      }
+    };
+    const onMove = (event: PointerEvent) => {
+      if (!track(event) && gesture.current === null) recordApproach(event);
+    };
     const onUp = (event: PointerEvent) => { if (track(event)) void finishGesture(); };
     const onCancel = (event: PointerEvent) => {
       const current = gesture.current;
@@ -375,6 +559,7 @@ export default function ThresholdOffering({
   const fade = () => {
     generation.current += 1;
     gesture.current = null;
+    pendingKnockSignature.current = null;
     clearPreview();
     setStatus("");
     setPhase(idlePhase());
@@ -393,6 +578,15 @@ export default function ThresholdOffering({
       if (generation.current !== submissionGeneration) return;
       if ("id" in result) {
         onSubmitted(result.id);
+        // An offered knock is a rhythm the page may now honestly remember: the interval vector
+        // stays in this browser only, and recognition on return is a local comparison, not a
+        // server profile.
+        if (pendingKnockSignature.current !== null) {
+          try {
+            localStorage.setItem(KNOCK_STORAGE_KEY, JSON.stringify(pendingKnockSignature.current));
+          } catch { /* a browser without storage simply never recognizes a returning rhythm */ }
+          pendingKnockSignature.current = null;
+        }
         // Deliberately not clearPreview() here: that revokes the blob URL immediately, but the
         // confirmed seal below shows this exact mark once more for the length of the confirmed
         // window. Ownership of the URL transfers to confirmedMarkUrl and is revoked when that
@@ -435,6 +629,47 @@ export default function ThresholdOffering({
   const showSeal = phase === "idle" || phase === "holding" || phase === "receipt";
   const interactionOpen = phase === "holding" || preview !== null;
   const modalOpen = mobileViewport && preview !== null;
+
+  // The ink gathers under the finger: while a hold is in flight, the forming threads draw live at
+  // the seal, darkening through the pigment stops as the hold deepens -- the same geometry the
+  // release will keep, not a preview of something else. Reduced motion keeps the settled quiet.
+  useEffect(() => {
+    if (phase !== "holding") return;
+    if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const interval = window.setInterval(() => {
+      const current = gesture.current;
+      const canvas = formingRef.current;
+      if (current === null || canvas === null) return;
+      const holdMs = performance.now() - current.startedAt;
+      if (holdMs < TAP_MAX_MS) return; // a blow never gathers; only a hold does
+      const context = canvas.getContext("2d");
+      if (context === null) return;
+      try {
+        const paths = buildImprintPaths({
+          seed: current.seed,
+          start: current.start,
+          end: current.end,
+          holdMs,
+          pressure: current.pressure,
+          pressureReal: current.pressureReal,
+          tremor: current.tremor,
+        });
+        const scale = FORMING_SIZE / IMPRINT_SIZE;
+        context.clearRect(0, 0, FORMING_SIZE, FORMING_SIZE);
+        context.strokeStyle = pigmentAtIntensity(clamp(holdMs / 1_600, 0, 1));
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        for (const path of paths) {
+          context.beginPath();
+          context.lineWidth = Math.max(0.7, path.width * scale * 2.2);
+          context.moveTo(path.points[0].x * scale, path.points[0].y * scale);
+          for (const point of path.points.slice(1)) context.lineTo(point.x * scale, point.y * scale);
+          context.stroke();
+        }
+      } catch { /* a malformed frame simply skips; the release render is the one that matters */ }
+    }, 90);
+    return () => window.clearInterval(interval);
+  }, [phase]);
 
   useLayoutEffect(() => {
     if (!modalOpen) {
@@ -533,6 +768,15 @@ export default function ThresholdOffering({
           )}
           <p className="font-machine text-xs text-ink-faded">{copy.markAwaiting}</p>
           <p className="font-machine text-xs text-ink-faded">{copy.markWhatNext}</p>
+          {confirmedMarkUrl !== null && (
+            <a
+              href={confirmedMarkUrl}
+              download="pleroma-mark.png"
+              className="inline-flex min-h-11 items-center px-3 font-machine text-xs underline text-ink-faded temple-link-quiet"
+            >
+              {copy.keepCopy}
+            </a>
+          )}
         </div>
       )}
 
@@ -555,6 +799,15 @@ export default function ThresholdOffering({
             event.stopPropagation();
           }}
         >
+          {phase === "holding" && (
+            <canvas
+              ref={formingRef}
+              aria-hidden
+              width={FORMING_SIZE}
+              height={FORMING_SIZE}
+              className="threshold-forming"
+            />
+          )}
           <svg aria-hidden viewBox="0 0 44 44" className="h-11 w-11" fill="none">
             <path
               d="M22 7.5C30.6 7.5 36.5 13.7 36.5 22.2C36.5 30.5 30.2 36.7 21.8 36.5C13.5 36.3 7.4 30.2 7.6 21.9C7.8 13.4 13.8 7.5 22 7.5Z"

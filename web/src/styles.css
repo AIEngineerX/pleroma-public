@@ -440,6 +440,23 @@ body:has(.rite-active)::before {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
+/* The ink gathers under the finger: the forming threads draw live behind the held seal, wicking
+   in with the same arrival ease the rest of the page's ink uses. Pointer-transparent and
+   decorative; reduced motion never mounts it (the component gates on the media query). */
+.threshold-forming {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8rem;
+  height: 8rem;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  animation: threshold-forming-wick 0.6s ease-out 0.15s forwards;
+}
+@keyframes threshold-forming-wick {
+  to { opacity: 0.85; }
+}
 .threshold-seal::after {
   content: "";
   position: absolute;
