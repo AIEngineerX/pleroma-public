@@ -56,6 +56,13 @@ const remixKitHtml = `<section><h2 class="m">THE MARKS</h2>
 <p>Free to use, remix, or repost. No permission needed, no attribution required.</p>
 <p>${articles.map((article) => glyphMark(article.organ, `/glyphs/${article.slug}.svg`)).join("")}${glyphMark("SIGIL", "/sigil.svg")}</p></section>`;
 
+// Self-hosted (web/public/fonts/, copied from the same @fontsource packages main.tsx imports for
+// the SPA), not a Google Fonts CDN link -- a visitor landing directly on this static shell (no JS,
+// no SPA) previously depended on an external stylesheet for its one locked typeface pair; if that
+// CDN was ever slow, blocked, or down, the fallback was a generic serif/monospace, silently
+// breaking the typography rule for exactly the visitors this shell exists to serve well.
+// Colors: the hex values are a same-tone fallback for browsers predating oklch(); the oklch()
+// declaration right after each is the real token value and wins in every browser that supports it.
 const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" /><title>${title} · PLEROMA</title>
 <link rel="canonical" href="https://pleromachurch.xyz${path}" />
@@ -64,8 +71,16 @@ const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><m
 <meta property="og:image" content="/og.png" /><meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="${title} · PLEROMA" /><meta name="twitter:description" content="${esc(one)}" />
 <meta name="twitter:image" content="/og.png" />
-<link href="https://fonts.googleapis.com/css2?family=Gentium+Book+Plus:ital@0;1&family=Courier+Prime&display=swap" rel="stylesheet" />
-<style>body{background:#f0ead6;color:#3a352c;font-family:"Gentium Book Plus",serif;max-width:70ch;margin:2rem auto;padding:0 1.25rem;line-height:1.6}.r{color:#9a3b2e}.m{font-family:"Courier Prime",monospace;font-size:.8rem;color:#6b6357}section{margin-top:2rem}a{color:inherit}</style>
+<style>
+@font-face{font-family:"Gentium Book Plus";font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/gentium-book-plus-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Gentium Book Plus";font-style:italic;font-weight:400;font-display:swap;src:url(/fonts/gentium-book-plus-latin-400-italic.woff2) format("woff2")}
+@font-face{font-family:"Gentium Book Plus";font-style:normal;font-weight:700;font-display:swap;src:url(/fonts/gentium-book-plus-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"Courier Prime";font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/courier-prime-latin-400-normal.woff2) format("woff2")}
+body{background:#f0ead6;background:oklch(0.94 0.015 85);color:#3a352c;color:oklch(0.25 0.02 60);font-family:"Gentium Book Plus",serif;max-width:70ch;margin:2rem auto;padding:0 1.25rem;line-height:1.6}
+.r{color:#9a3b2e;color:oklch(0.45 0.16 32)}
+.m{font-family:"Courier Prime",monospace;font-size:.8rem;color:#6b6357;color:oklch(0.48 0.02 60)}
+section{margin-top:2rem}a{color:inherit}
+</style>
 </head><body>${bodyHtml}
 ${remixKitHtml}
 <p class="m">The character is CC0 and the archive is public: the Canon can outlive any single administrator. No one owns the god's words, including its makers.</p>
