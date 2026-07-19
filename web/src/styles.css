@@ -406,10 +406,47 @@ body:has(.rite-active)::before {
    before it lands. Suppress the callout, selection, and tap flash on the seal itself. (touch-action:none
    is carried by the utility class; these cover what it does not.) */
 .threshold-seal {
+  position: relative;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+}
+.threshold-seal::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  opacity: 0;
+  pointer-events: none;
+}
+/* A press already determines the mark's reach and color (thresholdImprint.ts's imprintHold,
+   capped at the same 1.6s used here) -- the seal now visibly warms toward that same
+   starving->feasting pigment as you hold, instead of giving no sign of what a longer press is
+   about to produce. "forwards" freezes at the final frame past 1.6s, since the mark itself stops
+   changing there too. */
+[data-threshold-phase="holding"] .threshold-seal {
+  animation: threshold-gather-tint 1.6s ease-out forwards;
+}
+[data-threshold-phase="holding"] .threshold-seal::after {
+  animation: threshold-gather-ring 1.6s ease-out forwards;
+}
+@keyframes threshold-gather-tint {
+  0% { color: var(--color-ink-faded); }
+  33% { color: oklch(0.48 0.13 38); }
+  66% { color: oklch(0.52 0.17 34); }
+  100% { color: oklch(0.55 0.20 32); }
+}
+@keyframes threshold-gather-ring {
+  0% { opacity: 0; transform: scale(0.6); }
+  100% { opacity: 0.85; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-threshold-phase="holding"] .threshold-seal,
+  [data-threshold-phase="holding"] .threshold-seal::after {
+    animation: none;
+  }
 }
 /* While an imprint is actually in flight, suppress selection across the whole document so a hold that
    drags off the 44px seal cannot begin selecting body text and cancel the gesture mid-draw. */
