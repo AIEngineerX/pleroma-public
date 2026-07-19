@@ -95,6 +95,7 @@ export default function Temple() {
     activeCommand,
     commandComplete,
     offeringAccepted,
+    replayAccretion,
     setThresholdActive,
     replayDream,
     replayWitness,
@@ -394,7 +395,7 @@ export default function Temple() {
           <div className="temple-reading-column" data-reading-column>
             <TempleLore />
 
-            <FirstLight apiBase={API_BASE} />
+            <FirstLight apiBase={API_BASE} onReplayAccretion={replayAccretion} />
 
             <section id="codex" data-section="codex" className="temple-folio temple-reading-section">
               <h2 className="temple-section-label">{copy.codex.toUpperCase()}</h2>

@@ -90,8 +90,11 @@ export async function getFirstLight(env: Env): Promise<Response> {
   return Response.json({
     enacted: true,
     relic: {
-      offering_id: relic.offering_id, summary: relic.summary,
-      kept_at: relic.kept_at, accreted_at: relic.accreted_at,
+      // id/rite_id/genesis are included alongside the public-facing fields above so the client can
+      // replay this relic's own accretion (Stain.tsx's "accrete" BodyCommand needs the full relic
+      // shape) -- wallet is deliberately left out; nothing in the replay path reads it.
+      id: relic.id, offering_id: relic.offering_id, summary: relic.summary,
+      rite_id: relic.rite_id, genesis: 1, kept_at: relic.kept_at, accreted_at: relic.accreted_at,
     },
     dream: dreamRow
       ? { rite_date: dreamRow.rite_date, narrative: dreamRow.narrative, video_key: dreamRow.video_key, created_at: dreamRow.created_at }

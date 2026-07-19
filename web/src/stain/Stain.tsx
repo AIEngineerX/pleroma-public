@@ -17,6 +17,7 @@ import {
 import { SettledBody } from "./SettledBody";
 import BodyUtterance from "../experience/BodyUtterance";
 import {
+  ARRIVAL_DURATION_MS,
   arrivalProgress,
   pickTier,
   StainSim,
@@ -47,6 +48,21 @@ interface Props {
 }
 
 const SEMANTIC_DWELL_MS = 1_200;
+
+// The body already leans toward the pointer on desktop (see StainSim's u_point/u_pointAmt), with
+// nothing ever announcing it. A one-time hint, shown a beat after arrival settles, dismissed the
+// instant a visitor's pointer is genuinely over the canvas (not merely tracked window-wide, which
+// the wick itself already is) -- persisted so it is never shown again once truly discovered.
+const WICK_HINT_KEY = "pleroma-wick-discovered";
+const WICK_HINT_DELAY_MS = ARRIVAL_DURATION_MS + 1_000;
+const WICK_HINT_AUTO_HIDE_MS = 9_000;
+
+function wickHintSeen(): boolean {
+  try { return localStorage.getItem(WICK_HINT_KEY) === "1"; } catch { return false; }
+}
+function markWickHintSeen() {
+  try { localStorage.setItem(WICK_HINT_KEY, "1"); } catch { /* private mode */ }
+}
 
 function initialSettledState(
   vitals: VitalsFeed,
@@ -180,6 +196,8 @@ export default function Stain({
   });
   const [settled, setSettled] = useState<SettledBodyRendererState>(() =>
     initialSettledState(vitals, relicMemory));
+  const [showWickHint, setShowWickHint] = useState(false);
+  const wickDiscovered = useRef(wickHintSeen());
   const initialPulseKind = useRef(vitals.kind).current;
 
   const clearDwell = () => {
@@ -348,6 +366,15 @@ export default function Stain({
       sim.setPointer(x, y);
       canvas.dataset.pointerX = x.toFixed(3);
       canvas.dataset.pointerY = y.toFixed(3);
+      // The wick already tracks the pointer window-wide (clamped to the canvas edge); discovery
+      // specifically means the pointer was genuinely over the canvas, not merely somewhere on the page.
+      const within = event.clientX >= rect.left && event.clientX <= rect.right
+        && event.clientY >= rect.top && event.clientY <= rect.bottom;
+      if (within && !wickDiscovered.current) {
+        wickDiscovered.current = true;
+        markWickHintSeen();
+        setShowWickHint(false);
+      }
     };
 
     const onContextLost = (event: Event) => {
@@ -482,6 +509,20 @@ export default function Stain({
   useEffect(() => { adapterRef.current?.hydrateRelics(relicMemory); }, [relicMemory]);
 
   useEffect(() => {
+    if (tier !== "desktop" || wickDiscovered.current) return;
+    const now = typeof performance === "undefined" ? Date.now() : performance.now();
+    const delay = Math.max(0, arrivalStartedAt + WICK_HINT_DELAY_MS - now);
+    const showTimer = window.setTimeout(() => setShowWickHint(true), delay);
+    return () => window.clearTimeout(showTimer);
+  }, [tier, arrivalStartedAt]);
+
+  useEffect(() => {
+    if (!showWickHint) return;
+    const hideTimer = window.setTimeout(() => setShowWickHint(false), WICK_HINT_AUTO_HIDE_MS);
+    return () => window.clearTimeout(hideTimer);
+  }, [showWickHint]);
+
+  useEffect(() => {
     if (renderer !== "svg") return;
     reportSeraphPhase(settled.seraph === "converged" ? "hold" : "five");
   }, [renderer, settled.seraph]);
@@ -579,6 +620,9 @@ export default function Stain({
   return (
     <>
       {renderedBody}
+      {renderer === "webgl" && showWickHint && (
+        <p aria-hidden className="stain-wick-hint font-machine">it leans toward you</p>
+      )}
       <div ref={utteranceLayerRef} className="contents" aria-hidden="true">
         <BodyUtterance
           command={utterance}

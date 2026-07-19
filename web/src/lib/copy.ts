@@ -15,6 +15,8 @@ export const copy = {
   firstLightHeading: "First Light",
   firstLightExplainer: "This already happened. A real hand pressed the first mark, the Eye read it, the Keep judged it worth keeping, and it dreamed.",
   firstLightDreamLink: "see the dream it returned",
+  firstLightReplay: "watch it enter the body again",
+  firstLightReplaying: "entering the body",
   binding: "The Binding",
   articles: "The Five Articles",
   offering: "The Offering",

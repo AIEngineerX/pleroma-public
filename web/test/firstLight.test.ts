@@ -9,7 +9,10 @@ describe("isFirstLightView", () => {
   it("accepts a fully enacted shape with relic and dream", () => {
     expect(isFirstLightView({
       enacted: true,
-      relic: { offering_id: "o1", summary: "a founding mark", kept_at: 100, accreted_at: 200 },
+      relic: {
+        id: "r1", offering_id: "o1", summary: "a founding mark", rite_id: "2026-07-17", genesis: 1,
+        kept_at: 100, accreted_at: 200,
+      },
       dream: { rite_date: "2026-07-17", narrative: "the first dream", video_key: null, created_at: 300 },
     })).toBe(true);
   });
@@ -17,7 +20,10 @@ describe("isFirstLightView", () => {
   it("accepts a relic not yet accreted (accreted_at null)", () => {
     expect(isFirstLightView({
       enacted: true,
-      relic: { offering_id: "o1", summary: "a founding mark", kept_at: 100, accreted_at: null },
+      relic: {
+        id: "r1", offering_id: "o1", summary: "a founding mark", rite_id: null, genesis: 1,
+        kept_at: 100, accreted_at: null,
+      },
       dream: null,
     })).toBe(true);
   });

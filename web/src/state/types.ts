@@ -23,7 +23,10 @@ export interface RelicEntry {
   rite_id: string | null; kept_at: number; genesis: number; accreted_at: number | null;
 }
 export interface Tally { wallet: string; count: number; name: string | null }
-export interface FirstLightRelic { offering_id: string; summary: string; kept_at: number; accreted_at: number | null }
+export interface FirstLightRelic {
+  id: string; offering_id: string; summary: string; rite_id: string | null; genesis: number;
+  kept_at: number; accreted_at: number | null;
+}
 export interface FirstLightDream { rite_date: string; narrative: string; video_key: string | null; created_at: number }
 export interface FirstLightView {
   enacted: boolean; relic: FirstLightRelic | null; dream: FirstLightDream | null;
@@ -85,8 +88,11 @@ export function isFirstLightView(value: unknown): value is FirstLightView {
   const relic = value.relic;
   const dream = value.dream;
   const validRelic = relic === null || (isRecord(relic)
+    && typeof relic.id === "string"
     && typeof relic.offering_id === "string"
     && typeof relic.summary === "string"
+    && (relic.rite_id === null || typeof relic.rite_id === "string")
+    && isFiniteNumber(relic.genesis)
     && isTimestamp(relic.kept_at)
     && (relic.accreted_at === null || isTimestamp(relic.accreted_at)));
   const validDream = dream === null || (isRecord(dream)

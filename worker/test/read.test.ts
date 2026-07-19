@@ -134,11 +134,19 @@ describe("first light api", () => {
     ).run();
 
     const res = await SELF.fetch("http://x/api/first-light");
-    const body = await res.json<{ enacted: boolean; relic: { summary: string; accreted_at: number | null } | null;
+    const body = await res.json<{ enacted: boolean; relic: { id: string; offering_id: string; summary: string;
+      rite_id: string | null; genesis: number; accreted_at: number | null; wallet?: string } | null;
       dream: { rite_date: string; narrative: string } | null }>();
     expect(body.enacted).toBe(true);
     expect(body.relic?.summary).toBe("a founding mark");
     expect(body.relic?.accreted_at).toBe(300);
+    // id/offering_id/rite_id/genesis are exposed so the client can replay this relic's own
+    // accretion (needs the full AccretedRelic shape); wallet is deliberately never included.
+    expect(body.relic?.id).toBe("fl-relic");
+    expect(body.relic?.offering_id).toBe("fl-off");
+    expect(body.relic?.rite_id).toBe("2026-07-17");
+    expect(body.relic?.genesis).toBe(1);
+    expect(body.relic?.wallet).toBeUndefined();
     expect(body.dream?.rite_date).toBe("2026-07-17");
     expect(body.dream?.narrative).toBe("the first dream");
   });

@@ -618,6 +618,20 @@ describe("controller polling truth", () => {
     expect(ledger.incorporated).toEqual(new Set(["offering\u001f300"]));
     expect(relicMemoryFromLedger(ledger)).toEqual([ink]);
     expect(planRelicRefresh(ledger, [confirmed], 6, false).requests).toEqual([]);
+
+    // A visitor-triggered replay of this SAME already-incorporated relic (Stain.tsx's
+    // "watch it enter the body again") carries a distinctly-prefixed "accrete:replay:..." id --
+    // it can never equal the real "accrete:{id}:{accreted_at}" id completeRelicCommand checks for,
+    // so both ledger functions treat it as a complete no-op: no re-queueing, no double-incorporation.
+    const replay: BodyCommand = {
+      id: `accrete:replay:${confirmed.offering_id}:${confirmed.accreted_at}`,
+      kind: "accrete",
+      relic: confirmed,
+      ink,
+    };
+    expect(activateRelicCommand(ledger, replay)).toBe(ledger);
+    expect(completeRelicCommand(ledger, replay)).toBe(ledger);
+    expect(relicMemoryFromLedger(ledger)).toEqual([ink]);
   });
 
   it("hydrates baseline accreted relics quietly and ignores stale sampling settlements", () => {

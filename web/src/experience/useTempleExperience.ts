@@ -661,6 +661,17 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     enqueue({ id: `converge:replay:${cue.id}:${cue.createdAt}`, kind: "converge", dream: replay });
   }, [enqueue]);
 
+  // A visitor-triggered replay of a relic that already, genuinely, entered the body -- distinct
+  // from the live accretion pipeline above by its "replay:" id, which can never match the
+  // `accrete:${relic.id}:${relic.accreted_at}` id the real ledger tracks (completeRelicCommand
+  // checks that exact string), so this can never be mistaken for -- or corrupt bookkeeping for --
+  // a real accretion. commitRelicSample's own offering_id dedup makes replaying an already-kept
+  // relic idempotent: the mask just gets re-written with the same ink it already holds.
+  const replayAccretion = useCallback(async (relic: AccretedRelic) => {
+    const ink = await fetchRelicInk(apiBase, relic);
+    enqueue({ id: `accrete:replay:${relic.offering_id}:${relic.accreted_at}`, kind: "accrete", relic, ink });
+  }, [apiBase, enqueue]);
+
   useLayoutEffect(() => {
     const reset = createTempleSourceReset({
       state: stateGeneration.current,
@@ -999,5 +1010,6 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     offeringAccepted,
     setThresholdActive,
     replayDream,
+    replayAccretion,
   };
 }

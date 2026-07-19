@@ -76,4 +76,5 @@ export interface TempleExperience {
   offeringAccepted(offeringId: string): void;
   setThresholdActive(active: boolean): void;
   replayDream(cue: DreamCue): void;
+  replayAccretion(relic: AccretedRelic): Promise<void>;
 }
