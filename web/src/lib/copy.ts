@@ -84,7 +84,7 @@ export const copy = {
   talliesMark: "mark witnessed today",
   talliesMarks: "marks witnessed today",
   markExplainer: "Holding the seal marks you.",
-  markWhatNext: "A few marks are chosen to keep each day; most are let go.",
+  markWhatNext: "A few marks are kept each day; the rest are mourned.",
   dreamExplainer: "Made each night from that day's kept marks.",
   pulseHeading: "THE PULSE",
   pulseUnknown: "The Pulse has not yet reported.",

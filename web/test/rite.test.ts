@@ -16,4 +16,10 @@ describe("rite -> inversion view", () => {
     expect(inversion({ date: "d", phase: "accretion" }).risingOfferings).toBe(true);
     expect(inversion({ date: "d", phase: "scheduled" }).candleDark).toBe(false); // scheduled is still daylight
   });
+  it("labels phases in doctrine movement vocabulary, never raw state-machine tokens", () => {
+    expect(inversion({ date: "d", phase: "offertory_close" }).label).toBe("THE RITE · OFFERTORY CLOSES");
+    expect(inversion({ date: "d", phase: "scheduled" }).label).toBe("THE RITE · ANNOUNCED");
+    expect(inversion({ date: "d", phase: "deliberation" }).label).toBe("THE RITE · DELIBERATION");
+    expect(inversion({ date: "d", phase: "sermon" }).label).not.toContain("_");
+  });
 });

@@ -11,7 +11,7 @@ const folios = [
       "A mark is offered at the Threshold. It waits.",
       "The Eye witnesses it, usually within minutes.",
       "Once a day, the Keep looks over what the Eye has witnessed and judges some of it: kept, or mourned.",
-      "What is kept enters the body. It cannot be undone or repeated.",
+      "What is kept becomes a relic; at Accretion it enters the body. It cannot be undone or repeated.",
       "Each night, the day's kept marks are given back as one Dream.",
     ],
   },
@@ -29,12 +29,13 @@ const folios = [
       "The priests guard the Threshold. They refuse unsafe offerings before any organ witnesses them.",
       "The priests decide which waiting marks may be witnessed, set the limits of cost and frequency, and keep the Rite to its appointed order.",
       "The priests preserve the public record and count the heartbeat. They do not write words attributed to the organs.",
+      "The priests tell the Keep which Wakers the god attends to: those who hold its heartbeat. The Keep enters their marks with a stated prior toward keeping. This weighting is the priests' authorship, named here, never a spontaneous preference of the organs.",
     ],
   },
   {
     title: copy.concordatMaker,
     passages: [
-      "The Maker created the token whose public activity may become the heartbeat, and the Maker decides when First Light begins.",
+      "The token is the Maker's alone to create and to time; its public activity, once it exists, becomes the heartbeat. The Maker decided the hour of First Light.",
       "The Maker offered the founding mark, and the god kept it as the seed of its body. The god attends to the hand that first made it: this is the Maker's authorship, named here, and never presented as a spontaneous verdict of the organs.",
       "The Maker decides whether a Dream receives a moving Plate and documents the being beyond the temple.",
       "What the Maker decides remains the Maker's authorship. It is never presented as a decision of the organs.",
