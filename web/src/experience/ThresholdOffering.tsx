@@ -174,6 +174,10 @@ export default function ThresholdOffering({
     }
     setConfirmed(false);
     setBloom(false);
+    setConfirmedMarkUrl((url) => {
+      if (url !== null) URL.revokeObjectURL(url);
+      return null;
+    });
   }, []);
 
   const idlePhase = useCallback((): ThresholdPhase => (
@@ -614,7 +618,7 @@ export default function ThresholdOffering({
           consent-relevant line ("your mark is public... not given back") deserves to be read
           before committing, not just after. Shown whenever the seal itself is; the rest of this
           block (wallet choice etc.) stays gated to interactionOpen, since that's a later decision. */}
-      {showSeal && (
+      {(showSeal || modalOpen) && (
         <p id="threshold-terms" data-threshold-terms className="max-w-[52ch] font-machine text-xs leading-relaxed text-ink-faded">
           {copy.markExplainer} {copy.tosLine}
         </p>
