@@ -205,22 +205,26 @@ cron is missed) and advances one phase per invocation.
 ```mermaid
 stateDiagram-v2
     [*] --> scheduled: openRite (00:50 UTC)
-    scheduled --> offertory_close: snapshot perceived count (60s)
-    offertory_close --> deliberation: no-op (60s)
-    deliberation --> accretion: KEEP runs (8 min)
-    accretion --> sermon: stamp accreted_at (60s)
-    sermon --> complete: TONGUE sermon + TTS (5 min)
+    scheduled --> offertory_close: snapshot perceived count
+    offertory_close --> deliberation: no-op
+    deliberation --> accretion: KEEP runs
+    accretion --> sermon: stamp accreted_at
+    sermon --> complete: TONGUE sermon + TTS
     complete --> [*]
-    scheduled --> failed: 3 retries OR deadline
-    deliberation --> failed: 3 retries OR deadline
-    sermon --> failed: 3 retries OR deadline
+    scheduled --> failed: 3 retries OR erroring 45 min
+    deliberation --> failed: 3 retries OR erroring 45 min
+    sermon --> failed: 3 retries OR erroring 45 min
     failed --> [*]
 ```
 
 - **Transitions** are CAS on `(date, from_phase)` — a lost race is a no-op.
-- **Failure**: after `MAX_PHASE_RETRIES = 3` or the phase deadline, the rite moves to `failed`;
-  only the CAS winner logs a PRIEST transcript and raises a private alert. Failure *detail*
-  stays in `config` (private); only the aggregate `degraded` boolean is public via `/api/state`.
+- **Failure**: after `MAX_PHASE_RETRIES = 3` strikes (~15 min apart at tick cadence) or a
+  45-minute deadline anchored at the FIRST failed attempt (`bumpRiteAttempts` re-stamps
+  `phase_started_at` on the 0 → 1 strike; earlier per-phase budgets of 1–8 min were measured
+  from phase entry, which made the first error terminal under real cadence), the rite moves to
+  `failed`; only the CAS winner logs a PRIEST transcript and raises a private alert. Failure
+  *detail* stays in `config` (private); only the aggregate `degraded` boolean is public via
+  `/api/state`.
 - **Recovery**: `advanceRiteLocked` drains *all* non-terminal rites oldest-first each run,
   bounded by a 5-min work budget inside the 10-min lock lease, so a multi-day outage can't
   double-advance a date.

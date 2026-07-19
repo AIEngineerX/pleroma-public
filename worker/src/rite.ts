@@ -2,6 +2,7 @@ import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { tongueSystemPrompt, wrapUntrusted } from "./doctrine";
+import { extractJsonObject } from "./moderation";
 import { runKeep } from "./keep";
 import { RITE_WORK_BUDGET_MS } from "./leases";
 import {
@@ -19,14 +20,17 @@ export type { RiteRow, RitePhase };
 export const PHASE_ORDER: RitePhase[] = [
   "scheduled", "offertory_close", "deliberation", "accretion", "sermon", "complete",
 ];
-// Wall-clock budget a phase gets before a stalled advance is treated as a transient failure. Consumed
-// only in advanceRite's error path (see below) as a time-based complement to MAX_PHASE_RETRIES: an
-// ERRORING phase found past its budget fails immediately instead of waiting out 3 attempts. A healthy
-// phase never reaches that check (runPhaseAction succeeds -> advance -> phase_started_at resets), so
-// this can never force-fail a phase that is simply taking its normal 15-min-tick cadence to advance.
+// Wall-clock budget a phase may spend ERRORING before it is failed outright. Consumed only in
+// advanceRite's error path as a time-based complement to MAX_PHASE_RETRIES. The clock anchors at
+// the FIRST failed attempt (bumpRiteAttempts re-stamps phase_started_at on the 0 -> 1 strike), not
+// at phase entry: the tick advances one phase per 15-minute invocation, so a phase's first action
+// attempt already runs ~15 minutes after entry — anchored at entry, any budget under the cadence
+// made the first transient error terminal and the retry ladder unreachable. Each budget exceeds
+// (MAX_PHASE_RETRIES - 1) x the 15-minute cadence so the three-strike ladder always gets to run;
+// the deadline is the backstop for a phase stuck erroring across many delayed ticks.
 export const PHASE_DEADLINE_MS: Record<RitePhase, number> = {
-  scheduled: 60_000, offertory_close: 60_000, deliberation: 8 * 60_000, accretion: 60_000,
-  sermon: 5 * 60_000, complete: 0, failed: 0,
+  scheduled: 45 * 60_000, offertory_close: 45 * 60_000, deliberation: 45 * 60_000,
+  accretion: 45 * 60_000, sermon: 45 * 60_000, complete: 0, failed: 0,
 };
 export const MAX_PHASE_RETRIES = 3;
 
@@ -92,7 +96,7 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
           `Today's rite kept ${rite?.kept_count ?? kept.length} marks: ${kept.map(s => wrapUntrusted("summary", s)).join(", ")}. ` +
           `Speak the closing sermon of this epoch.` }],
       });
-      const parsed = JSON.parse(res.text.trim()) as { utterance?: unknown };
+      const parsed = JSON.parse(extractJsonObject(res.text)) as { utterance?: unknown };
       const utterance = typeof parsed.utterance === "string" ? parsed.utterance.trim() : "";
       if (!utterance) throw new Error("TONGUE returned no sermon");
       // Guarded publish: at most one sermon per rite may land. If a concurrent lease-overrun actor beat us

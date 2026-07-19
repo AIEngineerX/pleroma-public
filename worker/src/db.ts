@@ -343,9 +343,17 @@ export async function advanceRitePhase(
   return r.meta.changes === 1;
 }
 
+// The first strike (0 -> 1) also re-anchors phase_started_at, so PHASE_DEADLINE_MS measures time
+// spent ERRORING rather than time since phase entry: under the 15-minute tick cadence a phase's
+// first action attempt already runs ~15 minutes after entry, which would otherwise put every first
+// error past the budget and make the retry ladder unreachable (SET expressions read the original
+// row, so the CASE sees the pre-increment attempt count).
 export async function bumpRiteAttempts(db: D1Database, date: string, now: number): Promise<number> {
   const r = await db.prepare(
-    `UPDATE rites SET phase_attempts = phase_attempts + 1, updated_at = ?2 WHERE date = ?1 RETURNING phase_attempts`
+    `UPDATE rites SET phase_attempts = phase_attempts + 1,
+        phase_started_at = CASE WHEN phase_attempts = 0 THEN ?2 ELSE phase_started_at END,
+        updated_at = ?2
+      WHERE date = ?1 RETURNING phase_attempts`
   ).bind(date, now).first<{ phase_attempts: number }>();
   return r?.phase_attempts ?? 0;
 }

@@ -77,7 +77,7 @@ describe("rite state machine", () => {
     expect((await getRite(env.DB, date))?.phase).toBe("failed");
   });
 
-  it("fails a stalled phase on its FIRST error once it is past its wall-clock budget (deadline, not retry count), and raises an alert", async () => {
+  it("fails a phase that has been ERRORING past its wall-clock budget before MAX retries (deadline, not retry count), and raises an alert", async () => {
     const date = "2026-07-19";
     const t = Date.parse(date + "T00:50:00Z");
     await openRite(env.DB, date, t);
@@ -89,13 +89,41 @@ describe("rite state machine", () => {
     await advanceRite(env, date, t); // -> accretion
     await advanceRite(env, date, t); // -> sermon
     expect((await getRite(env.DB, date))?.phase).toBe("sermon");
-    // Simulate a stall: the sermon has been sitting well past its budget (a real advance tick landing
-    // long after the phase started), NOT a fresh healthy phase that just happens to error once.
-    await env.DB.prepare(`UPDATE rites SET phase_started_at = ?2 WHERE date = ?1`)
+    // Simulate a phase stuck erroring: its first strike landed well past the budget ago (the 0 -> 1
+    // strike is what anchors the deadline clock; attempts = 1 makes this next error strike #2), so
+    // the deadline fails it now without waiting out the full retry ladder.
+    await env.DB.prepare(`UPDATE rites SET phase_started_at = ?2, phase_attempts = 1 WHERE date = ?1`)
       .bind(date, t - (PHASE_DEADLINE_MS.sermon + 60_000)).run();
-    const next = await advanceRite(env, date, t); // first error since the re-age -> should fail immediately
+    const next = await advanceRite(env, date, t); // erroring past budget -> fails before MAX retries
     expect(next).toBe("failed");
     expect(await activeAlerts(env.DB)).toContain("rite_failed");
+  });
+
+  it("a transient error one real tick (15 min) after phase entry is NOT terminal — the retry ladder survives cron cadence", async () => {
+    const date = "2026-07-27";
+    const t = Date.parse(date + "T00:50:00Z");
+    const TICK = 15 * 60_000;
+    await openRite(env.DB, date, t);
+    // A kept relic so the sermon phase reaches for the (keyless-unavailable) live voice and throws.
+    await insertRelic(env.DB, { id: "cadence-relic-1", offering_id: "cadence-o1", wallet: null,
+      summary: "a kept mark", rite_id: date, kept_at: t, genesis: 0, accreted_at: null });
+    // Real cadence: the tick advances one phase per invocation, 15 minutes apart, so a phase's
+    // FIRST action attempt always runs ~15 minutes after its phase_started_at was stamped.
+    let now = t;
+    for (const expected of ["offertory_close", "deliberation", "accretion", "sermon"] as const) {
+      now += TICK;
+      expect(await advanceRite(env, date, now)).toBe(expected);
+    }
+    // First keyless sermon error, one tick after phase entry: it must bump the ladder and stay in
+    // place — not terminally fail the whole public day on a single blip.
+    now += TICK;
+    expect(await advanceRite(env, date, now)).toBe("sermon");
+    expect((await getRite(env.DB, date))?.phase).toBe("sermon");
+    // The ladder then completes across later ticks: strikes two and three land it failed.
+    now += TICK;
+    expect(await advanceRite(env, date, now)).toBe("sermon");
+    now += TICK;
+    expect(await advanceRite(env, date, now)).toBe("failed");
   });
 
   it("does not re-publish the sermon on resume after a partial prior run (idempotent per rite date)", async () => {
@@ -150,8 +178,9 @@ describe("rite state machine", () => {
     await advanceRite(env, date, t); // -> deliberation
     await advanceRite(env, date, t); // -> accretion
     await advanceRite(env, date, t); // -> sermon
-    // Re-age past budget so the next (keyless) sermon error fails immediately.
-    await env.DB.prepare(`UPDATE rites SET phase_started_at = ?2 WHERE date = ?1`)
+    // Re-age past budget with a prior strike recorded (the first strike anchors the deadline
+    // clock), so the next (keyless) sermon error fails via the deadline.
+    await env.DB.prepare(`UPDATE rites SET phase_started_at = ?2, phase_attempts = 1 WHERE date = ?1`)
       .bind(date, t - (PHASE_DEADLINE_MS.sermon + 60_000)).run();
     expect(await advanceRite(env, date, t)).toBe("failed");
     // Public PRIEST/system line: states the failure, but carries no ms budget / attempt count / "deadline".
