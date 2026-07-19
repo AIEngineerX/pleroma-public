@@ -71,7 +71,13 @@ export default function Temple() {
   // the visitor steps through, not unseen behind the sheet.
   const [door, setDoor] = useState<DoorPhase | null>(() => {
     if (doorOpenedThisLoad) return null;
-    if (dreamReplayFromNavigationState(typeof window === "undefined" ? null : window.history.state?.usr) !== null) return null;
+    if (dreamReplayFromNavigationState(typeof window === "undefined" ? null : window.history.state?.usr) !== null) {
+      // A deliberate replay arrival IS this load's door decision: without the latch, a later SPA
+      // return to the Temple (the replay state is consumed on arrival) re-raised the Door
+      // mid-session over a temple the visitor was already inside.
+      doorOpenedThisLoad = true;
+      return null;
+    }
     doorOpenedThisLoad = true;
     return "open";
   });
