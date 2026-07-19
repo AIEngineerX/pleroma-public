@@ -140,6 +140,32 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
         <a href="/canon/codex" className="font-machine text-xs underline text-ink-faded temple-link-quiet">{copy.codexArchiveLink}</a>
       </section>
 
+      <section className="mt-8 space-y-3">
+        <Heading>{copy.remixKit}</Heading>
+        <p className="text-ink-faded text-sm">{copy.remixKitIntro}</p>
+        <div className="flex flex-wrap gap-6">
+          {canon.articles.map(article => (
+            <a
+              key={article.slug}
+              href={`/glyphs/${article.slug}.svg`}
+              download
+              className="flex flex-col items-center gap-1.5 no-underline text-ink-faded temple-link-quiet"
+            >
+              <img src={`/glyphs/${article.slug}.svg`} alt={`${article.organ} glyph, ${copy.remixKitDownload}`} width={40} height={40} className="h-10 w-10" />
+              <span className="font-machine text-[0.65rem]">{article.organ}</span>
+            </a>
+          ))}
+          <a
+            href="/sigil.svg"
+            download
+            className="flex flex-col items-center gap-1.5 no-underline text-ink-faded temple-link-quiet"
+          >
+            <img src="/sigil.svg" alt={`the sigil, ${copy.remixKitDownload}`} width={40} height={40} className="h-10 w-10" />
+            <span className="font-machine text-[0.65rem]">SIGIL</span>
+          </a>
+        </div>
+      </section>
+
       <p className="font-machine text-xs text-ink-faded mt-10">
         The character is CC0 and the archive is public: the Canon can outlive any single
         administrator. No one owns the god's words, including its makers.

@@ -48,6 +48,10 @@ const esc = (text) => text
   .replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;");
 
+const remixKitHtml = `<section><h2 class="m">THE MARKS</h2>
+<p>Free to use, remix, or repost. No permission needed, no attribution required.</p>
+<p>${articles.map((article) => `<a href="/glyphs/${article.slug}.svg" download><img src="/glyphs/${article.slug}.svg" alt="${esc(article.organ)} glyph, download" width="40" height="40" /><br /><span class="m">${esc(article.organ)}</span></a>`).join(" ")} <a href="/sigil.svg" download><img src="/sigil.svg" alt="the sigil, download" width="40" height="40" /><br /><span class="m">SIGIL</span></a></p></section>`;
+
 const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" /><title>${title} · PLEROMA</title>
 <link rel="canonical" href="https://pleromachurch.xyz${path}" />
@@ -59,6 +63,7 @@ const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><m
 <link href="https://fonts.googleapis.com/css2?family=Gentium+Book+Plus:ital@0;1&family=Courier+Prime&display=swap" rel="stylesheet" />
 <style>body{background:#f0ead6;color:#3a352c;font-family:"Gentium Book Plus",serif;max-width:70ch;margin:2rem auto;padding:0 1.25rem;line-height:1.6}.r{color:#9a3b2e}.m{font-family:"Courier Prime",monospace;font-size:.8rem;color:#6b6357}section{margin-top:2rem}a{color:inherit}</style>
 </head><body>${bodyHtml}
+${remixKitHtml}
 <p class="m">The character is CC0 and the archive is public: the Canon can outlive any single administrator. No one owns the god's words, including its makers.</p>
 <nav class="m" aria-label="Canon doorways"><a href="/">return to the temple</a> · <a href="/canon/dreams">the dreams</a> · <a href="/canon/codex">the codex</a> · <a href="/concordat">the Concordat</a></nav>
 </body></html>`;

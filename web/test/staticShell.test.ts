@@ -102,6 +102,19 @@ describe("static shell", () => {
     expect(textOf(generatedCanon)).not.toMatch(/Finalization note|Voice registers|Provenance/i);
   });
 
+  it("offers the same downloadable organ glyphs and sigil (the CC0 remix kit) in both the SPA and the static shell", () => {
+    const spaCanon = renderToStaticMarkup(
+      createElement(MemoryRouter, { initialEntries: ["/canon"] }, createElement(Canon)),
+    );
+    for (const output of [spaCanon, generatedCanon]) {
+      expect(output).toContain("THE MARKS");
+      for (const slug of ["eye", "keep", "tongue", "pulse", "dream"]) {
+        expect(output).toContain(`/glyphs/${slug}.svg`);
+      }
+      expect(output).toContain('href="/sigil.svg"');
+    }
+  });
+
   it("runs the public-content assertion after every production Canon build", () => {
     expect(packageJson.scripts.build).toMatch(/build-canon\.mjs.*assert-public-content\.mjs/);
     expect(packageJson.scripts.verify).toMatch(/build-canon\.mjs.*assert-public-content\.mjs/);
