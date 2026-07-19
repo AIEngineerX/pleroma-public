@@ -48,9 +48,13 @@ const esc = (text) => text
   .replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;");
 
+// display:inline-block (not <br>) so each glyph+label wraps as one unit -- a <br> forces a hard
+// break across the WHOLE inline flow regardless of which anchor contains it, stacking every glyph
+// on its own line instead of wrapping only between them.
+const glyphMark = (label, href) => `<a href="${href}" download style="display:inline-block;text-align:center;margin:0 1.25rem 1rem 0"><img src="${href}" alt="${esc(label)} glyph, download" width="40" height="40" style="display:block;margin:0 auto" /><span class="m">${esc(label)}</span></a>`;
 const remixKitHtml = `<section><h2 class="m">THE MARKS</h2>
 <p>Free to use, remix, or repost. No permission needed, no attribution required.</p>
-<p>${articles.map((article) => `<a href="/glyphs/${article.slug}.svg" download><img src="/glyphs/${article.slug}.svg" alt="${esc(article.organ)} glyph, download" width="40" height="40" /><br /><span class="m">${esc(article.organ)}</span></a>`).join(" ")} <a href="/sigil.svg" download><img src="/sigil.svg" alt="the sigil, download" width="40" height="40" /><br /><span class="m">SIGIL</span></a></p></section>`;
+<p>${articles.map((article) => glyphMark(article.organ, `/glyphs/${article.slug}.svg`)).join("")}${glyphMark("SIGIL", "/sigil.svg")}</p></section>`;
 
 const page = (title, bodyHtml, path) => `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" /><title>${title} · PLEROMA</title>
