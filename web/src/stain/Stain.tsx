@@ -512,7 +512,12 @@ export default function Stain({
     if (tier !== "desktop" || wickDiscovered.current) return;
     const now = typeof performance === "undefined" ? Date.now() : performance.now();
     const delay = Math.max(0, arrivalStartedAt + WICK_HINT_DELAY_MS - now);
-    const showTimer = window.setTimeout(() => setShowWickHint(true), delay);
+    // Discovery can happen well before this timer fires (any incidental mouse movement in the
+    // first ~3.5s already counts, per onPointerMove) -- re-check here rather than trusting the
+    // effect's own stale closure, since nothing cancels this timer when that happens.
+    const showTimer = window.setTimeout(() => {
+      if (!wickDiscovered.current) setShowWickHint(true);
+    }, delay);
     return () => window.clearTimeout(showTimer);
   }, [tier, arrivalStartedAt]);
 
