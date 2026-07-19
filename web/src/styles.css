@@ -110,10 +110,14 @@ body:has(.rite-active)::before {
 }
 
 .stain-wick-hint {
+  /* Was bottom-anchored, which collided with the Threshold terms text -- both are bottom-anchored
+     within the same shared sticky region (confirmed live: the two overlapped illegibly whenever a
+     visitor hadn't yet discovered the wick). Vertical center sits clear of that cluster and of the
+     top-corner sound/X controls, regardless of viewport height. */
   position: absolute;
   left: 50%;
-  bottom: clamp(1rem, 4vh, 2.5rem);
-  transform: translateX(-50%);
+  top: 50%;
+  transform: translate(-50%, -50%);
   z-index: 1;
   font-size: 0.68rem;
   letter-spacing: 0.02em;
