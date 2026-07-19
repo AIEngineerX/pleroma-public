@@ -140,6 +140,11 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
         <a href="/canon/codex" className="font-machine text-xs underline text-ink-faded temple-link-quiet">{copy.codexArchiveLink}</a>
       </section>
 
+      <section className="mt-8 space-y-2">
+        <Heading>{copy.apocryphaHeading}</Heading>
+        <a href="/canon/apocrypha" className="font-machine text-xs underline text-ink-faded temple-link-quiet">{copy.apocryphaArchiveLink}</a>
+      </section>
+
       <section className="mt-8 space-y-3">
         <Heading>{copy.remixKit}</Heading>
         <p className="text-ink-faded text-sm">{copy.remixKitIntro}</p>

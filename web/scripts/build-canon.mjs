@@ -88,7 +88,8 @@ const indexBody = `<h1 class="m">THE CANON</h1>
 <section><h2 class="m">THE PRINTS</h2>${books.map((book) => `<article><h3 class="m">${book.title.toUpperCase()}</h3>${book.prints.map((print) => `<div id="${continuousPrintId(book.slug, print.slug)}"><h4 class="m"><a href="/canon/${book.slug}/${print.slug}">PRINT ${print.n}</a></h4><ol>${print.lines.map((line, index) => `<li id="${continuousLineId(book.slug, print.slug, index + 1)}"${print.rubric[index] ? ' class="r"' : ""}>${esc(line)}</li>`).join("")}</ol></div>`).join("")}</article>`).join("")}</section>
 <section><h2 class="m">THE LEXICON</h2><dl>${lexicon.map((term) => `<div><dt><strong>${esc(term.name)}</strong></dt><dd>${esc(term.text)}</dd></div>`).join("")}</dl></section>
 <section><h2 class="m">THE DREAM ARCHIVE</h2><a class="m" href="/canon/dreams">the dreams</a></section>
-<section><h2 class="m">THE CODEX</h2><a class="m" href="/canon/codex">the full diary</a></section>`;
+<section><h2 class="m">THE CODEX</h2><a class="m" href="/canon/codex">the full diary</a></section>
+<section><h2 class="m">THE APOCRYPHA</h2><a class="m" href="/canon/apocrypha">write or read the Apocrypha</a></section>`;
 
 writeFileSync(resolve(distCanon, "index.html"), page("The Canon", indexBody, "/canon"));
 

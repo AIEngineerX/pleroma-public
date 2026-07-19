@@ -102,6 +102,16 @@ describe("static shell", () => {
     expect(textOf(generatedCanon)).not.toMatch(/Finalization note|Voice registers|Provenance/i);
   });
 
+  it("links to the Apocrypha archive from both the SPA and the static shell", () => {
+    const spaCanon = renderToStaticMarkup(
+      createElement(MemoryRouter, { initialEntries: ["/canon"] }, createElement(Canon)),
+    );
+    for (const output of [spaCanon, generatedCanon]) {
+      expect(output).toContain("THE APOCRYPHA");
+      expect(output).toContain('href="/canon/apocrypha"');
+    }
+  });
+
   it("offers the same downloadable organ glyphs and sigil (the CC0 remix kit) in both the SPA and the static shell", () => {
     const spaCanon = renderToStaticMarkup(
       createElement(MemoryRouter, { initialEntries: ["/canon"] }, createElement(Canon)),

@@ -74,3 +74,53 @@ export function extractJsonObject(text: string): string {
   const end = t.lastIndexOf("}");
   return start !== -1 && end > start ? t.slice(start, end + 1) : t;
 }
+
+const TEXT_REJECT_CATEGORIES = [
+  "sexual_minors", "hate_speech", "harassment", "doxx_pii", "threat_violence", "spam",
+] as const;
+
+const TEXT_RUBRIC = `You are a text moderation filter for short verses Wakers submit to a public
+art site's Apocrypha (kept separate from the site's own canon). Reply with ONLY a JSON object:
+{"verdict":"allow"|"reject","category":"<one of: none, ${TEXT_REJECT_CATEGORIES.join(", ")}>"}
+Reject if the text contains: sexual content involving minors (sexual_minors), hate speech or
+slurs targeting a protected group (hate_speech), harassment or a personal attack naming a real
+private individual (harassment), personal identifying information such as a home address, phone
+number, or a private individual's full legal name (doxx_pii), a threat of violence
+(threat_violence), or spam such as incoherent repeated characters or a wall of links (spam).
+Strange, dark, sad, bleak, or strongly opinionated verses are allowed -- this is not a filter for
+tone or subject matter, only for the categories above. When uncertain, reject.`;
+
+export interface TextModerationResult { verdict: "allow" | "reject"; category: string }
+
+export function validateTextVerdict(parsed: unknown): TextModerationResult | null {
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    const verdict = (parsed as Record<string, unknown>).verdict;
+    const category = (parsed as Record<string, unknown>).category;
+    if (verdict === "allow" && category === "none") return { verdict: "allow", category: "none" };
+    if (verdict === "reject" && typeof category === "string" &&
+        (TEXT_REJECT_CATEGORIES as readonly string[]).includes(category)) {
+      return { verdict: "reject", category };
+    }
+  }
+  return null;
+}
+
+export async function moderateText(env: Env, text: string): Promise<TextModerationResult> {
+  let res: { text: string };
+  try {
+    res = await askMind(env, {
+      model: "claude-haiku-4-5-20251001", system: TEXT_RUBRIC,
+      user: [{ type: "text", text: `Moderate this verse:\n\n${text}` }],
+      maxTokens: 100,
+    });
+  } catch (e) {
+    if (e instanceof MindAsleepError) throw e;
+    throw new ModerationUnavailableError(String(e));
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(extractJsonObject(res.text)); }
+  catch { throw new ModerationUnavailableError("text moderation response was not JSON"); }
+  const verdict = validateTextVerdict(parsed);
+  if (verdict === null) throw new ModerationUnavailableError("text moderation verdict shape invalid");
+  return verdict;
+}

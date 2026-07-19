@@ -12,6 +12,7 @@ import { advanceRite } from "./rite";
 import { getCodex, getDreams, getFirstLight, getRelics, getState, getTallies } from "./read";
 import { handlePulse } from "./pulse";
 import { serveAudio, serveDreamVideo, serveOfferingImage } from "./media";
+import { getApocrypha, handleApocryphaSubmit } from "./apocrypha";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", (c, next) => cors({ origin: c.env.CORS_ORIGIN })(c, next));
@@ -37,6 +38,13 @@ app.post("/api/pulse", (c) => handlePulse(c.env, c.req.raw));
 app.get("/api/audio/*", (c) => serveAudio(c.env, c.req.path.slice("/api/".length)));
 app.get("/api/dream/*", (c) => serveDreamVideo(c.env, c.req.path.slice("/api/".length)));
 app.get("/api/img/:id", (c) => serveOfferingImage(c.env, c.req.param("id")));
+app.post("/api/apocrypha", async (c) => {
+  const ip = c.req.header("cf-connecting-ip") ?? "0.0.0.0";
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: "bad request" }, 400); }
+  return handleApocryphaSubmit(c.env, body, ip);
+});
+app.get("/api/apocrypha", (c) => getApocrypha(c.env, c.req.query("cursor") ?? null));
 
 // Maker-only on-demand trigger for the scheduled jobs. Guarded by ADMIN_SECRET (constant-time header
 // compare); 404s when the secret is unset so the endpoint is invisible until provisioned. It runs the

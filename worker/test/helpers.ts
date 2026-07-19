@@ -14,6 +14,7 @@ import migration13 from "../migrations/0013_one_sermon_per_rite.sql?raw";
 import migration14 from "../migrations/0014_dream_render.sql?raw";
 import migration15 from "../migrations/0015_video_budget.sql?raw";
 import migration17 from "../migrations/0017_first_congregation.sql?raw";
+import migration18 from "../migrations/0018_apocrypha.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -107,6 +108,11 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   // reason as 0007-0015), then collapse whitespace before exec. (0016 only adds dreams.posted_at,
   // unrelated to any current test and not yet wired into this helper.)
   for (const stmt of migration17.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0018 creates the apocrypha table.
+  for (const stmt of migration18.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }
