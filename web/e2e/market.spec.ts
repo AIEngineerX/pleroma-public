@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { enterTemple } from "./helpers/door";
+import { expectDormantMarketOnly } from "./helpers/dormantMarket";
 import { TEST_PULSE_MINT } from "../scripts/e2e-config.mjs";
 import { executeD1, resetStack } from "./helpers/workerFixture";
 import { FINANCIAL_PROMISE, PROHIBITED_FINANCIAL_COPY } from "./helpers/copyGuards";
@@ -52,9 +53,9 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
   await market.screenshot({ path: `e2e/__shots__/market-${test.info().project.name}.png` });
 });
 
-test("the dormant page has no market rail, only the concordat link and socials", async ({ page }) => {
+test("the dormant page has no market rail, only the honest placeholder, concordat link and socials", async ({ page }) => {
   await enterTemple(page);
-  await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
+  await expectDormantMarketOnly(page);
   await expect(page.getByRole("link", { name: "the Concordat" })).toBeVisible();
   await expect(page.getByRole("link", { name: /On X/ })).toBeVisible();
 });

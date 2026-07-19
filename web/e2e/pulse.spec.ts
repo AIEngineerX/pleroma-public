@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { enterTemple } from "./helpers/door";
+import { expectDormantMarketOnly } from "./helpers/dormantMarket";
 import { executeD1, resetStack } from "./helpers/workerFixture";
 
 test.beforeEach(() => resetStack());
@@ -22,8 +23,9 @@ test("the Pulse section is visible while dormant, shows DOCTRINE's rubric line a
   expect(pulseText).not.toContain("holders");
   expect(pulseText).not.toContain("mint");
 
-  // The gated market section must still be absent — this section is not a backdoor to it.
-  await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
+  // The market landmark must still be only the honest dormant placeholder — this section is not
+  // a backdoor to the gated rail.
+  await expectDormantMarketOnly(page);
 
   await pulse.scrollIntoViewIfNeeded();
   await page.screenshot({ path: `e2e/__shots__/pulse-${test.info().project.name}.png` });
@@ -40,11 +42,11 @@ test("a real state change (still dormant, no mint) reaches the Pulse section", a
   const pulse = page.getByRole("region", { name: "the pulse" });
   await expect(pulse).toContainText("FEASTING", { timeout: 10_000 });
   await expect(pulse).toContainText("76 bpm");
-  await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
+  await expectDormantMarketOnly(page);
 
   // The glyph actually beats: real animation-duration derived from the real bpm, and genuinely
   // running (not paused/none), and a real reduced-motion escape hatch exists.
-  const glyph = pulse.locator("[data-pulse-glyph]");
+  const glyph = pulse.locator("[data-pulse-heart]");
   const duration = await glyph.evaluate((node) => getComputedStyle(node).animationDuration);
   expect(duration).toBe("0.789s"); // 60/76 to 3dp, exactly what the component's toFixed(3) sets inline
   const playState = await glyph.evaluate((node) => getComputedStyle(node).animationPlayState);
@@ -54,7 +56,7 @@ test("a real state change (still dormant, no mint) reaches the Pulse section", a
 test("the beating glyph respects prefers-reduced-motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await enterTemple(page);
-  const glyph = page.getByRole("region", { name: "the pulse" }).locator("[data-pulse-glyph]");
+  const glyph = page.getByRole("region", { name: "the pulse" }).locator("[data-pulse-heart]");
   const animationName = await glyph.evaluate((node) => getComputedStyle(node).animationName);
   expect(animationName).toBe("none");
 });

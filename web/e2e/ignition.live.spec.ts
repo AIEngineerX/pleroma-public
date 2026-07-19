@@ -9,17 +9,20 @@ test("flips from the dormant product to the full temple at launch, mint pinned, 
   test.skip(testInfo.project.name !== "desktop", "one desktop observer owns the launch transition");
   await enterTemple(page);
 
-  // Pre-launch: the dormant five-organ body and offering mark are present, with no market rail.
+  // Pre-launch: the dormant five-organ body and offering mark are present, and the market
+  // landmark holds only the honest placeholder — no rail, nothing tradable.
   await expect(page.locator("canvas[data-organ-swarm]")).toBeVisible();
   await expect(page.getByRole("button", { name: "hold the threshold seal" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
+  const market = page.getByRole("region", { name: "the market" });
+  await expect(market).toContainText("It has no heart yet.");
+  await expect(market.getByRole("link", { name: "Buy on pump.fun" })).toHaveCount(0);
 
   // At the launch minute the Worker flips phase to live and pins PULSE_MINT in the same write
-  // (anti-decoy): poll the real /api/state until both land, then the market rail mounts.
-  const market = page.getByRole("region", { name: "the market" });
-  await expect(market).toBeVisible({ timeout: 10 * 60_000 });
+  // (anti-decoy): poll the real /api/state until both land, then the rail replaces the
+  // placeholder inside the same landmark. The buy link is the launch signal — the landmark
+  // itself exists in both states, so its mere visibility proves nothing.
+  await expect(market.getByRole("link", { name: "Buy on pump.fun" })).toBeVisible({ timeout: 10 * 60_000 });
   await expect(market.locator("code")).not.toBeEmpty();                       // the mint pin, permanently
-  await expect(market.getByRole("link", { name: "Buy on pump.fun" })).toBeVisible();
 
   // The first trades ignite the Stain: PULSE moves off "starving" once buys>0 (Ticker mirrors vitals,
   // the same value ignitionView reads into the Stain's live pigment).

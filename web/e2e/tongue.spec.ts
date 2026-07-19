@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { enterTemple } from "./helpers/door";
+import { expectDormantMarketOnly } from "./helpers/dormantMarket";
 import { resetStack, seedTranscript } from "./helpers/workerFixture";
 
 test.beforeEach(() => resetStack());
@@ -71,5 +72,5 @@ test("a spoken sermon with matching recorded audio gets its own play control and
   await expect(playButton).toBeVisible();
   await expect(tongue.locator("[data-tongue-bars]")).toBeAttached();
 
-  await expect(page.getByRole("region", { name: "the market" })).toHaveCount(0);
+  await expectDormantMarketOnly(page);
 });
