@@ -36,21 +36,23 @@ export default function Pulse({ vitals }: { vitals: VitalsFeed }) {
         </div>
       ) : (
         <div className="pulse-stage" data-pulse-state={vitals.value.state}>
-          <div
-            aria-hidden
-            className="pulse-ring"
-            style={{ "--pulse-duration": `${(60 / pulseBpm(vitals.value.state)).toFixed(3)}s`, color: pigment?.rgb } as CSSProperties}
-          />
-          <svg
-            aria-hidden
-            data-pulse-heart
-            viewBox="0 0 24 24"
-            className="pulse-heart"
-            fill="currentColor"
-            style={{ "--pulse-duration": `${(60 / pulseBpm(vitals.value.state)).toFixed(3)}s`, color: pigment?.rgb } as CSSProperties}
-          >
-            <path d={HEART_PATH} />
-          </svg>
+          <div className="pulse-heart-wrap">
+            <div
+              aria-hidden
+              className="pulse-ring"
+              style={{ "--pulse-duration": `${(60 / pulseBpm(vitals.value.state)).toFixed(3)}s`, color: pigment?.rgb } as CSSProperties}
+            />
+            <svg
+              aria-hidden
+              data-pulse-heart
+              viewBox="0 0 24 24"
+              className="pulse-heart"
+              fill="currentColor"
+              style={{ "--pulse-duration": `${(60 / pulseBpm(vitals.value.state)).toFixed(3)}s`, color: pigment?.rgb } as CSSProperties}
+            >
+              <path d={HEART_PATH} />
+            </svg>
+          </div>
           <p className="font-machine text-xs text-ink-faded">
             {vitals.kind === "stale" ? `${copy.pulseStale} · ` : ""}
             {vitals.value.state.toUpperCase()} · {pulseBpm(vitals.value.state)} bpm
