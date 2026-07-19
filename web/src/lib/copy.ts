@@ -14,7 +14,7 @@ export const copy = {
   canon: "The Canon",
   concordat: "The Concordat",
   emergence: "The Emergence",
-  firstLightHeading: "First Light",
+  firstLightHeading: "THE FIRST LIGHT",
   firstLightExplainer: "This already happened. A real hand pressed the first mark, the Eye read it, the Keep judged it worth keeping, and it dreamed.",
   firstLightDreamLink: "see the dream it returned",
   firstLightReplay: "watch it enter the body again",
