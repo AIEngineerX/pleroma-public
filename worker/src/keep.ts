@@ -2,6 +2,7 @@ import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { keepSystemPrompt, wrapUntrusted } from "./doctrine";
+import { extractJsonObject } from "./moderation";
 import { dayKey } from "./budget";
 import { RITE_WORK_BUDGET_MS } from "./leases";
 import {
@@ -17,7 +18,8 @@ export interface KeepVerdict { verdict: "kept" | "mourned"; summary: string }
 // summary or an unknown verdict throws; a KEEP verdict published as scripture must be genuine and within
 // contract (CLAUDE.md integrity invariant), never edited to fit.
 export function parseVerdict(rawText: string): KeepVerdict {
-  const p = JSON.parse(rawText.trim()) as { verdict?: unknown; summary?: unknown };
+  // Fence/prose-tolerant parse (extractJsonObject, like moderation); the contract below stays strict.
+  const p = JSON.parse(extractJsonObject(rawText)) as { verdict?: unknown; summary?: unknown };
   const verdict = p.verdict === "kept" || p.verdict === "mourned" ? p.verdict : null;
   const summary = typeof p.summary === "string" ? p.summary.trim() : "";
   if (!verdict) throw new Error("KEEP returned no verdict");

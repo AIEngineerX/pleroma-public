@@ -89,10 +89,22 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
   try {
     await runEyeBatch(env, started + 8 * 60_000);
     // Sweep uses the remaining lease (until ~9.5 min in, before the 10-min lease ends / next 15-min tick),
-    // bounded so a large quarantine backlog can't overrun the lock and overlap the next tick.
-    try { await sweepQuarantine(env, Date.now(), started + 9.5 * 60_000); }
-    catch { /* best-effort; never fail the tick */ }
+    // bounded so a large quarantine backlog can't overrun the lock and overlap the next tick. A repeated
+    // silent sweep failure would let quarantine/ grow unbounded in R2, so it raises an operator alert.
+    try {
+      await sweepQuarantine(env, Date.now(), started + 9.5 * 60_000);
+      await (await import("./alert")).clearAlert(env, "quarantine_sweep_failed");
+    } catch (e) {
+      try { await (await import("./alert")).raiseAlert(env, "quarantine_sweep_failed", String(e)); }
+      catch { /* best-effort; never fail the tick */ }
+    }
     try { await sweepNonces(env.DB); } catch { /* best-effort */ }
+    // Retention sweeps for the two insert-only logs (rate windows, pulse dedup events): without
+    // these both tables — and the nightly backup that re-exports them — grow without bound.
+    try { const { sweepRateLimits } = await import("./ratelimit"); await sweepRateLimits(env.DB, Date.now()); }
+    catch { /* best-effort */ }
+    try { const { sweepPulseEvents } = await import("./pulse"); await sweepPulseEvents(env.DB, Date.now()); }
+    catch { /* best-effort */ }
     // Holder count refresh + attended-flag reconciliation (Task 9): bounded, best-effort, no-op pre-launch
     // (no mint configured). A Helius outage or DAS error here must never fail the tick.
     if (env.PULSE_MINT) {
@@ -105,10 +117,11 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
       try { const { renderDreams } = await import("./dream"); await renderDreams(env, Date.now()); }
       catch { /* best-effort; the render resumes next tick (deadline is the backstop) */ }
     }
-    // Auto-dispatch: rendered Plates and daily sermons post themselves to X, exactly once,
-    // labeled automated on the account. Inert until the four X secrets exist; an X outage
-    // here must never fail the tick (state is untouched, so the next tick retries).
-    try { const { dispatchArtifacts } = await import("./hermes"); await dispatchArtifacts(env, Date.now()); }
+    // Auto-dispatch: rendered Plates and daily sermons post themselves to X, at most once each
+    // (claim-before-send, hermes.ts), labeled automated on the account. Inert until the four X
+    // secrets exist; an X outage here must never fail the tick (a released claim retries next
+    // tick). The deadline bounds the dispatch inside this lock's lease.
+    try { const { dispatchArtifacts } = await import("./hermes"); await dispatchArtifacts(env, Date.now(), started + 9.5 * 60_000); }
     catch { /* best-effort; the dispatch retries next tick */ }
   } finally { await releaseLock(env.DB, "tick", holder); }
 }
@@ -145,16 +158,17 @@ export async function advanceRiteLocked(
 }
 
 // DREAM under its own `dream` lock (separate from `tick`/`rite` so it never blocks or is blocked by
-// them). Composes for the date whose rite just completed: the Daily Rite for date D opens at 00:50
-// UTC and advances via 15-min ticks, so by the 03:00 run it has had two hours of margin to reach
-// `complete` — still the SAME UTC date D, so the default is simply today's date.
+// them). An explicit date (the admin endpoint) composes exactly that date. The nightly cron is
+// state-driven: every recent completed rite with kept relics and no dream yet, oldest-first — so a
+// rite that reached `complete` only after that night's 03:00 run (outage recovery) still gets its
+// dream on the next run instead of losing the night forever.
 export async function runDreamLocked(env: Env, date?: string, now: number = Date.now()): Promise<void> {
   const holder = ulid();
   if (!(await acquireLock(env.DB, "dream", holder, 10 * 60_000))) return;
   try {
-    const d = date ?? utcDate(now);
-    const { composeDream } = await import("./dream");
-    await composeDream(env, d);
+    const { composeDream, composableRiteDates } = await import("./dream");
+    const dates = date !== undefined ? [date] : await composableRiteDates(env, now);
+    for (const d of dates) await composeDream(env, d);
   } finally { await releaseLock(env.DB, "dream", holder); }
 }
 

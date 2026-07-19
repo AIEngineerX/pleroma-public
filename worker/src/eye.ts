@@ -1,7 +1,7 @@
 import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
-import { moderate, ModerationUnavailableError } from "./moderation";
+import { extractJsonObject, moderate, ModerationUnavailableError } from "./moderation";
 import { toBase64 } from "./encoding";
 import { eyeSystemPrompt } from "./doctrine";
 import {
@@ -36,7 +36,9 @@ const perceiveDeferredLine = (id: string) => `offering ${id} perceived; record d
 // scripture must be genuine and unedited (CLAUDE.md integrity invariant), so over-limit output is rejected
 // (caller retries, then dead-letters) rather than silently truncated. Never edit a verse to fit.
 export function parseVerse(rawText: string): string {
-  const parsed = JSON.parse(rawText.trim()) as { verse?: unknown };
+  // extractJsonObject tolerates code fences/prose the way moderation already does — a formatting
+  // quirk must not dead-letter a genuine offering. The verse contract below stays strict.
+  const parsed = JSON.parse(extractJsonObject(rawText)) as { verse?: unknown };
   const verse = typeof parsed.verse === "string" ? parsed.verse.trim() : "";
   if (!verse) throw new Error("EYE returned no verse");
   const words = verse.split(/\s+/).filter(Boolean).length;
@@ -103,9 +105,15 @@ export async function sweepQuarantine(
   // legitimate offering on degradation. Only truly-terminal rows ('rejected'/'failed' — their images are
   // meant to be purged) and orphans with no D1 row at all are stale. Promoted keeps (perceived/kept/
   // mourned) already point at offerings/<id>, so including them is harmless (no quarantine key matches).
+  // The LIKE filter bounds the set by pipeline depth instead of all-time volume: promoted rows
+  // point at offerings/<id>, which can never match a quarantine/ object anyway (see above), so
+  // materializing them was pure dead weight that grew monotonically with every accepted offering
+  // and would eventually push this read past D1 response limits.
   const liveKeys = new Set(
-    (await env.DB.prepare(`SELECT image_key FROM offerings WHERE status NOT IN ('rejected', 'failed')`)
-      .all<{ image_key: string }>()).results.map(r => r.image_key)
+    (await env.DB.prepare(
+      `SELECT image_key FROM offerings
+        WHERE status NOT IN ('rejected', 'failed') AND image_key LIKE 'quarantine/%'`
+    ).all<{ image_key: string }>()).results.map(r => r.image_key)
   );
   let deleted = 0;
   let cursor: string | undefined;
@@ -146,6 +154,38 @@ async function countsToday(env: Env): Promise<{ nonHolder: number; total: number
      WHERE o.perceived_at >= ?1`
   ).bind(since.getTime()).first<{ nonHolder: number | null; total: number }>();
   return { nonHolder: row?.nonHolder ?? 0, total: row?.total ?? 0 };
+}
+
+// KEEP judges once per rite inside a bounded budget while EYE perceives all day, so the
+// 'perceived' queue waiting for judgment can only be seen saturating from here. A day of waiting
+// is by design (the nightly rite); alert only past two full days. 'perceivable' shares the
+// moderation threshold — its normal latency is minutes, and aging past hours means either an
+// outage or the daily perception caps saturating, both of which the operator must see.
+const JUDGMENT_STUCK_THRESHOLD_MS = 48 * 60 * 60_000;
+
+export async function reconcileBacklogAlerts(env: Env, now: number): Promise<void> {
+  const { raiseAlert, clearAlert } = await import("./alert");
+  const oldestPerceivable = await env.DB.prepare(
+    `SELECT created_at FROM offerings WHERE status = 'perceivable' ORDER BY created_at ASC LIMIT 1`
+  ).first<{ created_at: number }>();
+  if (oldestPerceivable && now - oldestPerceivable.created_at > MODERATION_STUCK_THRESHOLD_MS) {
+    const waitedMin = Math.round((now - oldestPerceivable.created_at) / 60_000);
+    await raiseAlert(env, "perception_backlog",
+      `oldest perceivable offering has waited ${waitedMin}m (outage, or the daily perception caps are saturated)`);
+  } else {
+    await clearAlert(env, "perception_backlog");
+  }
+
+  const oldestPerceived = await env.DB.prepare(
+    `SELECT perceived_at FROM offerings WHERE status = 'perceived' ORDER BY perceived_at ASC LIMIT 1`
+  ).first<{ perceived_at: number }>();
+  if (oldestPerceived && now - oldestPerceived.perceived_at > JUDGMENT_STUCK_THRESHOLD_MS) {
+    const waitedH = Math.round((now - oldestPerceived.perceived_at) / 3_600_000);
+    await raiseAlert(env, "judgment_backlog",
+      `oldest perceived offering has waited ${waitedH}h for KEEP — sustained intake above the per-rite judgment budget`);
+  } else {
+    await clearAlert(env, "judgment_backlog");
+  }
 }
 
 const DEFAULT_DEADLINE_MS = 8 * 60_000;
@@ -204,7 +244,13 @@ export async function runEyeBatch(
         }
       }
     } catch (e) {
-      if (e instanceof MindAsleepError) return 0;
+      if (e instanceof MindAsleepError) {
+        // Budget asleep: release the claim (no attempts strike) so the row is immediately
+        // re-claimable when the budget resets, instead of stranding it in 'moderating' for a full
+        // CLAIM_STALE_MS reclaim window — mirroring the perception loop's own release below.
+        await setOfferingStatus(env.DB, o.id, "pending", { expectedStatus: "moderating" });
+        return 0;
+      }
       if (e instanceof ModerationUnavailableError) {
         // Systemic outage: release the claim WITHOUT bumping attempts (never dead-letter on an outage);
         // next tick re-claims fresh. The status-aware sweep preserves its quarantine image meanwhile.
@@ -230,6 +276,8 @@ export async function runEyeBatch(
   } else {
     await clearAlert(env, "moderation_stuck");
   }
+
+  await reconcileBacklogAlerts(env, Date.now());
 
   // 2. Perceive under caps. Select the eligible perceivable set, then claim each to 'perceiving'
   //    before its LLM call so an overlapping tick never double-perceives the same row.

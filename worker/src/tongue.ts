@@ -2,6 +2,7 @@ import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { tongueSystemPrompt, wrapUntrusted } from "./doctrine";
+import { extractJsonObject } from "./moderation";
 import { addTranscript } from "./db";
 
 const CADENCE_PER_HOUR = 6;
@@ -14,7 +15,8 @@ export interface TongueTrigger {
 }
 
 export function parseUtterance(rawText: string): string {
-  const p = JSON.parse(rawText.trim()) as { utterance?: unknown };
+  // Fence/prose-tolerant parse (extractJsonObject, like moderation); the contract below stays strict.
+  const p = JSON.parse(extractJsonObject(rawText)) as { utterance?: unknown };
   const u = typeof p.utterance === "string" ? p.utterance.trim() : "";
   if (!u) throw new Error("TONGUE returned no utterance");
   if (u.split(/\s+/).filter(Boolean).length > 60) throw new Error("TONGUE utterance exceeds the 60-word contract");

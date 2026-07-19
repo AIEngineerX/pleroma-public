@@ -2,6 +2,13 @@ export const WINDOW_MS = 60_000;
 export const WALLET_LIMIT = 10; // signed offerings per wallet per minute
 export const IP_LIMIT = 20;     // offerings per source IP per minute
 
+// Expired windows are dead weight: one row per (bucket, minute) accrues forever otherwise — an
+// unbounded table the nightly backup also re-exports in full every night. Anything older than a
+// day is far past every limit window and safe to reap.
+export async function sweepRateLimits(db: D1Database, now: number): Promise<void> {
+  await db.prepare(`DELETE FROM rate_limits WHERE window_start < ?1`).bind(now - 24 * 60 * 60_000).run();
+}
+
 // Fixed-window counter in D1: increments the (bucket, window) row and returns whether the post-increment
 // count is within the limit. Atomic via the RETURNING'd count on the upsert, so concurrent posts cannot
 // both slip past the boundary.

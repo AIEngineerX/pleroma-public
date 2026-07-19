@@ -218,3 +218,10 @@ export async function handlePulse(env: Env, req: Request): Promise<Response> {
     await releaseLock(env.DB, "pulse", holder);
   }
 }
+
+// Retention: the idempotent dedup log only needs to cover Helius's redelivery horizon plus the
+// 15-minute vitals window; a week is comfortably past both, and without a sweep the log (and the
+// nightly backup that re-exports it in full) grows monotonically with all-time swap volume.
+export async function sweepPulseEvents(db: D1Database, now: number): Promise<void> {
+  await db.prepare(`DELETE FROM pulse_events WHERE seen_at < ?1`).bind(now - 7 * 24 * 60 * 60_000).run();
+}

@@ -1,7 +1,9 @@
 import { env } from "cloudflare:test";
 import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
-import { runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine, parseVerse } from "../src/eye";
+import {
+  reconcileBacklogAlerts, runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine, parseVerse,
+} from "../src/eye";
 import {
   insertOffering, offeringStatusById, publishPerception, setOfferingStatus, type OfferingRow,
 } from "../src/db";
@@ -73,6 +75,10 @@ describe("parseVerse", () => {
     expect(() => parseVerse("not json")).toThrow();
   });
 
+  it("tolerates a code-fenced but otherwise valid response — a formatting quirk must not dead-letter a genuine offering", () => {
+    expect(parseVerse('```json\n{"verse":"a quiet verse"}\n```')).toBe("a quiet verse");
+  });
+
   it("passes through a verse at or under the 40-word contract unchanged (aside from trimming)", () => {
     expect(parseVerse(JSON.stringify({ verse: "  a quiet verse  " }))).toBe("a quiet verse");
     const exactlyForty = Array.from({ length: 40 }, (_, i) => `w${i}`).join(" ");
@@ -82,6 +88,53 @@ describe("parseVerse", () => {
   it("throws on a verse over the 40-word contract instead of truncating it — a transcript published as scripture must be genuine and unedited", () => {
     const fortyOneWords = Array.from({ length: 41 }, (_, i) => `w${i}`).join(" ");
     expect(() => parseVerse(JSON.stringify({ verse: fortyOneWords }))).toThrow(/40-word contract/);
+  });
+});
+
+describe("moderation while the budget sleeps", () => {
+  it("releases the claimed row back to pending with no attempts strike, instead of stranding it in 'moderating'", async () => {
+    const id = "asleep-release";
+    await insertOffering(env.DB, { id, wallet: null, sig: null,
+      image_key: `quarantine/${id}`, sha256: id, status: "pending",
+      attempts: 0, created_at: Date.now(), perceived_at: null });
+    await env.RELICS.put(`quarantine/${id}`, PNG);
+    // Drain the organ budget so moderate() -> askMind throws MindAsleepError at the reservation.
+    await env.DB.prepare(`INSERT INTO config (key, value) VALUES ('cap:llm', '0')
+      ON CONFLICT(key) DO UPDATE SET value = '0'`).run();
+    try {
+      expect(await runEyeBatch(env)).toBe(0);
+      const row = await env.DB.prepare(`SELECT status, attempts FROM offerings WHERE id = ?1`)
+        .bind(id).first<{ status: string; attempts: number }>();
+      expect(row?.status).toBe("pending"); // immediately re-claimable when the budget resets
+      expect(row?.attempts).toBe(0);       // an asleep mind is never the offering's fault
+    } finally {
+      await env.DB.prepare(`DELETE FROM config WHERE key = 'cap:llm'`).run();
+    }
+  });
+});
+
+describe("reconcileBacklogAlerts — saturation in the later queue stages is operator-visible", () => {
+  it("alerts on aged perceivable and perceived backlogs, and clears both once they drain", async () => {
+    const now = Date.parse("2026-08-10T12:00:00Z");
+    await insertOffering(env.DB, { id: "backlog-perceivable", wallet: null, sig: null,
+      image_key: "quarantine/backlog-perceivable", sha256: "backlog-perceivable", status: "perceivable",
+      attempts: 0, created_at: now - 3 * 60 * 60_000, perceived_at: null });
+    await insertOffering(env.DB, { id: "backlog-perceived", wallet: null, sig: null,
+      image_key: "offerings/backlog-perceived", sha256: "backlog-perceived", status: "perceived",
+      attempts: 0, created_at: now - 60 * 60 * 60_000, perceived_at: now - 50 * 60 * 60_000 });
+    await reconcileBacklogAlerts(env, now);
+    const alerts = await activeAlerts(env.DB);
+    expect(alerts).toContain("perception_backlog");
+    expect(alerts).toContain("judgment_backlog");
+
+    // The backlog drains (rows leave the queue states): the next reconcile clears both alerts.
+    await env.DB.prepare(
+      `UPDATE offerings SET status = 'kept' WHERE id IN ('backlog-perceivable', 'backlog-perceived')`
+    ).run();
+    await reconcileBacklogAlerts(env, now);
+    const cleared = await activeAlerts(env.DB);
+    expect(cleared).not.toContain("perception_backlog");
+    expect(cleared).not.toContain("judgment_backlog");
   });
 });
 

@@ -226,3 +226,19 @@ describe("POST /api/pulse", () => {
     }
   });
 });
+
+describe("pulse_events retention", () => {
+  it("sweepPulseEvents reaps events older than a week and keeps the rest (the dedup log is otherwise insert-only)", async () => {
+    const { sweepPulseEvents } = await import("../src/pulse");
+    const now = Date.parse("2026-08-10T12:00:00Z");
+    await env.DB.prepare(
+      `INSERT INTO pulse_events (signature, seen_at, minute, side, sol_volume) VALUES
+        ('sweep-old-sig', ?1, 0, 'buy', 1), ('sweep-new-sig', ?2, 0, 'buy', 1)`
+    ).bind(now - 8 * 24 * 60 * 60_000, now - 60_000).run();
+    await sweepPulseEvents(env.DB, now);
+    const rows = (await env.DB.prepare(
+      `SELECT signature FROM pulse_events WHERE signature IN ('sweep-old-sig', 'sweep-new-sig')`
+    ).all()).results.map((r) => r.signature);
+    expect(rows).toEqual(["sweep-new-sig"]);
+  });
+});
