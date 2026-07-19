@@ -1,12 +1,18 @@
 import type { Env } from "./env";
 
-// Every persisted table. Migrations own the schema; the backup owns the rows. Update this list when a
-// migration adds a table (0006 relics, 0007 rites, 0008 pulse_events, 0009 dreams, 0010 rate_limits).
+// Every persisted table. Migrations own the schema; the backup owns the rows. When a migration adds
+// a table it must land here (or in EPHEMERAL_TABLES) in the same commit — backup.test.ts checks the
+// union against sqlite_master, so a forgotten table fails the suite instead of silently vanishing
+// from disaster recovery (0018 apocrypha was missed exactly that way).
 // 0012 dropped the incremental `vitals` table (vitals now derive from pulse_events).
 export const TABLES = [
   "offerings", "transcripts", "wallets", "nonces", "spend", "config",
-  "relics", "rites", "pulse_events", "dreams", "rate_limits",
+  "relics", "rites", "pulse_events", "dreams", "rate_limits", "apocrypha",
 ] as const;
+
+// Coordination state, not data: lease locks expire on their own wall clock and must never be
+// resurrected into a freshly restored database.
+export const EPHEMERAL_TABLES = ["locks"] as const;
 
 export async function exportBackup(env: Env, date: string): Promise<{ key: string; rows: number }> {
   const dump: Record<string, unknown[]> = {};
