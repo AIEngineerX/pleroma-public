@@ -675,6 +675,11 @@ body.threshold-gesturing * {
     background: color-mix(in oklch, var(--color-ground) 95%, transparent);
     padding: 0.4rem 0.7rem;
   }
+  /* The consent line prints ABOVE the seal on the compact sheet: it is read before the press
+     (the order consent needs), and the bottom-anchored stack below the seal shrinks to the
+     status line alone -- keeping the seal itself in thumb reach (below the top quarter of a
+     390px viewport) and the paper at the sticky area's foot clear of text (a11y.spec.ts). */
+  [data-threshold-terms] { order: -1; }
   .temple-reading-column {
     position: relative;
     z-index: 1;
@@ -911,7 +916,6 @@ body.threshold-gesturing * {
 .pulse-heart:not(.pulse-heart--quiet) {
   animation: pulse-heart-beat var(--pulse-duration, 1.5s) ease-in-out infinite;
   transform-origin: center;
-  filter: drop-shadow(0 0 0.85rem color-mix(in oklch, currentColor 45%, transparent));
 }
 /* The "watched" feeling DOCTRINE names for PULSE: a ring expands outward on each beat and fades,
    sized off the heart rather than the viewport so it scales with it at any width. */
@@ -931,6 +935,11 @@ body.threshold-gesturing * {
   .pulse-heart:not(.pulse-heart--quiet) { animation: none; }
   .pulse-ring { animation: none; opacity: 0; }
 }
+/* A stale feed keeps the last known pigment as historical residue while its beat eases to
+   stillness (the PULSE invariant): the body's swarm already stills itself; the section's own
+   heart and ring must match it, not keep presenting a live beat sourced from a dead feed. */
+[data-pulse-feed="stale"] .pulse-heart { animation: none; }
+[data-pulse-feed="stale"] .pulse-ring { animation: none; opacity: 0; }
 
 /* EYE's verse, coming into focus one word at a time — the same door-focus keyframe the Door's own
    intro line uses (see .temple-door-word), reused rather than redefined. */
