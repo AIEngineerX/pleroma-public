@@ -2,6 +2,7 @@ import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
 import { dreamSystemPrompt, wrapUntrusted } from "./doctrine";
+import { extractJsonObject } from "./moderation";
 import { getRite } from "./db";
 import { videoVendorFor, startRender, type VideoVendor } from "./imagine";
 import { raiseAlert } from "./alert";
@@ -31,6 +32,22 @@ export function clusterRelics(relics: RelicLite[]): { seed: RelicLite[]; wakers:
   return { seed, wakers };
 }
 
+// State-driven compose selection: recent completed rites that kept relics but have no dream yet,
+// oldest-first. The 03:00 cron used to compose only "today", so a rite that reached `complete`
+// after that night's run (outage recovery, a late-drained stranded rite) lost its dream forever —
+// the next run composed D+1, never D. Selecting by state makes every later run retry it until a
+// dream lands or the rite ages out of the window (same 48h bound the render kick uses).
+export async function composableRiteDates(env: Env, now: number, windowMs: number = KICK_WINDOW_MS): Promise<string[]> {
+  return (await env.DB.prepare(
+    `SELECT r.date FROM rites r
+      WHERE r.phase = 'complete'
+        AND r.updated_at > ?1
+        AND EXISTS (SELECT 1 FROM relics k WHERE k.rite_id = r.date)
+        AND NOT EXISTS (SELECT 1 FROM dreams d WHERE d.rite_date = r.date)
+      ORDER BY r.date ASC`
+  ).bind(now - windowMs).all<{ date: string }>()).results.map(r => r.date);
+}
+
 export async function composeDream(env: Env, date: string): Promise<string | null> {
   // Ordering: DREAM runs only after the rite for this date is complete.
   const rite = await getRite(env.DB, date);
@@ -50,7 +67,7 @@ export async function composeDream(env: Env, date: string): Promise<string | nul
       model: "claude-sonnet-5", system: DREAM_SYSTEM, maxTokens: 500,
       user: [{ type: "text", text: `Tonight's kept marks: ${seed.map(r => wrapUntrusted("summary", r.summary)).join(", ")}. Dream.` }],
     });
-    const p = JSON.parse(res.text.trim()) as { narrative?: unknown; video_prompt?: unknown };
+    const p = JSON.parse(extractJsonObject(res.text)) as { narrative?: unknown; video_prompt?: unknown };
     const narrative = typeof p.narrative === "string" ? p.narrative.trim() : "";
     const videoPrompt = typeof p.video_prompt === "string" ? p.video_prompt.trim() : "";
     if (!narrative || !videoPrompt) throw new Error("DREAM returned an incomplete dream");
@@ -69,7 +86,11 @@ export async function composeDream(env: Env, date: string): Promise<string | nul
     return id;
   } catch (e) {
     if (e instanceof MindAsleepError) return null;
-    return null; // never fabricate a dream; the nightly cron retries next run
+    // Never fabricate a dream. The nightly run is state-driven (composableRiteDates), so this date
+    // is re-selected until a dream lands or it ages out of the window — and the operator hears
+    // about the miss instead of a silent lost night.
+    await raiseAlert(env, "dream_compose_failed", `dream compose for ${date}: ${String(e)}`).catch(() => {});
+    return null;
   }
 }
 
