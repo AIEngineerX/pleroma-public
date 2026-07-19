@@ -12,6 +12,12 @@ interface RendererInstallLifecycle {
   lostContext: boolean;
 }
 
+interface CompletionLatchLike {
+  beginDispatch(): void;
+  hasCompleted(id: string): boolean;
+  tryComplete(id: string): boolean;
+}
+
 interface RepairStainApi {
   runSeraphTargetInstall?<T>(
     pending: Promise<T>,
@@ -27,6 +33,7 @@ interface RepairStainApi {
     onClaimed: (generation: number) => void,
     onAcknowledged: (id: string, generation: number) => void,
   ): number | null;
+  CompletionLatch?: new () => CompletionLatchLike;
 }
 
 const repairApi = stainModule as unknown as RepairStainApi;
@@ -119,6 +126,49 @@ describe("asynchronous Seraph renderer installation", () => {
       expect(completionCount).toBe(1);
     } finally {
       if (dwellTimer !== null) clearTimeout(dwellTimer);
+      adapter.dispose();
+    }
+  });
+});
+
+describe("replaying the same deterministic command id twice", () => {
+  it("both claimed dispatches complete — the second replay must not wedge the director — while duplicate acknowledgements within one dispatch are still swallowed", () => {
+    expect(typeof repairApi.CompletionLatch).toBe("function");
+    expect(typeof repairApi.runOwnedBodyDispatch).toBe("function");
+    if (repairApi.CompletionLatch === undefined || repairApi.runOwnedBodyDispatch === undefined) return;
+
+    // Visitor replays reuse deterministic ids (accrete:replay:<offering>:<accreted_at>), so the
+    // completion latch must reopen per CLAIMED dispatch, not persist per id for the mount.
+    const latch = new repairApi.CompletionLatch();
+    const ownership = new BodyDispatchOwnership();
+    const adapter = new SettledBodyRendererAdapter(() => undefined, true);
+    const command: BodyCommand = {
+      id: "quicken:replay-owner",
+      kind: "quicken",
+      organ: "EYE",
+      intensity: 0.5,
+      pipeline: "none",
+    };
+    let completions = 0;
+    const dispatchOnce = () => repairApi.runOwnedBodyDispatch?.(
+      ownership,
+      adapter,
+      command,
+      performance.now(),
+      () => { latch.beginDispatch(); },   // the component's onClaimed reopens the latch
+      (id) => { if (latch.tryComplete(id)) completions += 1; },
+    );
+
+    try {
+      expect(dispatchOnce()).not.toBeNull(); // first replay presents and completes
+      expect(completions).toBe(1);
+      expect(latch.tryComplete(command.id)).toBe(false); // duplicate ack within the dispatch: swallowed
+      expect(latch.hasCompleted(command.id)).toBe(true); // renderer re-install must not re-present it
+
+      ownership.invalidate(); // the active command cleared between replays (Stain's effect)
+      expect(dispatchOnce()).not.toBeNull(); // second replay of the SAME id claims again
+      expect(completions).toBe(2); // …and its completion reaches the director instead of being swallowed
+    } finally {
       adapter.dispose();
     }
   });

@@ -101,6 +101,23 @@ export async function runSeraphTargetInstall<T>(
   }
 }
 
+// The per-dispatch completion latch. Within one claimed dispatch a duplicate acknowledgement is
+// swallowed (tryComplete is once per id); a NEW claimed dispatch clears the latch first
+// (beginDispatch), because visitor replays reuse deterministic command ids — without the clear,
+// the second replay of the same relic or dream completed invisibly, onCommandComplete never
+// fired, and the director wedged: every later utterance, sermon, dream, and accretion queued
+// silently for the rest of the page view.
+export class CompletionLatch {
+  private completedId: string | null = null;
+  beginDispatch(): void { this.completedId = null; }
+  hasCompleted(id: string): boolean { return this.completedId === id; }
+  tryComplete(id: string): boolean {
+    if (this.completedId === id) return false;
+    this.completedId = id;
+    return true;
+  }
+}
+
 export function runOwnedBodyDispatch(
   ownership: BodyDispatchOwnership,
   adapter: BodyRendererAdapter,
@@ -143,7 +160,7 @@ export default function Stain({
   const lostContext = useRef(false);
   const commandGeneration = useRef(0);
   const dispatchOwnership = useRef(new BodyDispatchOwnership());
-  const completedCommandId = useRef<string | null>(null);
+  const completionLatch = useRef(new CompletionLatch()).current;
   const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presentedCommandRef = useRef<BodyCommand | null>(null);
   const anchorsRef = useRef<Readonly<Record<BodyAnchorName, BodyAnchor>>>(BODY_ANCHORS);
@@ -208,10 +225,9 @@ export default function Stain({
 
   const finishCommand = useRef<(id: string, generation: number) => void>(() => undefined);
   finishCommand.current = (id, generation) => {
-    if (completedCommandId.current === id) return;
     if (generation !== commandGeneration.current) return;
     if (latest.current.activeCommand?.id !== id) return;
-    completedCommandId.current = id;
+    if (!completionLatch.tryComplete(id)) return;
     setCompletion((current) => ({ id, count: current.count + 1 }));
     latest.current.onCommandComplete(id);
   };
@@ -260,6 +276,9 @@ export default function Stain({
       startedAt,
       (generation) => {
         clearDwell();
+        // A fresh claimed dispatch may legitimately reuse a deterministic replay id: the latch
+        // opens for it here, and still swallows duplicate acknowledgements within this dispatch.
+        completionLatch.beginDispatch();
         commandGeneration.current = generation;
       },
       (id, generation) => acknowledgeCommand.current(command, id, generation),
@@ -321,7 +340,7 @@ export default function Stain({
         adapter.restoreSemanticSnapshot(semanticSnapshot);
       }
       const replay = replayActive ? latest.current.activeCommand : null;
-      if (replay !== null && completedCommandId.current !== replay.id) {
+      if (replay !== null && !completionLatch.hasCompleted(replay.id)) {
         presentedCommandRef.current = replay;
         setPresentedCommand(replay);
         const now = typeof performance === "undefined" ? Date.now() : performance.now();
@@ -433,7 +452,7 @@ export default function Stain({
       sim.start();
       latest.current.onSim?.(sim);
       const replay = latest.current.activeCommand;
-      if (replay !== null && completedCommandId.current !== replay.id) {
+      if (replay !== null && !completionLatch.hasCompleted(replay.id)) {
         presentedCommandRef.current = replay;
         setPresentedCommand(replay);
         dispatchCommand(sim, replay, latest.current.presentationStartedAt);
