@@ -8,6 +8,8 @@ export const copy = {
   buy: "Buy on pump.fun",
   chart: "Open the chart",
   howToBuy: "How to buy",
+  dormantMarket: "It has no heart yet. There is no mint, and nothing to buy.",
+  dormantCountdown: "trading opens in",
   socials: "On X",
   canon: "The Canon",
   concordat: "The Concordat",

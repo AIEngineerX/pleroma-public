@@ -35,6 +35,7 @@ import Tongue from "../tongue/Tongue";
 import { inversion } from "../state/rite";
 import { ignitionView } from "../ignition/ignition";
 import Mint from "../market/Mint";
+import DormantMarket from "../market/DormantMarket";
 import Buy from "../market/Buy";
 import Chart from "../market/Chart";
 import HowToBuy from "../market/HowToBuy";
@@ -456,6 +457,9 @@ export default function Temple() {
                 <HowToBuy mint={state.mint} />
                 <Mint mint={state.mint} />
               </section>
+            )}
+            {view?.dormant && (
+              <DormantMarket countdownTo={state?.countdown_to ?? null} />
             )}
 
             <section data-section="canon-doorway" className="temple-doorway temple-reading-section">
