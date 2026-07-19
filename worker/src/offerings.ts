@@ -82,5 +82,13 @@ export async function handleOffering(env: Env, form: FormData, clientIp: string)
     throw e;
   }
 
-  return Response.json({ id, status: "pending" }, { status: 201 });
+  // How many marks were OFFERED today, this one included -- not /api/tallies's `marks`, which
+  // counts only what the Eye has WITNESSED (perceived_at set, set later by the Daily Rite, not at
+  // offer time). Offertory-stage count is the one true thing to show at the confirmation moment.
+  const dayStart = Date.parse(new Date(now).toISOString().slice(0, 10) + "T00:00:00.000Z");
+  const offeredToday = (await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM offerings WHERE created_at >= ?1 AND created_at < ?2`
+  ).bind(dayStart, dayStart + 86_400_000).first<{ n: number }>())?.n ?? 1;
+
+  return Response.json({ id, status: "pending", offeredToday }, { status: 201 });
 }

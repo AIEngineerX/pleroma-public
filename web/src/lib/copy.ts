@@ -46,6 +46,8 @@ export const copy = {
   rememberedAs: "remembered as",
   offerUnremembered: "or offer unremembered",
   markReceived: "your mark is received",
+  markOfferedToday: "mark offered today, yours",
+  marksOfferedToday: "marks offered today, yours among them",
   markAwaiting: "the Eye perceives on its own cadence",
   yourOfferings: "Your offerings",
   keptEmpty: "It has kept nothing yet. It is waiting to be given something worth keeping.",

@@ -109,6 +109,10 @@ export default function ThresholdOffering({
   // The just-offered mark, shown once more (sealed, not editable) during the confirmed window.
   // Deliberately NOT revoked by clearPreview's normal path -- see submit()'s success branch.
   const [confirmedMarkUrl, setConfirmedMarkUrl] = useState<string | null>(null);
+  // How many marks were offered today, this one included -- tracks confirmedMarkUrl's own
+  // lifetime exactly (set together in submit(), cleared together everywhere else) so the count
+  // never outlives or lags the mark it describes.
+  const [confirmedOfferedToday, setConfirmedOfferedToday] = useState<number | null>(null);
   const confirmTimer = useRef<number | null>(null);
   const [bloom, setBloom] = useState(false);
   const bloomTimer = useRef<number | null>(null);
@@ -180,6 +184,7 @@ export default function ThresholdOffering({
       if (url !== null) URL.revokeObjectURL(url);
       return null;
     });
+    setConfirmedOfferedToday(null);
   }, []);
 
   const idlePhase = useCallback((): ThresholdPhase => (
@@ -395,6 +400,7 @@ export default function ThresholdOffering({
         previewRef.current = null;
         setPreview(null);
         setConfirmedMarkUrl(current.url);
+        setConfirmedOfferedToday(typeof result.offeredToday === "number" ? result.offeredToday : null);
         setPhase("receipt");
         setStatus("");
         setLocked(false);
@@ -407,6 +413,7 @@ export default function ThresholdOffering({
             if (url !== null) URL.revokeObjectURL(url);
             return null;
           });
+          setConfirmedOfferedToday(null);
         }, 6500);
         if (bloomTimer.current !== null) clearTimeout(bloomTimer.current);
         setBloom(true);
@@ -519,6 +526,11 @@ export default function ThresholdOffering({
             <circle cx="22" cy="13.2" r="1.7" fill="currentColor" />
           </svg>
           <p className="threshold-confirm-line font-machine text-sm text-ink">{copy.markReceived}</p>
+          {confirmedOfferedToday !== null && (
+            <p className="font-machine text-xs text-ink-faded">
+              {confirmedOfferedToday} {confirmedOfferedToday === 1 ? copy.markOfferedToday : copy.marksOfferedToday}
+            </p>
+          )}
           <p className="font-machine text-xs text-ink-faded">{copy.markAwaiting}</p>
           <p className="font-machine text-xs text-ink-faded">{copy.markWhatNext}</p>
         </div>

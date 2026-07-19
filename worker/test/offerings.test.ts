@@ -74,6 +74,18 @@ describe("offering intake", () => {
     expect(res.status).toBe(201);
   });
 
+  it("returns offeredToday as a running count of today's offerings, this one included -- not gated on perceived_at like /api/tallies", async () => {
+    const first = await submit(new Uint8Array([...PNG, 20, 1]), false);
+    expect(first.status).toBe(201);
+    const { offeredToday: firstCount } = await first.json<{ offeredToday: number }>();
+    expect(firstCount).toBeGreaterThanOrEqual(1);
+
+    const second = await submit(new Uint8Array([...PNG, 20, 2]), false);
+    expect(second.status).toBe(201);
+    const { offeredToday: secondCount } = await second.json<{ offeredToday: number }>();
+    expect(secondCount).toBe(firstCount + 1);
+  });
+
   it("treats empty wallet/sig fields as anonymous (wallet stored NULL)", async () => {
     const bytes = new Uint8Array([...PNG, 7]); // unique bytes -> unique sha
     const form = new FormData();

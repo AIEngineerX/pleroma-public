@@ -50,7 +50,7 @@ export async function buildOffering(apiBase: string, image: Blob, wallet: Wallet
 
 // POST the built multipart body. 201 = accepted (offering row created); any 4xx is a quiet, honest
 // rejection (rate-limited, duplicate, or otherwise not accepted) — never thrown, always rendered.
-export async function postOffering(apiBase: string, form: FormData): Promise<{ id: string; status: string } | { error: string; status: number }> {
+export async function postOffering(apiBase: string, form: FormData): Promise<{ id: string; status: string; offeredToday?: number } | { error: string; status: number }> {
   const res = await fetch(`${apiBase}/api/offerings`, { method: "POST", body: form });
   if (res.status === 201) return await res.json();
   return { error: (await res.json().catch(() => ({}))).error ?? "rejected", status: res.status };
