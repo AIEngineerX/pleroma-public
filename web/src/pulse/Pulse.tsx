@@ -12,6 +12,11 @@ const PULSE_ARTICLE = canon.articles.find((article) => article.organ === "PULSE"
 
 const HEART_PATH = "M12 21.4 C 6.5 16.9 2 12.9 2 8.6 C 2 5.5 4.4 3 7.5 3 C 9.4 3 11 3.9 12 5.3 " +
   "C 13 3.9 14.6 3 16.5 3 C 19.6 3 22 5.5 22 8.6 C 22 12.9 17.5 16.9 12 21.4 Z";
+// The exact trace the header's own PULSE glyph draws (codex/glyphs.tsx), scaled 1.5x (16 -> 24
+// viewBox) and run through the heart outline -- so the heart stays etched linework like every
+// other sigil on the site (the organ glyphs, the Threshold seal), instead of a filled icon
+// contradicting the abstract waveform right beside it in the same heading.
+const EKG_PATH = "M3 12 L7.5 12 L10.5 4.5 L13.5 19.5 L16.5 12 L21 12";
 
 // The Pulse's home on the Temple, always visible — unlike Buy/Chart/Mint it needs no mint to be
 // truthful: DOCTRINE's own rubric line for PULSE plus the same qualitative state/heartbeat that
@@ -29,7 +34,16 @@ export default function Pulse({ vitals }: { vitals: VitalsFeed }) {
       {PULSE_ARTICLE && <p className="font-liturgy italic text-rubric-body">{PULSE_ARTICLE.line}</p>}
       {vitals.kind === "unknown" ? (
         <div className="pulse-stage">
-          <svg aria-hidden viewBox="0 0 24 24" className="pulse-heart pulse-heart--quiet" fill="currentColor">
+          <svg
+            aria-hidden
+            viewBox="0 0 24 24"
+            className="pulse-heart pulse-heart--quiet"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d={HEART_PATH} />
           </svg>
           <p className="font-machine text-xs text-ink-faded max-w-[44ch]">{copy.pulseUnknown}</p>
@@ -47,10 +61,15 @@ export default function Pulse({ vitals }: { vitals: VitalsFeed }) {
               data-pulse-heart
               viewBox="0 0 24 24"
               className="pulse-heart"
-              fill="currentColor"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
               style={{ "--pulse-duration": `${(60 / pulseBpm(vitals.value.state)).toFixed(3)}s`, color: pigment?.rgb } as CSSProperties}
             >
               <path d={HEART_PATH} />
+              <path d={EKG_PATH} strokeWidth="1.6" opacity="0.95" />
             </svg>
           </div>
           <p className="font-machine text-xs text-ink-faded">

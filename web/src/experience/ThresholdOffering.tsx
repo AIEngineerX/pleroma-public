@@ -11,9 +11,11 @@ import { createPortal } from "react-dom";
 import { copy } from "../lib/copy";
 import WalletButton from "../offering/WalletButton";
 import { buildOffering, postOffering, type WalletHandle } from "../offering/wallet";
+import { pigmentAtIntensity } from "../state/pigment";
 import {
   IMPRINT_SIZE,
   buildImprintPaths,
+  imprintHold,
   renderImprintBlob,
   type ImprintGesture,
 } from "./thresholdImprint";
@@ -275,7 +277,7 @@ export default function ThresholdOffering({
       pressure: current.pressure,
     };
     try {
-      const blob = await renderImprintBlob(buildImprintPaths(imprint));
+      const blob = await renderImprintBlob(buildImprintPaths(imprint), pigmentAtIntensity(imprintHold(imprint)));
       if (generation.current !== current.generation) return;
       clearPreview();
       const next = { blob, url: URL.createObjectURL(blob) };

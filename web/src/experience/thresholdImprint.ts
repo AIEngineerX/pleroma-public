@@ -63,6 +63,12 @@ function rounded(value: number): number {
   return Math.round(value * 1_000) / 1_000;
 }
 
+// How much of a full hold (1.6s) a press reached, in [0,1] -- the same fraction buildImprintPaths
+// already derives to spread and lengthen the threads, exported so a color can be keyed to it too.
+export function imprintHold(gesture: ImprintGesture): number {
+  return clamp(Number.isFinite(gesture.holdMs) ? gesture.holdMs / 1_600 : 0, 0, 1);
+}
+
 export function buildImprintPaths(
   gesture: ImprintGesture,
 ): readonly [ImprintPath, ImprintPath, ImprintPath, ImprintPath, ImprintPath] {
@@ -86,7 +92,7 @@ export function buildImprintPaths(
   const length = Math.max(1, Math.hypot(dx, dy));
   const along = { x: dx / length, y: dy / length };
   const across = { x: -along.y, y: along.x };
-  const hold = clamp(Number.isFinite(gesture.holdMs) ? gesture.holdMs / 1_600 : 0, 0, 1);
+  const hold = imprintHold(gesture);
   const pressure = clamp(gesture.pressure, 0, 1);
   const travel = clamp(length, 44, 240);
   const center = {
@@ -135,7 +141,34 @@ function isRenderablePath(path: ImprintPath): boolean {
     ));
 }
 
-export async function renderImprintBlob(paths: readonly ImprintPath[]): Promise<Blob> {
+// A gesture's threads naturally occupy a small fraction of the 512 canvas (a light tap can be
+// under 100 units across), so the mark is scaled up to fill most of its frame instead of being
+// stroked at native size -- the "scaled to frame" treatment, not a change to the thread geometry
+// itself. Capped well below what a degenerate near-zero span could otherwise blow up to.
+const FRAME_PAD = IMPRINT_SIZE * 0.1;
+const MAX_FIT_SCALE = 6;
+
+function fitScale(paths: readonly ImprintPath[]): { scale: number; midX: number; midY: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const path of paths) {
+    for (const point of path.points) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+  }
+  const span = IMPRINT_SIZE - FRAME_PAD * 2;
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  return {
+    scale: Math.min(span / width, span / height, MAX_FIT_SCALE),
+    midX: (minX + maxX) / 2,
+    midY: (minY + maxY) / 2,
+  };
+}
+
+export async function renderImprintBlob(paths: readonly ImprintPath[], color: string): Promise<Blob> {
   if (paths.length !== 5 || !paths.every(isRenderablePath)) {
     throw new TypeError("an imprint requires five bounded paths");
   }
@@ -149,9 +182,15 @@ export async function renderImprintBlob(paths: readonly ImprintPath[]): Promise<
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (context === null) throw new Error("the mark could not hold its shape");
   context.clearRect(0, 0, IMPRINT_SIZE, IMPRINT_SIZE);
-  context.strokeStyle = "rgba(61, 52, 45, 0.9)";
+  context.strokeStyle = color;
   context.lineCap = "round";
   context.lineJoin = "round";
+
+  const { scale, midX, midY } = fitScale(paths);
+  context.save();
+  context.translate(IMPRINT_SIZE / 2, IMPRINT_SIZE / 2);
+  context.scale(scale, scale);
+  context.translate(-midX, -midY);
 
   for (const path of paths) {
     context.beginPath();
@@ -160,6 +199,7 @@ export async function renderImprintBlob(paths: readonly ImprintPath[]): Promise<
     for (const point of path.points.slice(1)) context.lineTo(point.x, point.y);
     context.stroke();
   }
+  context.restore();
 
   const pixels = context.getImageData(0, 0, IMPRINT_SIZE, IMPRINT_SIZE).data;
   let nonblank = false;
