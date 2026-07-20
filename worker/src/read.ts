@@ -120,6 +120,17 @@ export async function getRelics(env: Env, cursor: string | null): Promise<Respon
   return Response.json({ entries: rows, next });
 }
 
+// The residue lookup (Task 2, grown-lineage-marks): does this offering have a kept relic, and if
+// so which one -- the substrate a fresh mark's growth can bend toward is that relic's own image.
+// Public columns only (no wallet/summary); offering_id is UNIQUE (see 0006_relics.sql), so this is
+// already an indexed point lookup, not a scan.
+export async function relicOf(env: Env, offeringId: string): Promise<Response> {
+  const relic = await env.DB.prepare(
+    `SELECT id, offering_id, kept_at FROM relics WHERE offering_id = ?1`
+  ).bind(offeringId).first<{ id: string; offering_id: string; kept_at: number }>();
+  return Response.json({ relic: relic ?? null });
+}
+
 export async function getDreams(env: Env, cursor: string | null): Promise<Response> {
   let curCreated: number | null = null, curId: string | null = null;
   if (cursor !== null) {

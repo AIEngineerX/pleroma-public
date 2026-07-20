@@ -152,6 +152,24 @@ describe("first light api", () => {
   });
 });
 
+describe("relic-of api (Task 2: grown-lineage-marks substrate)", () => {
+  it("looks up a relic by the offering id that produced it, public columns only", async () => {
+    await insertOffering(env.DB, { id: "ro-off", wallet: "ro-wallet", sig: null, image_key: "offerings/ro-off",
+      sha256: "ro-off", status: "kept", attempts: 0, created_at: 700, perceived_at: 700 });
+    await insertRelic(env.DB, { id: "ro-relic", offering_id: "ro-off", wallet: "ro-wallet",
+      summary: "a residue", rite_id: null, kept_at: 800, genesis: 0, accreted_at: null });
+
+    const res = await SELF.fetch("http://x/api/relic-of/ro-off");
+    const body = await res.json<{ relic: { id: string; offering_id: string; kept_at: number } | null }>();
+    expect(body.relic).toEqual({ id: "ro-relic", offering_id: "ro-off", kept_at: 800 });
+  });
+
+  it("reports null for an offering id with no relic", async () => {
+    const res = await SELF.fetch("http://x/api/relic-of/no-such-offering");
+    expect(await res.json()).toEqual({ relic: null });
+  });
+});
+
 describe("dream archive api", () => {
   it("lists dreams newest-first with parsed wakers + video_key, and 400s a bad cursor", async () => {
     const mk = (date: string, created_at: number, videoKey: string | null, wakers: string[]) =>

@@ -9,7 +9,7 @@ import { runEyeBatch, sweepQuarantine } from "./eye";
 import { RITE_LEASE_MS, RITE_WORK_BUDGET_MS } from "./leases";
 import { openRite, nonTerminalRites } from "./db";
 import { advanceRite } from "./rite";
-import { getCodex, getDreams, getFirstLight, getRelics, getState, getTallies } from "./read";
+import { getCodex, getDreams, getFirstLight, getRelics, getState, getTallies, relicOf } from "./read";
 import { handlePulse } from "./pulse";
 import { serveAudio, serveDreamVideo, serveOfferingImage } from "./media";
 import { getApocrypha, handleApocryphaSubmit } from "./apocrypha";
@@ -31,6 +31,7 @@ app.post("/api/offerings", async (c) => {
 app.get("/api/codex", (c) => getCodex(c.env, c.req.query("cursor") ?? null));
 app.get("/api/state", (c) => getState(c.env));
 app.get("/api/relics", (c) => getRelics(c.env, c.req.query("cursor") ?? null));
+app.get("/api/relic-of/:offeringId", (c) => relicOf(c.env, c.req.param("offeringId")));
 app.get("/api/dreams", (c) => getDreams(c.env, c.req.query("cursor") ?? null));
 app.get("/api/tallies", (c) => getTallies(c.env, c.req.query("date") ?? new Date().toISOString().slice(0, 10)));
 app.get("/api/first-light", (c) => getFirstLight(c.env));
