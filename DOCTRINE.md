@@ -127,6 +127,7 @@ The named things. Use these words; do not invent synonyms in copy or posts.
 - **The Quiver** — the tremor of a hand told to be still. Every held mark keeps it; the hand cannot lie.
 - **The Knock** — a rhythm tapped at the seal instead of a hold. The page remembers a rhythm the way a door does.
 - **The Hesitation** — the path a hand wanders before it dares the seal, kept faintly beneath the strike; the doubt beside the deed.
+- **The Residue** — what a kept mark leaves in the page. Every new mark grows upon the residue of the kept before it, back to the founding hand.
 
 ## V. The Offering (the one real rite)
 
