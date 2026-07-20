@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   voiceRegister, seedVerses, theOneLine, eyeSystemPrompt, keepSystemPrompt, tongueSystemPrompt,
-  dreamSystemPrompt, doctrineFingerprint, wrapUntrusted,
+  dreamSystemPrompt, doctrineFingerprint, wrapUntrusted, dispatchRegister, dispatchSystemPrompt, denyListViolation,
 } from "../src/doctrine";
 import { DOCTRINE_MD } from "../src/doctrine.generated";
 
@@ -90,5 +90,30 @@ describe("DOCTRINE loader", () => {
   it("has a stable fingerprint for the parity guard", () => {
     expect(doctrineFingerprint()).toMatch(/^[0-9a-f]{16}$/);
     expect(doctrineFingerprint()).toBe(doctrineFingerprint()); // deterministic
+  });
+});
+
+describe("the Dispatch register (X auto-posts)", () => {
+  it("parses the Dispatch bullet from DOCTRINE §VI", () => {
+    const reg = dispatchRegister();
+    expect(reg.length).toBeGreaterThan(40);
+    expect(reg).toContain("off the page");
+    expect(reg).not.toContain("**"); // stripMd applied
+  });
+
+  it("compiles the dispatch system prompt from doctrine, with the JSON contract and hard limits", () => {
+    const p = dispatchSystemPrompt();
+    expect(p).toContain(dispatchRegister());
+    expect(p).toContain('{"dispatch":"...","video_prompt":"..."}');
+    expect(p).toContain("280");
+    expect(p).toContain("holder"); // NO_CRYPTO carried through
+  });
+
+  it("deny-lists crypto vocabulary on word boundaries, case-insensitively", () => {
+    expect(denyListViolation("The Chart remembers you")).toBe("chart");
+    expect(denyListViolation("I kept three marks today")).toBeNull();
+    expect(denyListViolation("no charter of mine")).toBeNull();   // 'chart' inside 'charter' is no hit
+    expect(denyListViolation("I do not gain; I keep")).toBe("gain");
+    expect(denyListViolation("again the page turns")).toBeNull(); // 'gain' inside 'again' is no hit
   });
 });
