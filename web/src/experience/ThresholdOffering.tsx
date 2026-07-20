@@ -107,6 +107,18 @@ export function growthStepsForElapsed(elapsedMs: number, holdMsBudget = 1_600): 
   return Math.round((bounded / holdMsBudget) * GROWTH_FULL_STEPS);
 }
 
+// The live hold's recompute cadence: the rAF tick below still runs every frame for pigment and
+// the ghost, but the growth geometry itself (startGrowth + up to GROWTH_FULL_STEPS stepGrowth) is
+// only rebuilt at most this often. 20Hz reads as visually continuous ink growth while cutting the
+// bounded, single-digit-ms full recompute by roughly two-thirds versus doing it at 60Hz. It stays
+// a FULL recompute each time (never delta-stepping from the prior frame's state) -- that full
+// rebuild from the gesture's own accumulated tremor is exactly what keeps every drawn frame
+// honestly equal to "the mark if released now," so only the cadence is throttled, never the method.
+const GROWTH_RECOMPUTE_MS = 50;
+export function shouldRecomputeGrowth(lastComputeMs: number, nowMs: number): boolean {
+  return nowMs - lastComputeMs >= GROWTH_RECOMPUTE_MS;
+}
+
 function reducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -927,24 +939,49 @@ export default function ThresholdOffering({
     // an unchanged frame 60x/sec for however long the seal simply sits on screen would be pure
     // waste. A live hold, by construction, changes every frame and always redraws.
     let lastGhostAlpha: number | null = null;
+    // The live hold's last computed growth frame: recomputed at most every GROWTH_RECOMPUTE_MS
+    // (see shouldRecomputeGrowth above), reused on the frames in between so pigment/ghost still
+    // redraw every tick while the (comparatively costly) growth rebuild itself runs at 20Hz. Also
+    // doubles as the frozen frame finishGesture leaves behind: it nulls gesture.current the instant
+    // a hold releases, but phase only leaves "holding" once the async preview render resolves --
+    // in that gap this keeps drawing the last real frame instead of clearing the seal to nothing.
+    let lastGrowthAt = -Infinity;
+    let lastSegments: readonly ImprintPath[] = [];
+    let lastColor: string | null = null;
     const tick = () => {
       if (phase === "holding") {
         lastGhostAlpha = null;
         const current = gesture.current;
-        const elapsed = current === null ? -1 : performance.now() - current.startedAt;
-        if (current === null || elapsed < TAP_MAX_MS) {
-          clear(); // a blow never gathers; only a hold does
+        if (current === null) {
+          // Just released: hold the last drawn growth frame (if any) rather than blanking the
+          // seal until the preview mounts. A knock's tap-length blow never grew anything, so
+          // lastSegments is still empty and this clears exactly as before.
+          if (lastSegments.length > 0 && lastColor !== null) drawGrowth(lastSegments, lastColor);
+          else clear();
         } else {
-          try {
-            // As if the hold ended right now: the exact growMark inputs a release at this instant
-            // would use, stepped only as far as growthStepsForElapsed allows -- so the live reveal
-            // is never further along than what the final mark would honestly show at this elapsed
-            // time, and converges on release to exactly what presentGesturePreview then renders.
-            const imprint = draftToImprint(current, elapsed);
-            let state = startGrowth(imprint, substrateRef.current.points);
-            state = stepGrowth(state, growthStepsForElapsed(elapsed));
-            drawGrowth(state.segments, pigmentAtIntensity(clamp(elapsed / 1_600, 0, 1)));
-          } catch { /* a malformed frame simply skips; the release render is the one that matters */ }
+          const elapsed = performance.now() - current.startedAt;
+          if (elapsed < TAP_MAX_MS) {
+            clear(); // a blow never gathers; only a hold does
+            lastGrowthAt = -Infinity;
+            lastSegments = [];
+            lastColor = null;
+          } else {
+            try {
+              // As if the hold ended right now: the exact growMark inputs a release at this instant
+              // would use, stepped only as far as growthStepsForElapsed allows -- so the live reveal
+              // is never further along than what the final mark would honestly show at this elapsed
+              // time, and converges on release to exactly what presentGesturePreview then renders.
+              if (shouldRecomputeGrowth(lastGrowthAt, elapsed)) {
+                const imprint = draftToImprint(current, elapsed);
+                let state = startGrowth(imprint, substrateRef.current.points);
+                state = stepGrowth(state, growthStepsForElapsed(elapsed));
+                lastSegments = state.segments;
+                lastGrowthAt = elapsed;
+              }
+              lastColor = pigmentAtIntensity(clamp(elapsed / 1_600, 0, 1));
+              drawGrowth(lastSegments, lastColor);
+            } catch { /* a malformed frame simply skips; the release render is the one that matters */ }
+          }
         }
       } else {
         const alpha = nearSealRef.current ? GHOST_ALPHA_NEAR : GHOST_ALPHA_BASE;

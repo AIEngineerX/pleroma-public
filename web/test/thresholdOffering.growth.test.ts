@@ -7,7 +7,7 @@
 // task brief permits -- "through the component's path (or directly via growMark with the same
 // substrate)").
 import { describe, expect, it } from "vitest";
-import { buildGestureSummary, growthStepsForElapsed } from "../src/experience/ThresholdOffering";
+import { buildGestureSummary, growthStepsForElapsed, shouldRecomputeGrowth } from "../src/experience/ThresholdOffering";
 import { growMark, startGrowth, stepGrowth, topologyMetrics, type SubstratePoint } from "../src/experience/markGrowth";
 import {
   KNOCK_MAX_PRESSES,
@@ -192,5 +192,33 @@ describe("growthStepsForElapsed — the live hold's elapsed-to-steps pacing", ()
       expect(points).toBeGreaterThanOrEqual(previousPoints);
       previousPoints = points;
     }
+  });
+});
+
+// Task 4 fix (reviewer finding 1): the live hold's rAF loop now throttles its growth recompute to
+// this pure gate rather than rebuilding startGrowth + up to 64 stepGrowth steps every frame.
+// shouldRecomputeGrowth is the exact boundary the tick loop consults; verified in isolation, no DOM.
+describe("shouldRecomputeGrowth — the live hold's 20Hz growth-recompute gate", () => {
+  it("is false for a gap under 50ms", () => {
+    expect(shouldRecomputeGrowth(0, 49)).toBe(false);
+    expect(shouldRecomputeGrowth(100, 149)).toBe(false);
+  });
+
+  it("is true at exactly 50ms (the boundary is inclusive, matching the effect's own comment)", () => {
+    expect(shouldRecomputeGrowth(0, 50)).toBe(true);
+    expect(shouldRecomputeGrowth(100, 150)).toBe(true);
+  });
+
+  it("is true for any gap past 50ms", () => {
+    expect(shouldRecomputeGrowth(0, 51)).toBe(true);
+    expect(shouldRecomputeGrowth(0, 1_000)).toBe(true);
+  });
+
+  it("is true on the very first frame, where the tick loop seeds lastComputeMs at -Infinity", () => {
+    expect(shouldRecomputeGrowth(-Infinity, 0)).toBe(true);
+  });
+
+  it("is false when no time has passed at all", () => {
+    expect(shouldRecomputeGrowth(50, 50)).toBe(false);
   });
 });
