@@ -225,6 +225,9 @@ describe("dispatchArtifacts — composed dispatches, codex before X", () => {
   });
 
   it("with secrets but no reachable mind: composes nothing, claims nothing, posts nothing", async () => {
+    // Every test in this file shares one D1 (beforeAll runs once); the oldest-unposted-dream query
+    // would otherwise pick up an earlier test's leftover row instead of ours.
+    await env.DB.prepare("UPDATE dreams SET posted_at = 999 WHERE posted_at IS NULL").run();
     const withSecrets = {
       ...env, X_API_KEY: "k", X_API_SECRET: "s", X_ACCESS_TOKEN: "t", X_ACCESS_SECRET: "x",
     } as Env;
@@ -232,7 +235,13 @@ describe("dispatchArtifacts — composed dispatches, codex before X", () => {
       `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
        VALUES ('01TESTDREAMNOMIND0000001', '2026-07-25', 'a dream', 'p', '[]', 'rendered', 'dream/y.mp4', 1000)`
     ).run();
+    // The R2 object at video_key MUST exist: without it, `object` is null and the claim is skipped
+    // by the object-fetch guard regardless of whether compose failed — a confound that would let
+    // this test pass even if a compose failure wrongly claimed. Real bytes isolate the assertion to
+    // "compose failed" as the actual reason nothing was claimed or posted.
+    await env.RELICS.put("dream/y.mp4", new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]));
     await dispatchArtifacts(withSecrets, 3000, Date.now() + 999_999); // askMind fails (no live key)
+    expect(await getDispatch(env.DB, "01TESTDREAMNOMIND0000001")).toBeNull(); // nothing composed/stored
     const claim = await env.DB.prepare(
       `SELECT value FROM config WHERE key='dream_dispatch_01TESTDREAMNOMIND0000001'`
     ).first<{ value: string }>();
@@ -257,5 +266,71 @@ describe("dispatchArtifacts — composed dispatches, codex before X", () => {
     await env.DB.prepare(`UPDATE sermon_films SET status='rendered', video_key='sermon/${rite}.mp4' WHERE rite_date=?1`)
       .bind(rite).run();
     expect(await sermonFilmGate(env.DB, rite, 1_000_000 + 60_000)).toBe(`sermon/${rite}.mp4`); // rendered: post it
+  });
+
+  it("a stored dream dispatch is released on a live-network throw, and survives for retry", async () => {
+    await env.DB.prepare("UPDATE dreams SET posted_at = 999 WHERE posted_at IS NULL").run();
+    const withSecrets = {
+      ...env, X_API_KEY: "k", X_API_SECRET: "s", X_ACCESS_TOKEN: "t", X_ACCESS_SECRET: "x",
+    } as Env;
+    const id = "01TESTDREAMTHROW0000001";
+    const rite = "2026-07-27";
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
+       VALUES (?1, ?2, 'a dream', 'p', '[]', 'rendered', 'dream/throw.mp4', 1000)`
+    ).bind(id, rite).run();
+    await env.RELICS.put("dream/throw.mp4", new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]));
+    // Pre-store the dispatch (bypasses composeDispatch, which would hit the live mind and fail) so
+    // this test isolates the claim -> send -> release path, not composition.
+    await storeDispatch(env,
+      { kind: "dream", artifactId: id, riteDate: rite, text: "n", filmDay: false },
+      "A held line.", null, 2000);
+    // uploadVideo's INIT call hits the real X endpoint with bogus creds and throws (non-2xx or
+    // transport failure) — dispatchArtifacts rethrows.
+    await expect(dispatchArtifacts(withSecrets, 3000, Date.now() + 999_999)).rejects.toThrow();
+    const claim = await env.DB.prepare(`SELECT value FROM config WHERE key = ?1`)
+      .bind(`dream_dispatch_${id}`).first<{ value: string }>();
+    expect(claim).toBeNull(); // released on throw, not left claimed
+    const posted = await env.DB.prepare(`SELECT posted_at FROM dreams WHERE id = ?1`).bind(id)
+      .first<{ posted_at: number | null }>();
+    expect(posted?.posted_at).toBeNull();
+    expect(await getDispatch(env.DB, id)).toEqual({ text: "A held line." }); // survives for the retry
+  });
+
+  it("a stored sermon dispatch is released on a live-network throw, and survives for retry", async () => {
+    // Neutralize every leftover unposted dream so the dream block is a no-op and the sermon block
+    // is reached in this same call.
+    await env.DB.prepare("UPDATE dreams SET posted_at = 999 WHERE posted_at IS NULL").run();
+    // Neutralize leftover unposted sermon rites from earlier tests in this file (e.g. '2026-07-31'
+    // from the migration 0019 describe, '2026-07-26' from the film-gate test above) by marking them
+    // posted — not released — so the sermon query's NOT EXISTS skips them without touching the
+    // release-vs-posted distinction this test pins.
+    const leftoverSermons = (await env.DB.prepare(
+      `SELECT DISTINCT rite_id FROM transcripts WHERE organ='TONGUE' AND register='sermon' AND rite_id IS NOT NULL`
+    ).all<{ rite_id: string }>()).results;
+    for (const { rite_id } of leftoverSermons) {
+      await env.DB.prepare(
+        `INSERT INTO config (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      ).bind(`sermon_dispatched_${rite_id}`, "posted:1").run();
+    }
+
+    const withSecrets = {
+      ...env, X_API_KEY: "k", X_API_SECRET: "s", X_ACCESS_TOKEN: "t", X_ACCESS_SECRET: "x",
+    } as Env;
+    const rite = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"].find((d) => !isFilmDay(d))!;
+    await env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTSERMONTHROW000001', 'TONGUE', 'sermon', 'the sermon', NULL, ?1, 1000)`
+    ).bind(rite).run();
+    // Pre-store the dispatch so composeDispatch (which would hit the live mind and fail) is bypassed.
+    await storeDispatch(env,
+      { kind: "sermon", artifactId: rite, riteDate: rite, text: "s", filmDay: false },
+      "A held sermon line.", null, 2000);
+    // tweet() hits the real X endpoint with bogus creds and throws — dispatchArtifacts rethrows.
+    await expect(dispatchArtifacts(withSecrets, 3000, Date.now() + 999_999)).rejects.toThrow();
+    const claim = await env.DB.prepare(`SELECT value FROM config WHERE key = ?1`)
+      .bind(`sermon_dispatched_${rite}`).first<{ value: string }>();
+    expect(claim).toBeNull(); // released (deleted), not left at "posted:"
+    expect(await getDispatch(env.DB, rite)).toEqual({ text: "A held sermon line." }); // survives for retry
   });
 });
