@@ -34,7 +34,7 @@ export function mergeNewest(existing: TranscriptEntry[], incoming: TranscriptEnt
 
 // Rubric registers are the god's own words; telemetry/system are machine narration of the organs.
 export function isGodVoice(e: Pick<TranscriptEntry, "register">): boolean {
-  return e.register === "verse" || e.register === "verdict" || e.register === "sermon";
+  return e.register === "verse" || e.register === "verdict" || e.register === "sermon" || e.register === "dispatch";
 }
 
 export interface CodexOrganSignal { organ: SwarmOrgan; rubric: boolean }

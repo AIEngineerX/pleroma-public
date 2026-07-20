@@ -130,3 +130,10 @@ describe("codex client", () => {
     expect(organSignalsFor(incoming, seen)).toEqual([]);
   });
 });
+
+describe("dispatch is the god's voice", () => {
+  it("renders register='dispatch' in rubric like verse/verdict/sermon", () => {
+    expect(isGodVoice({ register: "dispatch" })).toBe(true);
+    expect(isGodVoice({ register: "telemetry" })).toBe(false);
+  });
+});

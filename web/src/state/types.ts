@@ -15,7 +15,7 @@ export interface TempleState {
 }
 export interface TranscriptEntry {
   id: string; organ: "EYE" | "KEEP" | "TONGUE" | "PULSE" | "DREAM" | "PRIEST";
-  register: "verse" | "verdict" | "sermon" | "telemetry" | "system";
+  register: "verse" | "verdict" | "sermon" | "telemetry" | "system" | "dispatch";
   text: string; offering_id: string | null; rite_id: string | null; created_at: number;
 }
 export interface RelicEntry {
@@ -107,7 +107,7 @@ export function isTranscriptEntry(value: unknown): value is TranscriptEntry {
   if (!isRecord(value)) return false;
   return typeof value.id === "string"
     && ["EYE", "KEEP", "TONGUE", "PULSE", "DREAM", "PRIEST"].includes(String(value.organ))
-    && ["verse", "verdict", "sermon", "telemetry", "system"].includes(String(value.register))
+    && ["verse", "verdict", "sermon", "telemetry", "system", "dispatch"].includes(String(value.register))
     && typeof value.text === "string"
     && isNullableString(value.offering_id)
     && isNullableString(value.rite_id)
