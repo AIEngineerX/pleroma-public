@@ -23,6 +23,19 @@ const X_IO_TIMEOUT_MS = 30_000; // every X call is bounded, like every other ven
 
 const TWEET_MAX_CHARS = 280;
 
+// X's weighted length (twitter-text v3 config): most Latin/Cyrillic/etc. code points weigh 1,
+// everything else (CJK, emoji, typographic marks like U+2026 …) weighs 2. A dispatch that fits
+// in JS chars can still exceed X's 280 — and a stored over-weight line would 4xx forever.
+export function weightedTweetLength(text: string): number {
+  let len = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const light = cp <= 4351 || (cp >= 8192 && cp <= 8205) || (cp >= 8208 && cp <= 8223) || (cp >= 8242 && cp <= 8247);
+    len += light ? 1 : 2;
+  }
+  return len;
+}
+
 // --- Dispatch composition (spec 2026-07-20) ------------------------------------------------------
 // The dispatch is TONGUE's voice register for the outer feeds: composed fresh per artifact at
 // dispatch time, validated mechanically (deny-list, length, never-repeated), and set down in the
@@ -134,13 +147,21 @@ export async function composeDispatch(
     const dispatch = typeof parsed.dispatch === "string" ? parsed.dispatch.trim() : "";
     const videoPrompt = typeof parsed.video_prompt === "string" && parsed.video_prompt.trim()
       ? parsed.video_prompt.trim() : null;
-    if (!dispatch || dispatch.length > TWEET_MAX_CHARS) {
-      feedback = `Your last dispatch was empty or over ${TWEET_MAX_CHARS} characters. `;
+    if (!dispatch || weightedTweetLength(dispatch) > TWEET_MAX_CHARS) {
+      feedback = `Your last dispatch was empty or over ${TWEET_MAX_CHARS} X-weighted characters. `;
       continue;
     }
     const denied = denyListViolation(dispatch);
     if (denied) {
       feedback = `Your last dispatch used a word the god does not say ("${denied}"). `;
+      continue;
+    }
+    const styled = /https?:\/\/|www\./i.test(dispatch) ? "a link"
+      : /#\w/.test(dispatch) ? "a hashtag"
+      : /\?/.test(dispatch) ? "a question"
+      : null;
+    if (styled) {
+      feedback = `Your last dispatch carried ${styled}; a dispatch never links, tags, or asks. `;
       continue;
     }
     if (await isRepeatDispatch(env.DB, dispatch)) {
@@ -385,7 +406,9 @@ export async function dispatchArtifacts(
       const composed = await composeDispatch(env, artifact, now);
       if (composed) {
         await storeDispatch(env, artifact, composed.dispatch, null, now);
-        stored = { text: composed.dispatch };
+        // ON CONFLICT DO NOTHING means a concurrent composer may have won the unique index instead
+        // of us — the row that won is the scripture; post exactly that, never our local text.
+        stored = await getDispatch(env.DB, dream.id);
       }
     }
     const object = stored ? await env.RELICS.get(dream.video_key) : null;
@@ -421,7 +444,9 @@ export async function dispatchArtifacts(
       const composed = await composeDispatch(env, artifact, now);
       if (composed) {
         await storeDispatch(env, artifact, composed.dispatch, composed.videoPrompt, now);
-        stored = { text: composed.dispatch };
+        // ON CONFLICT DO NOTHING means a concurrent composer may have won the unique index instead
+        // of us — the row that won is the scripture; post exactly that, never our local text.
+        stored = await getDispatch(env.DB, sermon.rite_date);
       }
     }
     if (stored) {

@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   alertStalledDispatches, claimDispatch, clampCheckAfterSecs, composeDispatch, dispatchArtifacts,
   getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader,
-  releaseDispatchClaim, sermonFilmGate, storeDispatch, xCredentials,
+  releaseDispatchClaim, sermonFilmGate, storeDispatch, weightedTweetLength, xCredentials,
 } from "../src/hermes";
 import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
@@ -208,6 +208,40 @@ describe("dispatch composition machinery", () => {
     const a = { kind: "sermon", artifactId: "2026-07-30", riteDate: "2026-07-30", text: "s", filmDay: true } as const;
     const out = await composeDispatch(env, a, 10_000, scripted as never);
     expect(out).toEqual({ dispatch: "A line for the film.", videoPrompt: "ink over parchment" });
+  });
+
+  it("counts X's weighted length: typographic marks weigh 2, so 280 JS chars can be over", () => {
+    expect(weightedTweetLength("a".repeat(280))).toBe(280);
+    expect(weightedTweetLength("…")).toBe(2);       // U+2026 is outside the weight-1 ranges
+    expect(weightedTweetLength("夢")).toBe(2);       // CJK weighs 2
+    expect(weightedTweetLength("–")).toBe(1);  // en dash U+2013 is inside 8208-8223
+  });
+
+  it("rejects an over-weighted dispatch that fits in JS chars, then accepts the shorter recompose", async () => {
+    const replies = [
+      JSON.stringify({ dispatch: "夢".repeat(141) }),  // 141 JS chars, 282 weighted
+      JSON.stringify({ dispatch: "I kept the dream of doors." }),
+    ];
+    const scripted = async () => ({ text: replies.shift()!, usd: 0 });
+    const a = { kind: "dream", artifactId: "dream-weighted", riteDate: "2026-07-22", text: "n", filmDay: false } as const;
+    const out = await composeDispatch(env, a, 11_000, scripted as never);
+    expect(out).toEqual({ dispatch: "I kept the dream of doors.", videoPrompt: null });
+  });
+
+  it("rejects links, hashtags, and questions mechanically", async () => {
+    const replies = [
+      '{"dispatch":"read the page at https://example.com"}',
+      '{"dispatch":"#awake and counting"}',
+      '{"dispatch":"who watches me now?"}',
+      '{"dispatch":"Three hands came; I kept one."}',
+    ];
+    const scripted = async () => ({ text: replies.shift()!, usd: 0 });
+    const a = { kind: "dream", artifactId: "dream-styled", riteDate: "2026-07-22", text: "n", filmDay: false } as const;
+    // 2-attempt loop: link then hashtag exhausts one composeDispatch call -> null + alert
+    expect(await composeDispatch(env, a, 12_000, scripted as never)).toBeNull();
+    // next tick's call: question then clean line -> accepted
+    const out = await composeDispatch(env, a, 13_000, scripted as never);
+    expect(out).toEqual({ dispatch: "Three hands came; I kept one.", videoPrompt: null });
   });
 });
 
