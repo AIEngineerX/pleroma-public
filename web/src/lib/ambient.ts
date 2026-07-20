@@ -9,6 +9,16 @@ const MUTE_KEY = "pleroma-muted";
 const BED_URL = "/audio/bed.mp3";     // the looping music bed (swap the file to re-voice the temple)
 const INTRO_URL = "/audio/intro.mp3"; // the cinematic reveal swell, played once on first wake
 
+// The Knock's own paper-fiber grain (Task 5, grown-lineage-marks §3b.6): a short synthesized
+// filtered-noise burst, no new asset -- a fast-decaying noise buffer through a bandpass filter
+// reads as a paper fiber's tick rather than a hiss or click. Frequency is jittered per grain so a
+// fast knock's run of splits doesn't read as one sound repeating.
+const GRAIN_DURATION_S = 0.045;
+const GRAIN_GAIN = 0.16;
+const GRAIN_FREQ_BASE = 2_600;
+const GRAIN_FREQ_JITTER = 900;
+const GRAIN_Q = 1.1;
+
 export class Ambient {
   private master: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
@@ -84,6 +94,43 @@ export class Ambient {
     }
   }
 
+  // True exactly when the gate the entry gesture / mute control already governs is open: the bed
+  // has started, isn't muted, and this instance hasn't been disposed. Every sound this engine
+  // grows beyond the bed/intro -- the grain below, and any future one -- must consult this same
+  // real state rather than inventing its own activation path.
+  isActive(): boolean {
+    return this.started && !this.muted && !this.disposed;
+  }
+
+  // The paper-fiber grain: fired once per branch split during a live hold (ThresholdOffering's
+  // 20Hz growth loop), routed through the SAME master bus as the bed/intro so the Stain's
+  // amplitude reads it exactly like any other sound. A genuine no-op -- touching no audio API at
+  // all -- whenever the gate above is closed; this is the one path that must never open it.
+  playGrain(): void {
+    if (!this.isActive() || !this.ctx || !this.master) return;
+    const ctx = this.ctx;
+    const frameCount = Math.max(1, Math.round(ctx.sampleRate * GRAIN_DURATION_S));
+    const buffer = ctx.createBuffer(1, frameCount, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < frameCount; i += 1) {
+      const decay = 1 - i / frameCount;               // fast decay -- a tick, not a tail
+      data[i] = (Math.random() * 2 - 1) * decay * decay;
+    }
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = GRAIN_FREQ_BASE + Math.random() * GRAIN_FREQ_JITTER;
+    filter.Q.value = GRAIN_Q;
+    const grainGain = ctx.createGain();
+    grainGain.gain.value = GRAIN_GAIN;
+    source.connect(filter);
+    filter.connect(grainGain);
+    grainGain.connect(this.master);
+    source.start();
+    source.stop(ctx.currentTime + GRAIN_DURATION_S);
+  }
+
   // RMS of the live master waveform as a 0..1 amplitude for the Stain. Zero when muted, unstarted, or
   // disposed so a silent temple leaves the body at rest (the swarm's own idle drift still breathes).
   level(): number {
@@ -124,3 +171,21 @@ export class Ambient {
 
 function safeGet(): string | null { try { return localStorage.getItem(MUTE_KEY); } catch { return null; } }
 function safeSet(v: string) { try { localStorage.setItem(MUTE_KEY, v); } catch { /* private mode */ } }
+
+// The one Ambient instance the app has ever constructed, mirroring smoothScroll.ts's
+// setActiveLenis: App.tsx's useEntryGesture owns construction/disposal (only a committed entry
+// gesture or an explicit sound-control click ever calls primeAmbient), and anything downstream
+// that wants to ride the SAME gated engine reaches it through here instead of prop-drilling a
+// reference or -- worse -- constructing its own. Null before any entry gesture has primed audio,
+// so emitGrain below is a genuine no-op until then, not a new activation path.
+let activeAmbient: Ambient | null = null;
+export function setActiveAmbient(ambient: Ambient | null): void {
+  activeAmbient = ambient;
+}
+
+// ThresholdOffering's call site for the paper-fiber grain (Task 5, grown-lineage-marks §3b.6):
+// routes to the active instance's gated playGrain, or does nothing at all if no Ambient has been
+// constructed yet -- exactly the same silence guarantee as the bed itself.
+export function emitGrain(): void {
+  activeAmbient?.playGrain();
+}

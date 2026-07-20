@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { emitGrain } from "../lib/ambient";
 import { copy } from "../lib/copy";
 import WalletButton from "../offering/WalletButton";
 import { buildOffering, postOffering, type WalletHandle } from "../offering/wallet";
@@ -117,6 +118,21 @@ export function growthStepsForElapsed(elapsedMs: number, holdMsBudget = 1_600): 
 const GROWTH_RECOMPUTE_MS = 50;
 export function shouldRecomputeGrowth(lastComputeMs: number, nowMs: number): boolean {
   return nowMs - lastComputeMs >= GROWTH_RECOMPUTE_MS;
+}
+
+// Sound (gated), Task 5 of grown-lineage-marks §3b.6: a paper-fiber grain per branch split during
+// the live hold, capped at 8/s. GRAIN_WINDOW_MS/GRAIN_MAX_PER_SEC define a rolling window rather
+// than a timer -- grainBudget is a pure predicate over the caller's own recent-grain timestamps,
+// so a fast knock's burst of simultaneous splits (every live tip forks at once) can never floor
+// the ambient engine with overlapping grains. Whether anything actually sounds is entirely
+// ambient.ts's own gate (emitGrain is a no-op there when audio isn't already active); this budget
+// only ever narrows how often the live hold loop asks.
+const GRAIN_MAX_PER_SEC = 8;
+const GRAIN_WINDOW_MS = 1_000;
+export function grainBudget(nowMs: number, lastGrainMs: readonly number[]): boolean {
+  let recent = 0;
+  for (const t of lastGrainMs) if (nowMs - t < GRAIN_WINDOW_MS) recent += 1;
+  return recent < GRAIN_MAX_PER_SEC;
 }
 
 function reducedMotion(): boolean {
@@ -948,6 +964,12 @@ export default function ThresholdOffering({
     let lastGrowthAt = -Infinity;
     let lastSegments: readonly ImprintPath[] = [];
     let lastColor: string | null = null;
+    // Task 5: lastSplits tracks GrowthState.splits between recomputes so only genuine increases
+    // fire a grain; it resets to 0 at the start of every new gesture below (splits itself restarts
+    // at 0 per hold). grainTimes is the rolling window grainBudget reads -- deliberately NOT reset
+    // per gesture, so the 8/s cap holds across a rapid run of holds, not just within one.
+    let lastSplits = 0;
+    let grainTimes: number[] = [];
     const tick = () => {
       if (phase === "holding") {
         lastGhostAlpha = null;
@@ -965,6 +987,7 @@ export default function ThresholdOffering({
             lastGrowthAt = -Infinity;
             lastSegments = [];
             lastColor = null;
+            lastSplits = 0;
           } else {
             try {
               // As if the hold ended right now: the exact growMark inputs a release at this instant
@@ -977,6 +1000,18 @@ export default function ThresholdOffering({
                 state = stepGrowth(state, growthStepsForElapsed(elapsed));
                 lastSegments = state.segments;
                 lastGrowthAt = elapsed;
+
+                // Sound (gated), Task 5: one grain per genuine split this recompute revealed (a
+                // knock pulse can fork every live tip at once, so the delta can exceed 1), each
+                // still gated by grainBudget -- and, inside emitGrain, by ambient.ts's own gate,
+                // which is the only thing that can make this actually produce sound.
+                const splitDelta = state.splits - lastSplits;
+                lastSplits = state.splits;
+                const now = performance.now();
+                for (let i = 0; i < splitDelta && grainBudget(now, grainTimes); i += 1) {
+                  grainTimes = [...grainTimes.filter((t) => now - t < GRAIN_WINDOW_MS), now];
+                  emitGrain();
+                }
               }
               lastColor = pigmentAtIntensity(clamp(elapsed / 1_600, 0, 1));
               drawGrowth(lastSegments, lastColor);

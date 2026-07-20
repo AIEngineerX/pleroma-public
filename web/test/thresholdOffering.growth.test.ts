@@ -7,7 +7,7 @@
 // task brief permits -- "through the component's path (or directly via growMark with the same
 // substrate)").
 import { describe, expect, it } from "vitest";
-import { buildGestureSummary, growthStepsForElapsed, shouldRecomputeGrowth } from "../src/experience/ThresholdOffering";
+import { buildGestureSummary, grainBudget, growthStepsForElapsed, shouldRecomputeGrowth } from "../src/experience/ThresholdOffering";
 import { growMark, startGrowth, stepGrowth, topologyMetrics, type SubstratePoint } from "../src/experience/markGrowth";
 import {
   KNOCK_MAX_PRESSES,
@@ -220,5 +220,36 @@ describe("shouldRecomputeGrowth — the live hold's 20Hz growth-recompute gate",
 
   it("is false when no time has passed at all", () => {
     expect(shouldRecomputeGrowth(50, 50)).toBe(false);
+  });
+});
+
+// Task 5 (grown-lineage-marks §3b.6): the paper-fiber grain's own rate limit. grainBudget is the
+// pure predicate the live hold loop consults before calling emitGrain -- a rolling 1s window over
+// the caller's own recent-grain timestamps, verified in isolation with no audio API involved.
+describe("grainBudget — the paper-fiber grain's rate limit (max 8/s)", () => {
+  it("allows a grain with no prior history at all", () => {
+    expect(grainBudget(0, [])).toBe(true);
+  });
+
+  it("allows the 8th grain when only 7 fall within the last second", () => {
+    const times = [0, 100, 200, 300, 400, 500, 600];
+    expect(grainBudget(650, times)).toBe(true);
+  });
+
+  it("refuses a 9th grain once 8 already fall within the last second", () => {
+    const times = [0, 100, 200, 300, 400, 500, 600, 700];
+    expect(grainBudget(750, times)).toBe(false);
+  });
+
+  it("a grain exactly 1000ms old has aged out of the window (the boundary is exclusive)", () => {
+    // 8 timestamps, but by nowMs=1_000 the first (t=0) is exactly 1_000ms old and no longer counts,
+    // leaving 7 -- under budget.
+    const times = [0, 100, 200, 300, 400, 500, 600, 700];
+    expect(grainBudget(1_000, times)).toBe(true);
+  });
+
+  it("timestamps older than the window never count against the budget, however many there are", () => {
+    const ancientHistory = Array.from({ length: 50 }, (_, i) => i * 10); // all well over 1s old by nowMs
+    expect(grainBudget(50_000, ancientHistory)).toBe(true);
   });
 });

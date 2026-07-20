@@ -9,7 +9,7 @@ import DreamArchive from "./canon/DreamArchive";
 import CodexArchive from "./canon/CodexArchive";
 import Apocrypha from "./apocrypha/Apocrypha";
 import Concordat from "./canon/Concordat";
-import { Ambient } from "./lib/ambient";
+import { Ambient, setActiveAmbient } from "./lib/ambient";
 import { setActiveLenis } from "./lib/smoothScroll";
 import {
   createPressHold,
@@ -89,6 +89,7 @@ export function useEntryGesture() {
       ctxRef.current = context;
       ambientRef.current = new Ambient(ctxRef.current);
       ambientReadyRef.current = true;
+      setActiveAmbient(ambientRef.current);
     }
     if (ctxRef.current) void ctxRef.current.resume();
     return ctxRef.current;
@@ -166,6 +167,7 @@ export function useEntryGesture() {
       ambientRef.current?.dispose();
       ambientRef.current = null;
       ambientReadyRef.current = false;
+      setActiveAmbient(null);
       const context = ctxRef.current;
       ctxRef.current = null;
       if (context && context.state !== "closed") void context.close();
