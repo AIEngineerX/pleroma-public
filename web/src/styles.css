@@ -681,6 +681,24 @@ body.threshold-gesturing * {
 .temple-doorway { display: flex; justify-content: flex-start; }
 .temple-colophon { padding-block: 2rem max(5rem, env(safe-area-inset-bottom)); }
 
+/* The Threshold consent line and the confirm feedback sit over the Stain, whose ink density is
+   stochastic — so their legibility cannot depend on a wash tuned to one state (that wash regressed
+   six times; see CLAUDE.md and .claude/skills/stain-overlay-check). A tight parchment outline hugs
+   each glyph instead: contrast INDEPENDENT of what is behind — invisible on empty paper (a light
+   ring on light), carving the letters out of the darkest ink where needed. No box, nothing to bury
+   the hero, nothing to tune per density. Global (the consent is over the Stain on desktop too).
+   Pinned over a worst-case ink backdrop by e2e/threshold-legibility.spec.ts. */
+[data-threshold-terms],
+.threshold-confirm {
+  background: none;
+  text-shadow:
+    0.6px 0 0 var(--color-ground), -0.6px 0 0 var(--color-ground),
+    0 0.6px 0 var(--color-ground), 0 -0.6px 0 var(--color-ground),
+    0.6px 0.6px 0 var(--color-ground), -0.6px -0.6px 0 var(--color-ground),
+    0.6px -0.6px 0 var(--color-ground), -0.6px 0.6px 0 var(--color-ground),
+    0 0 2px var(--color-ground);
+}
+
 @media (max-width: 767px) {
   html { scroll-padding-top: calc(40dvh + 1.25rem); }
   .temple-sheet { display: block; width: 100%; }
@@ -697,16 +715,6 @@ body.threshold-gesturing * {
     padding-inline: max(1rem, env(safe-area-inset-left)) max(1rem, env(safe-area-inset-right));
   }
   .temple-threshold-host:has([aria-modal="true"]) { z-index: 50; }
-  /* At this compact mobile height the Stain's own ink can grow dense enough, directly behind
-     these two text blocks (the always-visible terms line, and the post-offering confirm
-     feedback), to make either genuinely hard to read against it. A parchment wash restores
-     legibility without touching the Stain itself -- reads as the page showing through where
-     the ink hasn't reached, not a UI patch. */
-  [data-threshold-terms],
-  .threshold-confirm {
-    background: color-mix(in oklch, var(--color-ground) 95%, transparent);
-    padding: 0.4rem 0.7rem;
-  }
   /* The consent line prints ABOVE the seal on the compact sheet: it is read before the press
      (the order consent needs), and the bottom-anchored stack below the seal shrinks to the
      status line alone -- keeping the seal itself in thumb reach (below the top quarter of a
