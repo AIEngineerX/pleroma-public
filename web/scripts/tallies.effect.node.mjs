@@ -53,18 +53,23 @@ test("Tallies retains a failed same-date refresh but clears date A before date B
       tallies: [{ wallet: "date-a-wallet", count: 2, name: "Date A witness" }],
     }));
   });
-  await listen(api);
-  const vite = await createViteServer({
-    configFile: false,
-    logLevel: "silent",
-    root: WEB_ROOT,
-    server: { host: "127.0.0.1", port: 0 },
-  });
-  await vite.listen();
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-
+  // Every acquisition happens INSIDE the try: on 2026-07-16 `vite.listen()` threw in CI while
+  // the api server (acquired before the old try) stayed open, so node --test reported the failure
+  // but the process never exited — the job hung to the 6-hour runner wall, six pushes in a row.
+  let vite = null;
+  let browser = null;
+  let page = null;
   try {
+    await listen(api);
+    vite = await createViteServer({
+      configFile: false,
+      logLevel: "silent",
+      root: WEB_ROOT,
+      server: { host: "127.0.0.1", port: 0 },
+    });
+    await vite.listen();
+    browser = await chromium.launch({ headless: true });
+    page = await browser.newPage();
     const fixtureUrl = new URL("/scripts/fixtures/tallies-effect.html", serverOrigin(vite.httpServer));
     fixtureUrl.searchParams.set("apiBase", serverOrigin(api));
     await page.goto(fixtureUrl.href);
@@ -94,9 +99,9 @@ test("Tallies retains a failed same-date refresh but clears date A before date B
       "/fail/api/tallies?date=2030-01-02",
     ]);
   } finally {
-    await page.close();
-    await browser.close();
-    await vite.close();
-    await close(api);
+    if (page) await page.close();
+    if (browser) await browser.close();
+    if (vite) await vite.close();
+    if (api.listening) await close(api);
   }
 });
