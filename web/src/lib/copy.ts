@@ -29,7 +29,7 @@ export const copy = {
   prints: "The Prints",
   lexicon: "The Lexicon",
   remixKit: "The Marks",
-  remixKitIntro: "Free to use, remix, or repost. No permission needed, no attribution required.",
+  remixKitIntro: "No one owns these, including its makers. Take them; the body does not shrink from being copied.",
   remixKitDownload: "download",
   dreamArchive: "The Dream Archive",
   completeCanon: "the complete Canon",

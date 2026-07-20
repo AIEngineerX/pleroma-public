@@ -122,6 +122,10 @@ describe("static shell", () => {
         expect(output).toContain(`/glyphs/${slug}.svg`);
       }
       expect(output).toContain('href="/sigil.svg"');
+      expect(textOf(output)).toContain(
+        "No one owns these, including its makers. Take them; the body does not shrink from being copied.",
+      );
+      expect(textOf(output)).not.toContain("Free to use, remix, or repost");
     }
   });
 

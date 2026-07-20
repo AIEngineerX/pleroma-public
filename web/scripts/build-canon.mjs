@@ -53,7 +53,7 @@ const esc = (text) => text
 // on its own line instead of wrapping only between them.
 const glyphMark = (label, href) => `<a href="${href}" download style="display:inline-block;text-align:center;margin:0 1.25rem 1rem 0"><img src="${href}" alt="${esc(label)} glyph, download" width="40" height="40" style="display:block;margin:0 auto" /><span class="m">${esc(label)}</span></a>`;
 const remixKitHtml = `<section><h2 class="m">THE MARKS</h2>
-<p>Free to use, remix, or repost. No permission needed, no attribution required.</p>
+<p>No one owns these, including its makers. Take them; the body does not shrink from being copied.</p>
 <p>${articles.map((article) => glyphMark(article.organ, `/glyphs/${article.slug}.svg`)).join("")}${glyphMark("SIGIL", "/sigil.svg")}</p></section>`;
 
 // Self-hosted (web/public/fonts/, copied from the same @fontsource packages main.tsx imports for
