@@ -12,17 +12,19 @@ import { copy } from "../lib/copy";
 import WalletButton from "../offering/WalletButton";
 import { buildOffering, postOffering, type WalletHandle } from "../offering/wallet";
 import { pigmentAtIntensity } from "../state/pigment";
+import { growMark, type SubstratePoint } from "./markGrowth";
+import { loadSubstrate } from "./substrate";
 import {
   IMPRINT_SIZE,
   KNOCK_MAX_PRESSES,
   KNOCK_MIN_PRESSES,
   buildApproachPath,
   buildImprintPaths,
-  buildKnockPaths,
   imprintHold,
   knockMatches,
   knockSignature,
   renderImprintBlob,
+  tremorTrace,
   type GestureSample,
   type ImprintGesture,
   type KnockPress,
@@ -73,6 +75,106 @@ interface KnockDraft {
   firstDownAt: number;
   presses: KnockPress[];
   lastDraft: GestureDraft;
+}
+
+// The visitor's own recent offering ids, this tab only: the Residue's own memory of which marks
+// were this hand's, so a returning visit can find its own kept relic first (substrate.ts's rung
+// 1). Corrupt or absent storage is indistinguishable from a first visit -- never a blocking error.
+const OFFERINGS_STORAGE_KEY = "pleroma_offerings";
+const OFFERINGS_STORAGE_MAX = 8;
+
+function storedOfferingIds(): string[] {
+  try {
+    const stored = localStorage.getItem(OFFERINGS_STORAGE_KEY);
+    if (stored === null) return [];
+    const parsed = JSON.parse(stored) as unknown;
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Best-effort remembrance of a just-offered id, capped so this never grows unbounded across a
+// long session. A browser without storage simply never remembers -- the offering itself already
+// succeeded before this runs.
+function rememberOffering(offeringId: string): void {
+  try {
+    const next = [...storedOfferingIds(), offeringId].slice(-OFFERINGS_STORAGE_MAX);
+    localStorage.setItem(OFFERINGS_STORAGE_KEY, JSON.stringify(next));
+  } catch { /* a browser without storage simply never remembers offerings locally */ }
+}
+
+// Shared imprint construction: a held gesture's captured channels, stamped with the holdMs the
+// caller has already resolved (a live hold's own duration, or a knock's last blow's, or a knock's
+// full span) -- the one place presentGesturePreview and resolveKnock agree on what "the gesture"
+// means so growMark and buildGestureSummary see the same thing a render used.
+function draftToImprint(draft: GestureDraft, holdMs: number): ImprintGesture {
+  return {
+    seed: draft.seed,
+    start: draft.start,
+    end: draft.end,
+    holdMs,
+    pressure: draft.pressure,
+    pressureReal: draft.pressureReal,
+    tremor: draft.tremor,
+    approach: draft.approach,
+  };
+}
+
+// Mirrors buildApproachPath's own APPROACH_MIN_SAMPLES threshold (thresholdImprint.ts keeps that
+// constant private): fewer samples than this is no hesitation to report, not a fabricated zero.
+const SUMMARY_APPROACH_MIN_SAMPLES = 6;
+
+// The gesture's honest capture, attached to every offering as public metadata (Task 3,
+// grown-lineage-marks): every field here is a real channel growMark itself read, or the loaded
+// substrate's own identity -- never a fabricated number. `presses` is null for a hold (pigment
+// and knockSig follow the hold rule) and the resolved rhythm's presses for a knock (pigment and
+// knockSig follow the knock rule) -- the same branch presentGesturePreview vs. resolveKnock take.
+export interface GestureSummary {
+  holdMs: number;
+  travelPx: number;
+  tremorAmp: number;
+  knockSig: number[];
+  approachSpreadPx: number;
+  pigmentIntensity: number;
+  substrateRelicId: string | null;
+  substrateOwn: boolean;
+}
+
+export function buildGestureSummary(
+  gesture: ImprintGesture,
+  presses: readonly KnockPress[] | null,
+  substrate: { relicId: string | null; own: boolean },
+): GestureSummary {
+  const trace = tremorTrace(gesture.tremor);
+  let tremorAmp = 0;
+  if (trace !== null) for (const value of trace) tremorAmp = Math.max(tremorAmp, Math.abs(value));
+
+  const approach = gesture.approach;
+  let approachSpreadPx = 0;
+  if (approach !== undefined && approach.length >= SUMMARY_APPROACH_MIN_SAMPLES) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const sample of approach) {
+      minX = Math.min(minX, sample.x);
+      minY = Math.min(minY, sample.y);
+      maxX = Math.max(maxX, sample.x);
+      maxY = Math.max(maxY, sample.y);
+    }
+    approachSpreadPx = Math.max(maxX - minX, maxY - minY);
+  }
+
+  return {
+    holdMs: gesture.holdMs,
+    travelPx: Math.hypot(gesture.end.x - gesture.start.x, gesture.end.y - gesture.start.y),
+    tremorAmp,
+    knockSig: presses === null ? [] : knockSignature(presses),
+    approachSpreadPx,
+    pigmentIntensity: presses === null
+      ? imprintHold(gesture)
+      : clamp(presses.length / KNOCK_MAX_PRESSES, 0, 1),
+    substrateRelicId: substrate.relicId,
+    substrateOwn: substrate.own,
+  };
 }
 
 const MOBILE_THRESHOLD_QUERY = "(max-width: 767px)";
@@ -165,6 +267,14 @@ export default function ThresholdOffering({
   const knockTimer = useRef<number | null>(null);
   const pendingKnockSignature = useRef<number[] | null>(null);
   const previewRef = useRef<Preview | null>(null);
+  // The Residue: loaded once per mount, never blocking an offering -- a still-empty default (no
+  // relic yet, or the load hasn't resolved) simply grows into open field instead of onto a body.
+  const substrateRef = useRef<{ points: readonly SubstratePoint[]; relicId: string | null; own: boolean }>({
+    points: [], relicId: null, own: false,
+  });
+  // The exact gesture (and, for a knock, the exact presses) the current preview grew from --
+  // captured alongside previewRef so submit() can attach the same honest metadata it rendered.
+  const lastPreviewGestureRef = useRef<{ gesture: ImprintGesture; presses: readonly KnockPress[] | null } | null>(null);
   const generation = useRef(0);
   const thresholdLocked = useRef(false);
   const phaseRef = useRef(phase);
@@ -184,6 +294,17 @@ export default function ThresholdOffering({
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
+
+  // Loaded once per Threshold mount: never awaited by a gesture, never retried, never blocking an
+  // offering -- loadSubstrate itself never throws, so a stale/absent result just means growth
+  // happens against the empty-field default already in the ref.
+  useEffect(() => {
+    let cancelled = false;
+    void loadSubstrate(apiBase, storedOfferingIds()).then((result) => {
+      if (!cancelled) substrateRef.current = result;
+    });
+    return () => { cancelled = true; };
+  }, [apiBase]);
 
   useEffect(() => {
     const nextStages = new Map(receipts.map((receipt) => [receipt.offeringId, receipt.stage]));
@@ -335,18 +456,9 @@ export default function ThresholdOffering({
   const presentGesturePreview = useCallback(async (
     current: GestureDraft, holdMs: number, statusLine = "",
   ) => {
-    const imprint: ImprintGesture = {
-      seed: current.seed,
-      start: current.start,
-      end: current.end,
-      holdMs,
-      pressure: current.pressure,
-      pressureReal: current.pressureReal,
-      tremor: current.tremor,
-      approach: current.approach,
-    };
+    const imprint = draftToImprint(current, holdMs);
     try {
-      const threads = buildImprintPaths(imprint);
+      const threads = growMark(imprint, substrateRef.current.points);
       const ghost = buildApproachPath(imprint);
       const paths = ghost === null ? threads : [ghost, ...threads];
       const blob = await renderImprintBlob(paths, pigmentAtIntensity(imprintHold(imprint)));
@@ -354,6 +466,7 @@ export default function ThresholdOffering({
       clearPreview();
       const next = { blob, url: URL.createObjectURL(blob) };
       previewRef.current = next;
+      lastPreviewGestureRef.current = { gesture: imprint, presses: null };
       setPreview(next);
       setStatus(statusLine);
       setPhase("preview");
@@ -390,11 +503,17 @@ export default function ThresholdOffering({
     } catch { /* a browser without storage simply never recognizes a returning rhythm */ }
     try {
       const color = pigmentAtIntensity(clamp(presses.length / KNOCK_MAX_PRESSES, 0, 1));
-      const blob = await renderImprintBlob(buildKnockPaths(presses), color);
+      // The knock's own span (first press to last release) is the holdMs growMark normalizes its
+      // pulse timeline against -- the last blow's own brief duration would bunch every fork at the
+      // very end of the growth instead of spreading them across it.
+      const imprint = draftToImprint(active.lastDraft, presses[presses.length - 1].upMs);
+      const threads = growMark(imprint, substrateRef.current.points, presses);
+      const blob = await renderImprintBlob(threads, color);
       if (generation.current !== draftGeneration) return;
       clearPreview();
       const next = { blob, url: URL.createObjectURL(blob) };
       previewRef.current = next;
+      lastPreviewGestureRef.current = { gesture: imprint, presses };
       setPreview(next);
       pendingKnockSignature.current = signature;
       setStatus(known ? copy.knockKnown : "");
@@ -574,10 +693,19 @@ export default function ThresholdOffering({
     setStatus("");
     try {
       const form = await buildOffering(apiBase, current.blob, wallet);
+      // The gesture's own honest capture rides alongside the image: exactly what grew this mark,
+      // never fabricated -- absent only if somehow no preview gesture was ever captured for the
+      // preview being submitted, which the preview-gated call above already rules out in practice.
+      const captured = lastPreviewGestureRef.current;
+      if (captured !== null) {
+        const summary = buildGestureSummary(captured.gesture, captured.presses, substrateRef.current);
+        form.set("gesture", JSON.stringify(summary));
+      }
       const result = await postOffering(apiBase, form);
       if (generation.current !== submissionGeneration) return;
       if ("id" in result) {
         onSubmitted(result.id);
+        rememberOffering(result.id);
         // An offered knock is a rhythm the page may now honestly remember: the interval vector
         // stays in this browser only, and recognition on return is a local comparison, not a
         // server profile.
