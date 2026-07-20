@@ -29,7 +29,6 @@
 // returns null. No Math.random, no Date.now, no wall-clock or environment input of any kind.
 
 import {
-  gestureRandom,
   imprintHold,
   IMPRINT_SIZE,
   tremorTrace,
@@ -156,6 +155,46 @@ function traceAt(trace: readonly number[], t: number): number {
   return trace[index] + (trace[next] - trace[index]) * (position - index);
 }
 
+// Reimplemented locally (thresholdImprint keeps gestureRandom's mixing private, and only exposes
+// it as a stateful closure): the same seed-mix and the same xorshift128 recurrence, but as an
+// explicit immutable 4-word state instead of a shared mutable generator -- so GrowthState can copy
+// its PRNG state across snapshots byte-identically instead of aliasing one generator by reference.
+type RngState = readonly [number, number, number, number];
+
+function mixSeedWord(value: number): number {
+  value = Math.imul(value ^ (value >>> 16), 0x21f0aaad);
+  value = Math.imul(value ^ (value >>> 15), 0x735a2d97);
+  return (value ^ (value >>> 15)) >>> 0;
+}
+
+// Byte-identical to gestureRandom's own seed construction.
+function seedRngState(gesture: ImprintGesture): RngState {
+  if (gesture.seed.length !== 4) throw new TypeError("an imprint seed has exactly four words");
+  const inputs = [
+    Math.round(gesture.start.x * 1_000),
+    Math.round(gesture.start.y * 1_000),
+    Math.round(gesture.end.x * 1_000),
+    Math.round(gesture.end.y * 1_000),
+    Math.round(gesture.holdMs),
+    // A pressure the device never genuinely reported is a fabricated constant; it shapes nothing,
+    // not even the dice -- matches gestureRandom's own rule exactly.
+    Math.round((gesture.pressureReal === false ? 0 : gesture.pressure) * 1_000_000),
+  ];
+  const mixed = Array.from(
+    gesture.seed,
+    (word, index) => mixSeedWord(word ^ inputs[index] ^ inputs[index + 2]),
+  ) as [number, number, number, number];
+  return mixed.every((word) => word === 0) ? [0x9e3779b9, 0, 0, 0] : mixed;
+}
+
+// One xorshift128 draw as a pure function -- current state in, [0,1) value and next state out --
+// byte-identical to gestureRandom's closure body, just without the shared mutable cell.
+function drawRandom(state: RngState): { value: number; state: RngState } {
+  const t = (state[0] ^ (state[0] << 11)) >>> 0;
+  const s3 = (state[3] ^ (state[3] >>> 19) ^ t ^ (t >>> 8)) >>> 0;
+  return { value: s3 / 0x1_0000_0000, state: [state[1], state[2], state[3], s3] };
+}
+
 // ---- Public types ---------------------------------------------------------------------------
 
 // A point on the Stain's own surface the mark can grow into: an existing organ's ink, offered as
@@ -198,12 +237,10 @@ export interface GrowthState {
   readonly pulses: readonly number[];
   readonly maxSteps: number;
   readonly baseWidth: number;
-  // A stateful generator shared by reference across state snapshots (function values cannot be
-  // cloned). Growth only ever moves forward -- never rewound to an earlier snapshot and replayed
-  // differently -- so this stays deterministic for every real call pattern; two independent calls
-  // from an equal gesture each build their own generator from scratch and reproduce the same
-  // sequence.
-  readonly random: () => number;
+  // The fallback dice's state, explicit and immutable (a 4-word xorshift128 state) so every
+  // snapshot is genuinely independent data: stepGrowth copies it, advances the copy, and returns
+  // the advanced copy -- two calls from the same input state always produce the same result.
+  readonly rngState: RngState;
 }
 
 function widthAt(baseWidth: number, depth: number): number {
@@ -253,7 +290,7 @@ export function startGrowth(
   const end = { x: clamp(gesture.end.x, 0, IMPRINT_SIZE), y: clamp(gesture.end.y, 0, IMPRINT_SIZE) };
   const hold = imprintHold(gesture);
   const trace = tremorTrace(gesture.tremor);
-  const random = gestureRandom(gesture);
+  let rng = seedRngState(gesture);
 
   // Honest width: genuine pressure when the device reported one, else the always-real hold --
   // exactly thresholdImprint's rule, computed once and tapered per branch as the organism forks.
@@ -281,10 +318,21 @@ export function startGrowth(
     // attractor count itself (an integer stride like 7 would alias badly whenever attractorCount
     // shared a factor with it, clumping the jitter instead of spreading it).
     const radiusPhase = (index * 0.6180339887498949) % 1;
-    const angleJitter = trace !== null ? traceAt(trace, anglePhase) : (random() - 0.5) * 2;
-    // Mapped to [0,1] and square-rooted so attractors fill the disc at uniform area density
-    // instead of bunching toward the center (the standard uniform-disc-sampling correction).
-    const radiusFraction = trace !== null ? (traceAt(trace, radiusPhase) + 1) / 2 : random();
+    let angleJitter: number;
+    let radiusFraction: number;
+    if (trace !== null) {
+      angleJitter = traceAt(trace, anglePhase);
+      // Mapped to [0,1] and square-rooted so attractors fill the disc at uniform area density
+      // instead of bunching toward the center (the standard uniform-disc-sampling correction).
+      radiusFraction = (traceAt(trace, radiusPhase) + 1) / 2;
+    } else {
+      const drawA = drawRandom(rng);
+      rng = drawA.state;
+      angleJitter = (drawA.value - 0.5) * 2;
+      const drawB = drawRandom(rng);
+      rng = drawB.state;
+      radiusFraction = drawB.value;
+    }
     const angle = anglePhase * Math.PI * 2 + angleJitter * FIELD_ANGLE_JITTER;
     const maxRadius = FIELD_RADIUS_BASE + hold * FIELD_RADIUS_HOLD_SCALE;
     const radius = maxRadius * Math.sqrt(clamp(radiusFraction, 0, 1));
@@ -333,7 +381,7 @@ export function startGrowth(
     pulses,
     maxSteps,
     baseWidth,
-    random,
+    rngState: rng,
   };
 }
 
@@ -349,7 +397,8 @@ export function stepGrowth(state: GrowthState, steps: number): GrowthState {
   let tips = state.tips.map((tip) => ({ ...tip }));
   let splits = state.splits;
   let step = state.step;
-  const { trace, substrate, pulses, maxSteps, baseWidth, random } = state;
+  const { trace, substrate, pulses, maxSteps, baseWidth } = state;
+  let rng = state.rngState;
 
   let pointBudget = MAX_TOTAL_POINTS - totalPoints(segments);
 
@@ -413,7 +462,14 @@ export function stepGrowth(state: GrowthState, steps: number): GrowthState {
 
       let heading = Math.atan2(nearest.y - tip.y, nearest.x - tip.x);
       const tipPhase = clamp(tip.age / maxSteps + tip.pathIndex * PHASE_STAGGER, 0, 1);
-      const deflect = trace !== null ? traceAt(trace, tipPhase) : (random() - 0.5) * 2;
+      let deflect: number;
+      if (trace !== null) {
+        deflect = traceAt(trace, tipPhase);
+      } else {
+        const draw = drawRandom(rng);
+        rng = draw.state;
+        deflect = (draw.value - 0.5) * 2;
+      }
       heading += deflect * TREMOR_DEFLECT;
 
       let nx = tip.x + Math.cos(heading) * stepLen;
@@ -480,7 +536,34 @@ export function stepGrowth(state: GrowthState, steps: number): GrowthState {
   }
 
   const done = step >= maxSteps || tips.every((tip) => !tip.alive) || totalPoints(segments) >= MAX_TOTAL_POINTS;
-  return { ...state, tips, attractors, segments, splits, step, done };
+  return { ...state, tips, attractors, segments, splits, step, done, rngState: rng };
+}
+
+// ---- Finalization ------------------------------------------------------------------------------
+
+// A pulse fork (isPulse branch above) or a natural split (the SPLIT_ANGLE branch above) each push a
+// new 1-point segment for its child tip to grow into. If that child never gets a further step --
+// a knock press landing at or after holdMs clamps its pulse to the very last step; a natural split
+// on the last step is the same shape of coincidence -- the segment is left with exactly one point,
+// which renderImprintBlob's isRenderablePath rejects outright (it requires >= 2). This is a pure
+// function of the finished state: prune any segment that never advanced past its seed point, since
+// the rest of the mark still stands on its own; only in the degenerate case where every segment
+// would be pruned (nothing left to render) does a segment get extended by one STEP_LEN in its own
+// tip's heading instead, so growMark never hands back an empty or unrenderable mark.
+function finalizeSegments(segments: readonly ImprintPath[], tips: readonly GrowthTip[]): ImprintPath[] {
+  const renderable = segments.filter((path) => path.points.length >= 2);
+  if (renderable.length > 0) return renderable;
+
+  const headingByPathIndex = new Map<number, number>();
+  for (const tip of tips) headingByPathIndex.set(tip.pathIndex, tip.heading);
+
+  return segments.map((path, index) => {
+    const heading = headingByPathIndex.get(index) ?? 0;
+    const origin = path.points[0];
+    const nx = clamp(origin.x + Math.cos(heading) * STEP_LEN, 0, IMPRINT_SIZE);
+    const ny = clamp(origin.y + Math.sin(heading) * STEP_LEN, 0, IMPRINT_SIZE);
+    return { ...path, points: [origin, { x: rounded(nx), y: rounded(ny) }] };
+  });
 }
 
 // ---- Convenience ---------------------------------------------------------------------------------
@@ -492,7 +575,7 @@ export function growMark(
 ): ImprintPath[] {
   let state = startGrowth(gesture, substrate, knock);
   while (!state.done) state = stepGrowth(state, GROWTH_CHUNK);
-  return state.segments;
+  return finalizeSegments(state.segments, state.tips);
 }
 
 export function topologyMetrics(paths: readonly ImprintPath[]): { branches: number; endpoints: number; span: number } {

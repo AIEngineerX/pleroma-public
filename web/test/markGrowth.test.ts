@@ -54,4 +54,20 @@ describe("growth is deterministic and gesture-sensitive", () => {
     expect(s.segments).toEqual(growMark(hold(tremorA), []));
     expect(stepGrowth(s, 10).segments).toEqual(s.segments);
   });
+  it("never emits a path the renderer would reject (knock press at release)", () => {
+    // A final press landing at holdMs clamps its pulse to the last step: the forked child
+    // cannot advance. The mark must still be fully renderable (every path >= 2 points).
+    const presses = [{ downMs: 0, upMs: 80 }, { downMs: 400, upMs: 470 }, { downMs: 1200, upMs: 1200 }];
+    const paths = growMark({ ...hold(tremorA), holdMs: 1200 }, [], presses);
+    for (const p of paths) expect(p.points.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stepGrowth on a tremorless gesture is repeatable from the same state (pure)", () => {
+    const bare: ImprintGesture = { seed, start: { x: 256, y: 256 }, end: { x: 300, y: 240 }, holdMs: 900, pressure: 0.5, pressureReal: false };
+    const s0 = startGrowth(bare, []);
+    const a = stepGrowth(s0, 6);
+    const b = stepGrowth(s0, 6); // same input state, same result — no shared mutable PRNG
+    expect(a.segments).toEqual(b.segments);
+    expect(a.tips ?? null).toEqual(b.tips ?? null);
+  });
 });
