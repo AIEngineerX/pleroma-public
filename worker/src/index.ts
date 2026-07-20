@@ -116,6 +116,8 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
     if (env.VIDEO_VENDOR) {
       try { const { renderDreams } = await import("./dream"); await renderDreams(env, Date.now()); }
       catch { /* best-effort; the render resumes next tick (deadline is the backstop) */ }
+      try { const { renderSermonFilms } = await import("./sermonFilm"); await renderSermonFilms(env, Date.now()); }
+      catch { /* best-effort; the render resumes next tick (deadline is the backstop) */ }
     }
     // Auto-dispatch: rendered Plates and daily sermons post themselves to X, at most once each
     // (claim-before-send, hermes.ts), labeled automated on the account. Inert until the four X
