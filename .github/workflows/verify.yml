@@ -24,6 +24,15 @@ jobs:
           node-version: 22
       - run: npm ci --prefix worker
       - run: npm ci --prefix web
+      # The tallies effect test launches real Chromium — without this install the verify job
+      # died at browserType.launch (the failure the 2026-07-16 hang was hiding). Cached so a
+      # green run doesn't re-download the browser on every push.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+      - run: npx --prefix web playwright install --with-deps chromium
       - run: npm run verify
 
   e2e:
@@ -37,6 +46,11 @@ jobs:
           node-version: 22
       - run: npm ci --prefix worker
       - run: npm ci --prefix web
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
       - run: npx --prefix web playwright install --with-deps chromium
       - run: npm run e2e --prefix web
       - uses: actions/upload-artifact@v4
