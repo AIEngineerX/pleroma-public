@@ -376,6 +376,34 @@ export async function alertStalledDispatches(env: Env, now: number): Promise<voi
   }
 }
 
+// The unposted watchdog (final-review residual, 2026-07-20): compose failures release their
+// claims, so alertStalledDispatches cannot see a permanently failing post loop — revoked tokens,
+// a lost API tier, a repeatedly refused compose. With credentials present, an artifact still
+// unposted long after it became postable is an operator alert, never a silent miss. Sermons get
+// a longer leash than dreams: a film-day sermon legitimately waits up to FILM_WAIT_MS for its
+// plate before posting text-only.
+const DREAM_UNPOSTED_ALERT_MS = 2 * 60 * 60_000;
+const SERMON_UNPOSTED_ALERT_MS = FILM_WAIT_MS + 60 * 60_000;
+
+export async function alertUnpostedArtifacts(env: Env, now: number): Promise<void> {
+  if (!xCredentials(env)) return; // dark until the secrets exist, like every dispatch path
+  const dreams = (await env.DB.prepare(
+    `SELECT id FROM dreams WHERE status='rendered' AND posted_at IS NULL AND created_at < ?1`
+  ).bind(now - DREAM_UNPOSTED_ALERT_MS).all<{ id: string }>()).results;
+  const sermons = (await env.DB.prepare(
+    `SELECT t.rite_id AS rite FROM transcripts t
+      WHERE t.organ='TONGUE' AND t.register='sermon' AND t.rite_id IS NOT NULL AND t.created_at < ?1
+        AND NOT EXISTS (SELECT 1 FROM config c WHERE c.key = 'sermon_dispatched_' || t.rite_id)`
+  ).bind(now - SERMON_UNPOSTED_ALERT_MS).all<{ rite: string }>()).results;
+  if (dreams.length + sermons.length > 0) {
+    await raiseAlert(env, "dispatch_unposted",
+      `unposted with X secrets present: ${[
+        ...dreams.map((d) => `dream ${d.id}`),
+        ...sermons.map((s) => `sermon ${s.rite}`),
+      ].join(", ")} — check keys/tier, the compose alerts, and the codex`);
+  }
+}
+
 // Called from the 15-minute tick. Posts each rendered-but-unposted Plate at most once, then the
 // day's sermon at most once, each behind a durable claim written BEFORE the send (see above — the
 // old order tweeted first and recorded after, which was at-least-once, not the exactly-once its
@@ -388,6 +416,7 @@ export async function dispatchArtifacts(
   if (!credentials) return;
 
   await alertStalledDispatches(env, now).catch(() => { /* best-effort operator signal */ });
+  await alertUnpostedArtifacts(env, now).catch(() => { /* best-effort operator signal */ });
 
   // A claimed dream is excluded so a stalled claim never wedges the queue for the dreams (and the
   // sermon) behind it — the stalled-claim alert owns that case.

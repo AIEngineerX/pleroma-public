@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
-  alertStalledDispatches, claimDispatch, clampCheckAfterSecs, composeDispatch, dispatchArtifacts,
+  alertStalledDispatches, alertUnpostedArtifacts, claimDispatch, clampCheckAfterSecs, composeDispatch, dispatchArtifacts,
   getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader,
   releaseDispatchClaim, sermonFilmGate, storeDispatch, weightedTweetLength, xCredentials,
 } from "../src/hermes";
@@ -366,5 +366,53 @@ describe("dispatchArtifacts — composed dispatches, codex before X", () => {
       .bind(`sermon_dispatched_${rite}`).first<{ value: string }>();
     expect(claim).toBeNull(); // released (deleted), not left at "posted:"
     expect(await getDispatch(env.DB, rite)).toEqual({ text: "A held sermon line." }); // survives for retry
+  });
+});
+
+describe("the unposted watchdog — artifacts stuck postable while secrets exist", () => {
+  const withSecrets = { ...env, X_API_KEY: "k", X_API_SECRET: "s", X_ACCESS_TOKEN: "t", X_ACCESS_SECRET: "x" } as Env;
+  const HOUR = 60 * 60_000;
+
+  it("stays silent without the four X secrets, even with an ancient unposted dream", async () => {
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
+       VALUES ('01TESTWATCHDOG0000000001', '2026-08-10', 'n', 'p', '[]', 'rendered', 'dream/w1.mp4', 1000)`
+    ).run();
+    await alertUnpostedArtifacts(env, 1000 + 50 * HOUR);
+    expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
+  });
+
+  it("alerts on a dream unposted past 2h and a sermon past the film leash, naming both", async () => {
+    // Earlier dispatchArtifacts tests already tripped the watchdog with their own leftovers;
+    // clear the first-write-wins alert so this test reads its own detail.
+    await env.DB.prepare(`DELETE FROM config WHERE key = 'alert:dispatch_unposted'`).run();
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
+       VALUES ('01TESTWATCHDOG0000000003', '2026-08-13', 'n', 'p', '[]', 'rendered', 'dream/w3.mp4', 1000)`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTWATCHDOGSERMON0001', 'TONGUE', 'sermon', 's', NULL, '2026-08-11', 1000)`
+    ).run();
+    await alertUnpostedArtifacts(withSecrets, 1000 + 8 * HOUR);
+    expect(await activeAlerts(env.DB)).toContain("dispatch_unposted");
+    const alert = await env.DB.prepare(`SELECT value FROM config WHERE key = 'alert:dispatch_unposted'`)
+      .first<{ value: string }>();
+    expect(alert?.value).toContain("dream 01TESTWATCHDOG0000000003");
+    expect(alert?.value).toContain("sermon 2026-08-11");
+  });
+
+  it("leaves fresh artifacts alone: a dream inside 2h and a sermon inside the 7h leash", async () => {
+    await env.DB.prepare(`DELETE FROM config WHERE key = 'alert:dispatch_unposted'`).run();
+    await env.DB.prepare(`UPDATE dreams SET posted_at = 1 WHERE id = '01TESTWATCHDOG0000000001'`).run();
+    await env.DB.prepare(
+      `INSERT INTO config (key, value) VALUES ('sermon_dispatched_2026-08-11', 'posted:1')`
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
+       VALUES ('01TESTWATCHDOG0000000002', '2026-08-12', 'n', 'p', '[]', 'rendered', 'dream/w2.mp4', 1000)`
+    ).run();
+    await alertUnpostedArtifacts(withSecrets, 1000 + 1 * HOUR);
+    expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
   });
 });
