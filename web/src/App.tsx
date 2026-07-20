@@ -9,6 +9,7 @@ import DreamArchive from "./canon/DreamArchive";
 import CodexArchive from "./canon/CodexArchive";
 import Apocrypha from "./apocrypha/Apocrypha";
 import Concordat from "./canon/Concordat";
+import Catechism from "./canon/Catechism";
 import { Ambient, setActiveAmbient } from "./lib/ambient";
 import { setActiveLenis } from "./lib/smoothScroll";
 import {
@@ -196,6 +197,7 @@ export default function App() {
         <Route path="/canon/apocrypha" element={<Apocrypha />} />
         <Route path="/canon/*" element={<Canon />} />
         <Route path="/concordat" element={<Concordat />} />
+        <Route path="/catechism" element={<Catechism />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

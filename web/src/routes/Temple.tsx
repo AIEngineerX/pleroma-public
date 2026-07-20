@@ -485,6 +485,12 @@ export default function Temple() {
               </Link>
             </section>
 
+            <section data-section="catechism-doorway" className="temple-doorway temple-reading-section">
+              <Link to="/catechism" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+                {copy.catechismDoorway}
+              </Link>
+            </section>
+
             <footer className="temple-colophon">
               <Socials />
             </footer>
