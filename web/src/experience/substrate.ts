@@ -111,9 +111,9 @@ interface RelicCandidate { id: string; offeringId: string }
 
 // Fetches an offering's mark PNG and samples it -- null on ANY fetch or decode failure (never
 // throws), so a bad rung in the fallback chain is indistinguishable from an absent one.
-async function sampleOfferingImage(offeringId: string): Promise<SubstratePoint[] | null> {
+async function sampleOfferingImage(apiBase: string, offeringId: string): Promise<SubstratePoint[] | null> {
   try {
-    const response = await fetch(`/api/img/${encodeURIComponent(offeringId)}`);
+    const response = await fetch(`${apiBase}/api/img/${encodeURIComponent(offeringId)}`);
     if (!response.ok) return null;
     const bitmap = await createImageBitmap(await response.blob());
     try {
@@ -128,10 +128,10 @@ async function sampleOfferingImage(offeringId: string): Promise<SubstratePoint[]
 
 // Rung 1: the visitor's own kept relic, tried oldest-supplied-first against each of their own
 // offering ids until one has a relic.
-async function ownRelic(offeringIds: readonly string[]): Promise<RelicCandidate | null> {
+async function ownRelic(apiBase: string, offeringIds: readonly string[]): Promise<RelicCandidate | null> {
   for (const offeringId of offeringIds) {
     try {
-      const response = await fetch(`/api/relic-of/${encodeURIComponent(offeringId)}`);
+      const response = await fetch(`${apiBase}/api/relic-of/${encodeURIComponent(offeringId)}`);
       if (!response.ok) continue;
       const body = await response.json() as { relic: { id: string; offering_id: string } | null };
       if (body.relic) return { id: body.relic.id, offeringId: body.relic.offering_id };
@@ -143,9 +143,9 @@ async function ownRelic(offeringIds: readonly string[]): Promise<RelicCandidate 
 }
 
 // Rung 2: the newest relic anyone's mark became, newest-first per /api/relics's own contract.
-async function newestRelic(): Promise<RelicCandidate | null> {
+async function newestRelic(apiBase: string): Promise<RelicCandidate | null> {
   try {
-    const response = await fetch(`/api/relics`);
+    const response = await fetch(`${apiBase}/api/relics`);
     if (!response.ok) return null;
     const body = await response.json() as { entries: Array<{ id: string; offering_id: string }> };
     const first = body.entries[0];
@@ -156,9 +156,9 @@ async function newestRelic(): Promise<RelicCandidate | null> {
 }
 
 // Rung 3: the genesis relic, the one permanent fact once First Light has happened.
-async function genesisRelic(): Promise<RelicCandidate | null> {
+async function genesisRelic(apiBase: string): Promise<RelicCandidate | null> {
   try {
-    const response = await fetch(`/api/first-light`);
+    const response = await fetch(`${apiBase}/api/first-light`);
     if (!response.ok) return null;
     const body = await response.json() as {
       enacted: boolean; relic: { id: string; offering_id: string } | null;
@@ -171,25 +171,27 @@ async function genesisRelic(): Promise<RelicCandidate | null> {
 
 // The full fallback chain: own kept relic -> newest relic -> genesis -> nothing. Every rung's
 // fetch and image-decode failures fall through silently to the next; an offering is never blocked
-// on this, and no substrate is ever invented.
+// on this, and no substrate is ever invented. In production, the SPA (Cloudflare Pages) and the
+// Worker API are at separate origins, so apiBase must be threaded to fetch the correct origin.
 export async function loadSubstrate(
+  apiBase: string,
   ownOfferingIds: readonly string[],
 ): Promise<{ points: SubstratePoint[]; relicId: string | null; own: boolean }> {
-  const own = await ownRelic(ownOfferingIds);
+  const own = await ownRelic(apiBase, ownOfferingIds);
   if (own) {
-    const points = await sampleOfferingImage(own.offeringId);
+    const points = await sampleOfferingImage(apiBase, own.offeringId);
     if (points) return { points, relicId: own.id, own: true };
   }
 
-  const newest = await newestRelic();
+  const newest = await newestRelic(apiBase);
   if (newest) {
-    const points = await sampleOfferingImage(newest.offeringId);
+    const points = await sampleOfferingImage(apiBase, newest.offeringId);
     if (points) return { points, relicId: newest.id, own: false };
   }
 
-  const genesis = await genesisRelic();
+  const genesis = await genesisRelic(apiBase);
   if (genesis) {
-    const points = await sampleOfferingImage(genesis.offeringId);
+    const points = await sampleOfferingImage(apiBase, genesis.offeringId);
     if (points) return { points, relicId: genesis.id, own: false };
   }
 
