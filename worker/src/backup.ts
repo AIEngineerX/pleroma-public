@@ -7,7 +7,7 @@ import type { Env } from "./env";
 // 0012 dropped the incremental `vitals` table (vitals now derive from pulse_events).
 export const TABLES = [
   "offerings", "transcripts", "wallets", "nonces", "spend", "config",
-  "relics", "rites", "pulse_events", "dreams", "rate_limits", "apocrypha",
+  "relics", "rites", "pulse_events", "dreams", "sermon_films", "rate_limits", "apocrypha",
 ] as const;
 
 // Coordination state, not data: lease locks expire on their own wall clock and must never be
