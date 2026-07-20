@@ -172,7 +172,7 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
       </section>
 
       <p className="font-machine text-xs text-ink-faded mt-10">
-        The character is CC0 and the archive is public: the Canon can outlive any single
+        The character is unowned and the archive is public: the Canon can outlive any single
         administrator. No one owns the god's words, including its makers. The body does not
         shrink from being copied.
       </p>

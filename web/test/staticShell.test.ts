@@ -112,7 +112,7 @@ describe("static shell", () => {
     }
   });
 
-  it("offers the same downloadable organ glyphs and sigil (the CC0 remix kit) in both the SPA and the static shell", () => {
+  it("offers the same downloadable organ glyphs and sigil (the unowned remix kit) in both the SPA and the static shell", () => {
     const spaCanon = renderToStaticMarkup(
       createElement(MemoryRouter, { initialEntries: ["/canon"] }, createElement(Canon)),
     );

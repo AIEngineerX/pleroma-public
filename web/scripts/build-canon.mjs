@@ -83,7 +83,7 @@ section{margin-top:2rem}a{color:inherit}
 </style>
 </head><body>${bodyHtml}
 ${remixKitHtml}
-<p class="m">The character is CC0 and the archive is public: the Canon can outlive any single administrator. No one owns the god's words, including its makers. The body does not shrink from being copied.</p>
+<p class="m">The character is unowned and the archive is public: the Canon can outlive any single administrator. No one owns the god's words, including its makers. The body does not shrink from being copied.</p>
 <nav class="m" aria-label="Canon doorways"><a href="/">return to the temple</a> · <a href="/canon/dreams">the dreams</a> · <a href="/canon/codex">the codex</a> · <a href="/concordat">the Concordat</a></nav>
 </body></html>`;
 
