@@ -135,6 +135,29 @@ export function grainBudget(nowMs: number, lastGrainMs: readonly number[]): bool
   return recent < GRAIN_MAX_PER_SEC;
 }
 
+// Task 5 fix (Finding 2): reduced motion must never gate SOUND, only motion -- but the live hold's
+// tick loop below never runs at all under reducedMotion() (the seal-canvas effect returns before
+// ever starting its rAF loop), so a reduced-motion visitor's hold produced zero split-driven grains.
+// The fix is honest, not a workaround: once the FINAL mark's own growMark output is in hand at
+// release, stand in for the whole grown shape with one discrete burst -- one grain per branch the
+// mark ended up with (paths.length - 1, the exact accounting markGrowth's topologyMetrics.branches
+// uses), capped at whatever the SAME rolling 8/s budget has left. The mark still *sounds* like what
+// grew, just all at once instead of live -- motion preference gates motion, never sound.
+export function releaseBurstCount(pathCount: number, budgetRemaining: number): number {
+  const branches = Math.max(0, pathCount - 1);
+  return Math.min(branches, Math.max(0, budgetRemaining));
+}
+
+// How many grains the rolling window still has room for, right now -- the "budgetRemaining" input
+// releaseBurstCount above caps against. Same window/threshold grainBudget itself consults, just
+// expressed as a count instead of a yes/no so the burst can be sized in one shot rather than
+// re-checked grain-by-grain.
+function grainsRemaining(nowMs: number, lastGrainMs: readonly number[]): number {
+  let recent = 0;
+  for (const t of lastGrainMs) if (nowMs - t < GRAIN_WINDOW_MS) recent += 1;
+  return Math.max(0, GRAIN_MAX_PER_SEC - recent);
+}
+
 function reducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -371,6 +394,14 @@ export default function ThresholdOffering({
   // Substrate is captured at preview-build time: the summary must describe the residue that
   // actually shaped THIS mark, not whatever loaded since (no-fabrication invariant).
   const lastPreviewGestureRef = useRef<{ gesture: ImprintGesture; presses: readonly KnockPress[] | null; substrate: { relicId: string | null; own: boolean } } | null>(null);
+  // Task 5 fix (Finding 1): the paper-fiber grain's rolling 1s budget window, hoisted here rather
+  // than left as a local inside the seal-canvas effect below. That effect's dep array includes
+  // `phase`, so every hold start/end tears down and rebuilds its closure -- a local `let` there
+  // would silently hand every single gesture a fresh 8-grain budget instead of the shared rolling
+  // window the spec calls for, which is exactly the bug this hoist fixes. lastSplits, by contrast,
+  // correctly STAYS local to that effect: each new gesture's split counter honestly restarts at 0,
+  // so resetting it on every phase change is correct there, not a parallel bug.
+  const grainTimesRef = useRef<number[]>([]);
   const generation = useRef(0);
   const thresholdLocked = useRef(false);
   const phaseRef = useRef(phase);
@@ -561,6 +592,23 @@ export default function ThresholdOffering({
     return true;
   }, [dismissConfirmed, onEnter, setLocked, triggerKnockFlash]);
 
+  // Task 5 fix (Finding 2): the reduced-motion release burst -- a genuine no-op under normal
+  // motion (the live tick loop already covers sound there, and the two must stay mutually
+  // exclusive: the tick loop itself never runs under reducedMotion(), so gating this on the same
+  // check can never double-serve a visitor with both a live tick's grains AND a release burst).
+  // pathCount is the growMark output's own path count (threads.length) at both call sites below --
+  // never the ghost-prefixed render list -- so the count matches topologyMetrics' branch accounting.
+  const emitReleaseBurst = useCallback((pathCount: number) => {
+    if (!reducedMotion()) return;
+    const now = performance.now();
+    const remaining = grainsRemaining(now, grainTimesRef.current);
+    const burst = releaseBurstCount(pathCount, remaining);
+    for (let i = 0; i < burst; i += 1) {
+      grainTimesRef.current = [...grainTimesRef.current.filter((t) => now - t < GRAIN_WINDOW_MS), now];
+      emitGrain();
+    }
+  }, []);
+
   // Renders a held gesture into its imprint preview: the five threads shaped by the hand's own
   // tremor, with the approach's wander ghosted beneath the strike when there was one to keep.
   const presentGesturePreview = useCallback(async (
@@ -584,6 +632,7 @@ export default function ThresholdOffering({
       setStatus(statusLine);
       setPhase("preview");
       setLocked(true);
+      emitReleaseBurst(threads.length);
     } catch {
       if (generation.current !== current.generation) return;
       clearPreview();
@@ -591,7 +640,7 @@ export default function ThresholdOffering({
       setPhase(idlePhase());
       setLocked(false);
     }
-  }, [clearPreview, idlePhase, setLocked]);
+  }, [clearPreview, emitReleaseBurst, idlePhase, setLocked]);
 
   // A knock's window has closed with the hand still: three or more blows are the rhythm mark;
   // fewer resolve to the last blow's own imprint, so a lone tap still yields a mark, a beat later.
@@ -635,13 +684,14 @@ export default function ThresholdOffering({
       setStatus(known ? copy.knockKnown : "");
       setPhase("preview");
       setLocked(true);
+      emitReleaseBurst(threads.length);
     } catch {
       if (generation.current !== draftGeneration) return;
       setStatus(copy.imprintFailure);
       setPhase(idlePhase());
       setLocked(false);
     }
-  }, [clearPreview, idlePhase, presentGesturePreview, setLocked]);
+  }, [clearPreview, emitReleaseBurst, idlePhase, presentGesturePreview, setLocked]);
 
   const armKnockWindow = useCallback(() => {
     if (knockTimer.current !== null) clearTimeout(knockTimer.current);
@@ -966,10 +1016,13 @@ export default function ThresholdOffering({
     let lastColor: string | null = null;
     // Task 5: lastSplits tracks GrowthState.splits between recomputes so only genuine increases
     // fire a grain; it resets to 0 at the start of every new gesture below (splits itself restarts
-    // at 0 per hold). grainTimes is the rolling window grainBudget reads -- deliberately NOT reset
-    // per gesture, so the 8/s cap holds across a rapid run of holds, not just within one.
+    // at 0 per hold), and correctly STAYS a local here -- each new gesture's own split counter
+    // honestly starts over. The rolling budget window itself is grainTimesRef (component-scope,
+    // declared above with the other refs), NOT a local -- this effect's own dep array includes
+    // `phase`, so every hold start/end tears down and rebuilds this closure; a local here would
+    // silently hand every gesture a fresh 8-grain budget instead of the shared rolling window the
+    // 8/s cap is supposed to enforce across a rapid run of holds, not just within one.
     let lastSplits = 0;
-    let grainTimes: number[] = [];
     const tick = () => {
       if (phase === "holding") {
         lastGhostAlpha = null;
@@ -1008,8 +1061,8 @@ export default function ThresholdOffering({
                 const splitDelta = state.splits - lastSplits;
                 lastSplits = state.splits;
                 const now = performance.now();
-                for (let i = 0; i < splitDelta && grainBudget(now, grainTimes); i += 1) {
-                  grainTimes = [...grainTimes.filter((t) => now - t < GRAIN_WINDOW_MS), now];
+                for (let i = 0; i < splitDelta && grainBudget(now, grainTimesRef.current); i += 1) {
+                  grainTimesRef.current = [...grainTimesRef.current.filter((t) => now - t < GRAIN_WINDOW_MS), now];
                   emitGrain();
                 }
               }

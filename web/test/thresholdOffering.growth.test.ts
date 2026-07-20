@@ -7,7 +7,7 @@
 // task brief permits -- "through the component's path (or directly via growMark with the same
 // substrate)").
 import { describe, expect, it } from "vitest";
-import { buildGestureSummary, grainBudget, growthStepsForElapsed, shouldRecomputeGrowth } from "../src/experience/ThresholdOffering";
+import { buildGestureSummary, grainBudget, growthStepsForElapsed, releaseBurstCount, shouldRecomputeGrowth } from "../src/experience/ThresholdOffering";
 import { growMark, startGrowth, stepGrowth, topologyMetrics, type SubstratePoint } from "../src/experience/markGrowth";
 import {
   KNOCK_MAX_PRESSES,
@@ -251,5 +251,62 @@ describe("grainBudget — the paper-fiber grain's rate limit (max 8/s)", () => {
   it("timestamps older than the window never count against the budget, however many there are", () => {
     const ancientHistory = Array.from({ length: 50 }, (_, i) => i * 10); // all well over 1s old by nowMs
     expect(grainBudget(50_000, ancientHistory)).toBe(true);
+  });
+
+  // Finding 1 (code review, grown-lineage-marks §3b.6): grainTimes was a local `let` inside the
+  // seal-canvas effect, whose dep array includes `phase` -- so every hold start/end tore the
+  // closure down and handed the next gesture a brand new empty array, silently resetting the
+  // budget every gesture instead of holding it across a rapid run of holds as intended. The fix
+  // hoists the array to a component-scope ref; grainBudget itself is a pure predicate over
+  // whatever array the caller hands it, so the rolling-window-across-gestures behavior is provable
+  // here directly: simulate two "gestures" as two bursts of pushes against ONE shared array (never
+  // reset between them, exactly like the hoisted ref survives the effect's teardown/rebuild) and
+  // confirm the second gesture's budget is constrained by the first's still-recent grains.
+  it("the rolling window carries across two simulated gestures sharing one times array (the Finding 1 fix)", () => {
+    const times: number[] = [];
+    // Gesture 1: spends the full 8-grain budget (the cap grainBudget itself enforces) in the
+    // first 70ms.
+    for (let i = 0; i < 8; i += 1) {
+      expect(grainBudget(i * 10, times)).toBe(true);
+      times.push(i * 10);
+    }
+    // Still well within 1s of gesture 1's grains (no reset happened, matching the hoisted ref) --
+    // a fresh "gesture 2" starting right away must NOT get its own fresh 8-grain allowance.
+    expect(grainBudget(90, times)).toBe(false);
+    // Only once gesture 1's own grains have actually aged out of the 1s window does budget free up.
+    expect(grainBudget(1_100, times)).toBe(true);
+  });
+});
+
+// Task 5 fix (Finding 2, code review): reduced-motion visitors took the seal-canvas effect's
+// early-return branch, which never runs the growth-stepping tick loop at all -- so GrowthState.
+// splits was never computed and no grain ever fired for them, even though the binding rule is
+// "reduced motion does NOT gate sound; only the ambient gate does." releaseBurstCount is the pure
+// seam the fix's release-time burst uses to size itself: one grain per branch the FINAL mark ended
+// up with (pathCount - 1, matching markGrowth's topologyMetrics.branches accounting), capped at
+// whatever the shared rolling budget has left.
+describe("releaseBurstCount — the reduced-motion release burst's own sizing (Finding 2 fix)", () => {
+  it("a mark with 0 paths (nothing grew) bursts 0 grains", () => {
+    expect(releaseBurstCount(0, 8)).toBe(0);
+  });
+
+  it("a single-path mark (no splits at all) bursts 0 grains", () => {
+    expect(releaseBurstCount(1, 8)).toBe(0);
+  });
+
+  it("one grain per branch when the budget has ample room", () => {
+    expect(releaseBurstCount(5, 8)).toBe(4); // 5 paths = 4 branches, well under the 8 remaining
+  });
+
+  it("caps at whatever budget remains, even when the mark grew far more branches", () => {
+    expect(releaseBurstCount(20, 3)).toBe(3); // 19 branches, but only 3 grains left in the window
+  });
+
+  it("a fully spent budget bursts 0 grains regardless of how many branches grew", () => {
+    expect(releaseBurstCount(20, 0)).toBe(0);
+  });
+
+  it("never goes negative on a malformed negative remaining budget", () => {
+    expect(releaseBurstCount(5, -3)).toBe(0);
   });
 });
