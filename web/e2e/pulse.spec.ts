@@ -44,19 +44,19 @@ test("a real state change (still dormant, no mint) reaches the Pulse section", a
   await expect(pulse).toContainText("76 bpm");
   await expectDormantMarketOnly(page);
 
-  // The glyph actually beats: real animation-duration derived from the real bpm, and genuinely
-  // running (not paused/none), and a real reduced-motion escape hatch exists.
-  const glyph = pulse.locator("[data-pulse-heart]");
-  const duration = await glyph.evaluate((node) => getComputedStyle(node).animationDuration);
+  // The trace actually sweeps: the wave draws at a real animation-duration derived from the real
+  // bpm, genuinely running (not paused/none), with a real reduced-motion escape hatch.
+  const wave = pulse.locator("[data-pulse-trace] .pulse-trace__wave");
+  const duration = await wave.evaluate((node) => getComputedStyle(node).animationDuration);
   expect(duration).toBe("0.789s"); // 60/76 to 3dp, exactly what the component's toFixed(3) sets inline
-  const playState = await glyph.evaluate((node) => getComputedStyle(node).animationPlayState);
+  const playState = await wave.evaluate((node) => getComputedStyle(node).animationPlayState);
   expect(playState).toBe("running");
 });
 
-test("the beating glyph respects prefers-reduced-motion", async ({ page }) => {
+test("the sweeping trace respects prefers-reduced-motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await enterTemple(page);
-  const glyph = page.getByRole("region", { name: "the pulse" }).locator("[data-pulse-heart]");
-  const animationName = await glyph.evaluate((node) => getComputedStyle(node).animationName);
+  const wave = page.getByRole("region", { name: "the pulse" }).locator("[data-pulse-trace] .pulse-trace__wave");
+  const animationName = await wave.evaluate((node) => getComputedStyle(node).animationName);
   expect(animationName).toBe("none");
 });

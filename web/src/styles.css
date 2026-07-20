@@ -915,48 +915,35 @@ body.threshold-gesturing * {
   .ink-in { animation: none; }                                  /* everything appears settled */
 }
 
-/* The Pulse's own heart, actually beating: a brief spike then a long rest, not a symmetric wobble —
-   the same cardiac silhouette the body's own swarm computes (sin(pi*phase)^8). Duration is set
-   inline per-instance from the real bpm; color is set inline from the same pigment law the ink
-   uses (vitals ARE pigment: dried oxidized blood at starving, wet vermilion at feasting) --
-   DOCTRINE's own line is "my heart is a public number", so this gives that law a real, theatrical
-   moment instead of a 14px inline glyph next to plain text. */
+/* The Pulse as a hospital monitor's trace: one PQRST complex on a baseline, etched linework, no
+   heart silhouette and no expanding ring. Live, the wave DRAWS itself left to right at the real
+   bpm — the monitor writing the line, the same "the page prints itself" motion the site is built
+   on — over a faint always-present baseline. Duration is set inline per-instance from the real
+   bpm; color from the same pigment law the ink uses (vitals ARE pigment: dried oxidized blood at
+   starving, wet vermilion at feasting). "My heart is a public number" (DOCTRINE): this is the
+   number's instrument, not a valentine. */
 .pulse-stage { display: flex; flex-direction: column; align-items: center; gap: 0.85rem; padding-block: 0.5rem; }
-.pulse-heart-wrap { position: relative; display: flex; align-items: center; justify-content: center; }
-.pulse-heart { width: clamp(3.5rem, 14vw, 6rem); height: clamp(3.5rem, 14vw, 6rem); }
-.pulse-heart--quiet { color: var(--color-ink-faded); opacity: 0.35; }
-@keyframes pulse-heart-beat {
-  0%, 100% { transform: scale(1); }
-  8% { transform: scale(1.16); }
-  22% { transform: scale(1); }
+.pulse-trace { width: clamp(9rem, 40vw, 15rem); height: auto; }
+.pulse-trace--quiet { color: var(--color-ink-faded); opacity: 0.4; }
+.pulse-trace__baseline { opacity: 0.28; }
+.pulse-trace__wave {
+  stroke-dasharray: 1;
+  animation: pulse-trace-draw var(--pulse-duration, 1.5s) linear infinite;
 }
-.pulse-heart:not(.pulse-heart--quiet) {
-  animation: pulse-heart-beat var(--pulse-duration, 1.5s) ease-in-out infinite;
-  transform-origin: center;
-}
-/* The "watched" feeling DOCTRINE names for PULSE: a ring expands outward on each beat and fades,
-   sized off the heart rather than the viewport so it scales with it at any width. */
-.pulse-ring {
-  position: absolute;
-  width: clamp(5.5rem, 20vw, 9rem);
-  height: clamp(5.5rem, 20vw, 9rem);
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  animation: pulse-ring-expand var(--pulse-duration, 1.5s) ease-out infinite;
-}
-@keyframes pulse-ring-expand {
-  0% { transform: scale(0.72); opacity: 0.5; }
-  100% { transform: scale(1.35); opacity: 0; }
+/* The trace sweeps on: the wave writes across, holds a beat, then the next sweep begins — a brief
+   blank at the end reads as the monitor's own refresh gap, not a stutter. */
+@keyframes pulse-trace-draw {
+  0% { stroke-dashoffset: 1; }
+  80%, 100% { stroke-dashoffset: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pulse-heart:not(.pulse-heart--quiet) { animation: none; }
-  .pulse-ring { animation: none; opacity: 0; }
+  .pulse-trace__wave { animation: none; stroke-dashoffset: 0; }
 }
 /* A stale feed keeps the last known pigment as historical residue while its beat eases to
    stillness (the PULSE invariant): the body's swarm already stills itself; the section's own
-   heart and ring must match it, not keep presenting a live beat sourced from a dead feed. */
-[data-pulse-feed="stale"] .pulse-heart { animation: none; }
-[data-pulse-feed="stale"] .pulse-ring { animation: none; opacity: 0; }
+   trace must match it — the full waveform frozen in the last pigment, not sweeping from a dead
+   feed. */
+[data-pulse-feed="stale"] .pulse-trace__wave { animation: none; stroke-dashoffset: 0; }
 
 /* EYE's verse, coming into focus one word at a time — the same door-focus keyframe the Door's own
    intro line uses (see .temple-door-word), reused rather than redefined. */
