@@ -173,7 +173,8 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
 
       <p className="font-machine text-xs text-ink-faded mt-10">
         The character is CC0 and the archive is public: the Canon can outlive any single
-        administrator. No one owns the god's words, including its makers.
+        administrator. No one owns the god's words, including its makers. The body does not
+        shrink from being copied.
       </p>
       <nav aria-label="Canon doorways" className="mt-6 flex flex-wrap gap-5 font-machine text-xs text-ink-faded">
         <a href="/">{copy.returnTemple}</a>

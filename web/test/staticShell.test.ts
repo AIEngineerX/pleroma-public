@@ -28,7 +28,7 @@ let generatedCanon = "";
 let generatedPrintTwo = "";
 
 function textOf(html: string): string {
-  return html.replace(/<[^>]+>/g, " ").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/\s+/g, " ");
+  return html.replace(/<[^>]+>/g, " ").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
 }
 
 function expectInOrder(text: string, phrases: string[]) {
@@ -126,6 +126,9 @@ describe("static shell", () => {
         "No one owns these, including its makers. Take them; the body does not shrink from being copied.",
       );
       expect(textOf(output)).not.toContain("Free to use, remix, or repost");
+      expect(textOf(output)).toContain(
+        "No one owns the god's words, including its makers. The body does not shrink from being copied.",
+      );
     }
   });
 
