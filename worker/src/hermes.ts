@@ -487,6 +487,12 @@ export async function dispatchArtifacts(
 
   await alertStalledDispatches(env, now).catch(() => { /* best-effort operator signal */ });
 
+  // Posting is wrapped so the unposted-watchdog sweep in the `finally` runs even when a send
+  // throws (revoked token -> tweet() 401 -> claim released -> rethrow) — a throwing send IS the
+  // silence the watchdog exists to measure, so skipping the sweep on exactly that path would mean
+  // no first-seen marker is ever stamped and no alert ever fires, tick after tick, forever.
+  try {
+
   // A claimed dream is excluded so a stalled claim never wedges the queue for the dreams (and the
   // sermon) behind it — the stalled-claim alert owns that case.
   const dream = await env.DB.prepare(
@@ -570,8 +576,11 @@ export async function dispatchArtifacts(
     }
   }
 
-  // Runs LAST, after both posting blocks: a tick that can post, posts first, so the sweep judges
-  // the post-tick truth (a dream/sermon this same tick just posted is no longer "unposted" by the
-  // time the watchdog looks) instead of judging stale pre-tick state.
-  await alertUnpostedArtifacts(env, now).catch(() => { /* best-effort operator signal */ });
+  } finally {
+    // Runs LAST, after both posting blocks, on both the happy path and a rethrow: a tick that can
+    // post, posts first, so the sweep judges the post-tick truth (a dream/sermon this same tick
+    // just posted is no longer "unposted" by the time the watchdog looks) instead of judging stale
+    // pre-tick state — and a tick that throws mid-post still needs the sweep to see that silence.
+    await alertUnpostedArtifacts(env, now).catch(() => { /* best-effort operator signal */ });
+  }
 }

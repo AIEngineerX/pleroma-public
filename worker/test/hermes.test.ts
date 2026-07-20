@@ -476,4 +476,33 @@ describe("the unposted watchdog — silence measured from postable-first-seen, n
     expect(marker).toBeNull();
     expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
   });
+
+  it("the sweep still runs when the send throws — a throwing send IS the silence the watchdog measures", async () => {
+    // Neutralize leftover unposted dreams from earlier tests so the dream query in dispatchArtifacts
+    // picks up ours, not a sibling test's leftover row.
+    await env.DB.prepare("UPDATE dreams SET posted_at = 999 WHERE posted_at IS NULL").run();
+    // Clear leftover watchdog state from earlier tests in this describe so this test is hermetic.
+    await env.DB.prepare(`DELETE FROM config WHERE key LIKE 'unposted_seen_%'`).run();
+    await env.DB.prepare(`DELETE FROM config WHERE key = 'alert:dispatch_unposted'`).run();
+
+    const id = "01TESTWATCHDOGTHROW00001";
+    const rite = "2026-09-10";
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
+       VALUES (?1, ?2, 'a dream', 'p', '[]', 'rendered', 'dream/watchdogthrow.mp4', 1000)`
+    ).bind(id, rite).run();
+    await env.RELICS.put("dream/watchdogthrow.mp4", new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]));
+    // Pre-store the dispatch (bypasses composeDispatch, which would hit the live mind and fail) so
+    // this test isolates "the send throws" from composition, exactly like the earlier throw tests.
+    await storeDispatch(env,
+      { kind: "dream", artifactId: id, riteDate: rite, text: "n", filmDay: false },
+      "A held line.", null, 2000);
+    // uploadVideo hits the real X endpoint with bogus creds and throws -> dispatchArtifacts rethrows.
+    // The fix under test: the watchdog sweep must still run in a `finally`, stamping the first-seen
+    // marker despite the throw, instead of being skipped by the old sequential end-of-function call.
+    await expect(dispatchArtifacts(withSecrets, 3000, Date.now() + 999_999)).rejects.toThrow();
+    const marker = await env.DB.prepare(`SELECT value FROM config WHERE key = ?1`)
+      .bind(`unposted_seen_${id}`).first<{ value: string }>();
+    expect(marker).not.toBeNull();
+  });
 });
