@@ -50,7 +50,7 @@ function mix(value: number): number {
   return (value ^ (value >>> 15)) >>> 0;
 }
 
-function gestureRandom(gesture: ImprintGesture): () => number {
+export function gestureRandom(gesture: ImprintGesture): () => number {
   if (gesture.seed.length !== 4) throw new TypeError("an imprint seed has exactly four words");
   const inputs = [
     Math.round(gesture.start.x * 1_000),
@@ -352,9 +352,10 @@ function fitScale(paths: readonly ImprintPath[]): { scale: number; midX: number;
 }
 
 export async function renderImprintBlob(paths: readonly ImprintPath[], color: string): Promise<Blob> {
-  // Five threads, five threads plus a ghost approach, or a knock's dash ladder: any small set of
-  // bounded strokes is a mark; an empty or unbounded set is not.
-  if (paths.length < 1 || paths.length > 12 || !paths.every(isRenderablePath)) {
+  // Five threads, five threads plus a ghost approach, a knock's dash ladder, or a grown organism's
+  // branches (markGrowth.ts emits up to 48): any small set of bounded strokes is a mark; an empty
+  // or unbounded set is not.
+  if (paths.length < 1 || paths.length > 48 || !paths.every(isRenderablePath)) {
     throw new TypeError("a mark requires bounded paths");
   }
 
