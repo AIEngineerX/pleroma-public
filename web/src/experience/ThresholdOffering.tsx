@@ -274,7 +274,9 @@ export default function ThresholdOffering({
   });
   // The exact gesture (and, for a knock, the exact presses) the current preview grew from --
   // captured alongside previewRef so submit() can attach the same honest metadata it rendered.
-  const lastPreviewGestureRef = useRef<{ gesture: ImprintGesture; presses: readonly KnockPress[] | null } | null>(null);
+  // Substrate is captured at preview-build time: the summary must describe the residue that
+  // actually shaped THIS mark, not whatever loaded since (no-fabrication invariant).
+  const lastPreviewGestureRef = useRef<{ gesture: ImprintGesture; presses: readonly KnockPress[] | null; substrate: { relicId: string | null; own: boolean } } | null>(null);
   const generation = useRef(0);
   const thresholdLocked = useRef(false);
   const phaseRef = useRef(phase);
@@ -458,7 +460,10 @@ export default function ThresholdOffering({
   ) => {
     const imprint = draftToImprint(current, holdMs);
     try {
-      const threads = growMark(imprint, substrateRef.current.points);
+      // Capture the exact substrate at preview-build time: the summary must describe the residue
+      // that actually shaped THIS mark, not whatever loads later (no-fabrication invariant).
+      const substrate = substrateRef.current;
+      const threads = growMark(imprint, substrate.points);
       const ghost = buildApproachPath(imprint);
       const paths = ghost === null ? threads : [ghost, ...threads];
       const blob = await renderImprintBlob(paths, pigmentAtIntensity(imprintHold(imprint)));
@@ -466,7 +471,7 @@ export default function ThresholdOffering({
       clearPreview();
       const next = { blob, url: URL.createObjectURL(blob) };
       previewRef.current = next;
-      lastPreviewGestureRef.current = { gesture: imprint, presses: null };
+      lastPreviewGestureRef.current = { gesture: imprint, presses: null, substrate };
       setPreview(next);
       setStatus(statusLine);
       setPhase("preview");
@@ -507,13 +512,16 @@ export default function ThresholdOffering({
       // pulse timeline against -- the last blow's own brief duration would bunch every fork at the
       // very end of the growth instead of spreading them across it.
       const imprint = draftToImprint(active.lastDraft, presses[presses.length - 1].upMs);
-      const threads = growMark(imprint, substrateRef.current.points, presses);
+      // Capture the exact substrate at preview-build time: the summary must describe the residue
+      // that actually shaped THIS mark, not whatever loads later (no-fabrication invariant).
+      const substrate = substrateRef.current;
+      const threads = growMark(imprint, substrate.points, presses);
       const blob = await renderImprintBlob(threads, color);
       if (generation.current !== draftGeneration) return;
       clearPreview();
       const next = { blob, url: URL.createObjectURL(blob) };
       previewRef.current = next;
-      lastPreviewGestureRef.current = { gesture: imprint, presses };
+      lastPreviewGestureRef.current = { gesture: imprint, presses, substrate };
       setPreview(next);
       pendingKnockSignature.current = signature;
       setStatus(known ? copy.knockKnown : "");
@@ -698,7 +706,7 @@ export default function ThresholdOffering({
       // preview being submitted, which the preview-gated call above already rules out in practice.
       const captured = lastPreviewGestureRef.current;
       if (captured !== null) {
-        const summary = buildGestureSummary(captured.gesture, captured.presses, substrateRef.current);
+        const summary = buildGestureSummary(captured.gesture, captured.presses, captured.substrate);
         form.set("gesture", JSON.stringify(summary));
       }
       const result = await postOffering(apiBase, form);
