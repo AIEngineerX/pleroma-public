@@ -1,6 +1,10 @@
 import type { Env } from "./env";
 import { raiseAlert } from "./alert";
 import { withTimeout } from "./timeouts";
+import { ulid } from "./id";
+import { askMind } from "./mind";
+import { extractJsonObject } from "./moderation";
+import { dispatchSystemPrompt, denyListViolation, wrapUntrusted } from "./doctrine";
 
 // Auto-dispatch (Maker decision 2026-07-16, amending the earlier Maker-posts-by-hand plan
 // before anything was public): the temple's routine artifacts publish themselves to X —
@@ -19,6 +23,141 @@ const X_IO_TIMEOUT_MS = 30_000; // every X call is bounded, like every other ven
 const TWEET_MAX_CHARS = 280;
 const TCO_LINK_CHARS = 23;
 const TWEET_BODY_BUDGET = TWEET_MAX_CHARS - TCO_LINK_CHARS - 2;
+
+// --- Dispatch composition (spec 2026-07-20) ------------------------------------------------------
+// The dispatch is TONGUE's voice register for the outer feeds: composed fresh per artifact at
+// dispatch time, validated mechanically (deny-list, length, never-repeated), and set down in the
+// public codex BEFORE any X call — the archived line is the receipt, since posts carry no link.
+
+export interface DispatchArtifact {
+  kind: "dream" | "sermon";
+  artifactId: string;   // dream id, or the rite date for sermons
+  riteDate: string;
+  text: string;         // the dream narrative or the sermon utterance
+  filmDay: boolean;     // sermons only: also ask for a video_prompt
+}
+
+// ~2 of any 7 days carry a sermon film. FNV-1a over the rite date: irregular (an omen, not a
+// schedule), deterministic, no stored state.
+export function isFilmDay(riteDate: string): boolean {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < riteDate.length; i++) h = Math.imul(h ^ riteDate.charCodeAt(i), 0x01000193) >>> 0;
+  return h % 7 < 2;
+}
+
+export function normalizeDispatch(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim();
+}
+
+// "Never repeated" is a doctrine claim, so it is enforced against EVERY stored dispatch, not a window.
+export async function isRepeatDispatch(db: D1Database, text: string): Promise<boolean> {
+  const rows = (await db.prepare(`SELECT text FROM transcripts WHERE register='dispatch'`)
+    .all<{ text: string }>()).results;
+  const n = normalizeDispatch(text);
+  return rows.some((r) => normalizeDispatch(r.text) === n);
+}
+
+// The day's checkable public record (the same counts the Tallies show). Only facts that exist in
+// the rites row — never derived or guessed; a dispatch grounded in these can be verified by anyone.
+export async function groundingFacts(db: D1Database, riteDate: string): Promise<string> {
+  const rite = await db.prepare(`SELECT offering_snapshot, kept_count, phase FROM rites WHERE date = ?1`)
+    .bind(riteDate).first<{ offering_snapshot: number; kept_count: number; phase: string }>();
+  if (!rite) return "The day's count is not recorded.";
+  return `The public record of this epoch: ${rite.offering_snapshot} marks offered, ${rite.kept_count} kept`
+    + (rite.phase === "complete" ? "; the rite is complete." : ".");
+}
+
+export async function getDispatch(db: D1Database, artifactId: string): Promise<{ text: string } | null> {
+  return await db.prepare(`SELECT text FROM transcripts WHERE register='dispatch' AND artifact_id = ?1`)
+    .bind(artifactId).first<{ text: string }>();
+}
+
+// Codex-before-X: the transcript (and the film row, when the day calls for one) land in ONE batch,
+// before any claim or send. ON CONFLICT DO NOTHING makes a concurrent double-compose harmless —
+// the first write wins and the loser's text is discarded unposted.
+export async function storeDispatch(
+  env: Env, a: DispatchArtifact, dispatch: string, videoPrompt: string | null, now: number,
+): Promise<void> {
+  const stmts = [env.DB.prepare(
+    `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, artifact_id, created_at)
+     VALUES (?1, 'TONGUE', 'dispatch', ?2, NULL, ?3, ?4, ?5) ON CONFLICT DO NOTHING`
+  ).bind(ulid(), dispatch, a.riteDate, a.artifactId, now)];
+  if (videoPrompt) {
+    stmts.push(env.DB.prepare(
+      `INSERT INTO sermon_films (rite_date, video_prompt, created_at) VALUES (?1, ?2, ?3)
+       ON CONFLICT(rite_date) DO NOTHING`
+    ).bind(a.riteDate, videoPrompt, now));
+  }
+  await env.DB.batch(stmts);
+}
+
+async function recentDispatches(db: D1Database, n: number = 10): Promise<string[]> {
+  return (await db.prepare(
+    `SELECT text FROM transcripts WHERE register='dispatch' ORDER BY created_at DESC LIMIT ?1`
+  ).bind(n).all<{ text: string }>()).results.map((r) => r.text);
+}
+
+const DISPATCH_SYSTEM = dispatchSystemPrompt();
+
+// One compose, one retry with the violation named, then alert-and-wait-for-the-next-tick.
+// A null return stores nothing and claims nothing — the artifact simply retries next tick.
+// `ask` is injectable in the house vendor style (renderDreams' vendor param); production omits it.
+export async function composeDispatch(
+  env: Env, a: DispatchArtifact, now: number, ask: typeof askMind = askMind,
+): Promise<{ dispatch: string; videoPrompt: string | null } | null> {
+  const facts = await groundingFacts(env.DB, a.riteDate);
+  const recent = await recentDispatches(env.DB);
+  const base =
+    `${facts}\nThe artifact you are dispatching (${a.kind === "dream" ? "tonight's dream" : "the day's sermon"}): `
+    + `${wrapUntrusted("artifact", a.text)}\n`
+    + (recent.length ? `You have already said: ${recent.map((t) => wrapUntrusted("said", t)).join(" ")}\n` : "")
+    + (a.filmDay ? `Include "video_prompt". ` : `Do not include "video_prompt". `)
+    + `Compose the dispatch.`;
+
+  let feedback = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let text: string;
+    try {
+      text = (await ask(env, {
+        model: "claude-sonnet-5", system: DISPATCH_SYSTEM, maxTokens: 300,
+        user: [{ type: "text", text: feedback + base }],
+      })).text;
+    } catch {
+      return null; // asleep or unreachable: nothing stored, nothing claimed, next tick retries
+    }
+    let parsed: { dispatch?: unknown; video_prompt?: unknown };
+    try {
+      parsed = JSON.parse(extractJsonObject(text)) as { dispatch?: unknown; video_prompt?: unknown };
+    } catch {
+      feedback = "Your last reply was not a valid JSON object. ";
+      continue;
+    }
+    const dispatch = typeof parsed.dispatch === "string" ? parsed.dispatch.trim() : "";
+    const videoPrompt = typeof parsed.video_prompt === "string" && parsed.video_prompt.trim()
+      ? parsed.video_prompt.trim() : null;
+    if (!dispatch || dispatch.length > TWEET_MAX_CHARS) {
+      feedback = `Your last dispatch was empty or over ${TWEET_MAX_CHARS} characters. `;
+      continue;
+    }
+    const denied = denyListViolation(dispatch);
+    if (denied) {
+      feedback = `Your last dispatch used a word the god does not say ("${denied}"). `;
+      continue;
+    }
+    if (await isRepeatDispatch(env.DB, dispatch)) {
+      feedback = "You have said that before; say something new. ";
+      continue;
+    }
+    if (a.filmDay && !videoPrompt) {
+      feedback = `You omitted "video_prompt". `;
+      continue;
+    }
+    return { dispatch, videoPrompt: a.filmDay ? videoPrompt : null };
+  }
+  await raiseAlert(env, "dispatch_compose_failed",
+    `dispatch for ${a.kind} ${a.artifactId} failed validation twice — will retry next tick`);
+  return null;
+}
 
 function truncateTweetBody(text: string): string {
   return text.length > TWEET_BODY_BUDGET ? `${text.slice(0, TWEET_BODY_BUDGET - 2)}…` : text;

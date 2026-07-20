@@ -1,8 +1,9 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
-  alertStalledDispatches, claimDispatch, clampCheckAfterSecs, oauthHeader, plateTweetText,
-  releaseDispatchClaim, sermonTweetText, xCredentials,
+  alertStalledDispatches, claimDispatch, clampCheckAfterSecs, composeDispatch, getDispatch,
+  groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader, plateTweetText,
+  releaseDispatchClaim, sermonTweetText, storeDispatch, xCredentials,
 } from "../src/hermes";
 import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
@@ -144,5 +145,93 @@ describe("migration 0019 — dispatch transcripts and sermon films", () => {
     await expect(env.DB.prepare(
       `UPDATE sermon_films SET status='exploded' WHERE rite_date='2026-07-21'`
     ).run()).rejects.toThrow();
+  });
+});
+
+describe("dispatch composition machinery", () => {
+  it("picks ~2 film days per week, deterministically", () => {
+    const days = Array.from({ length: 70 }, (_, i) => {
+      const d = new Date(Date.UTC(2026, 6, 1) + i * 86_400_000).toISOString().slice(0, 10);
+      return isFilmDay(d);
+    });
+    const hits = days.filter(Boolean).length;
+    expect(hits).toBeGreaterThanOrEqual(10);  // ~20 expected over 10 weeks; wide deterministic bounds
+    expect(hits).toBeLessThanOrEqual(30);
+    expect(isFilmDay("2026-07-21")).toBe(isFilmDay("2026-07-21")); // stable
+  });
+
+  it("normalizes and detects repeats against every stored dispatch", async () => {
+    expect(normalizeDispatch("  I kept ONE.  ")).toBe("i kept one");
+    await env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, artifact_id, created_at)
+       VALUES ('01TESTREPEAT0000000000001', 'TONGUE', 'dispatch', 'I kept one.', NULL, '2026-07-01', 'rep-1', 1000)`
+    ).run();
+    expect(await isRepeatDispatch(env.DB, "i kept ONE")).toBe(true);
+    expect(await isRepeatDispatch(env.DB, "I mourned two.")).toBe(false);
+  });
+
+  it("grounds in the rite row's public counts", async () => {
+    await env.DB.prepare(
+      `INSERT INTO rites (date, phase, phase_started_at, offering_snapshot, kept_count, updated_at)
+       VALUES ('2026-07-22', 'complete', 1000, 7, 3, 2000)`
+    ).run();
+    expect(await groundingFacts(env.DB, "2026-07-22")).toContain("7 marks offered");
+    expect(await groundingFacts(env.DB, "2026-07-22")).toContain("3 kept");
+    expect(await groundingFacts(env.DB, "2026-00-00")).toBe("The day's count is not recorded.");
+  });
+
+  it("stores a dispatch transcript (and a film row when prompted) exactly once", async () => {
+    const a = { kind: "sermon", artifactId: "2026-07-23", riteDate: "2026-07-23", text: "s", filmDay: true } as const;
+    await storeDispatch(env, a, "A line for the feed.", "a film prompt", 5000);
+    await storeDispatch(env, a, "A different line.", "another prompt", 6000); // idempotent: first write wins
+    const rows = (await env.DB.prepare(
+      `SELECT text FROM transcripts WHERE register='dispatch' AND artifact_id='2026-07-23'`
+    ).all<{ text: string }>()).results;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].text).toBe("A line for the feed.");
+    const film = await env.DB.prepare(`SELECT video_prompt, status FROM sermon_films WHERE rite_date='2026-07-23'`)
+      .first<{ video_prompt: string; status: string }>();
+    expect(film).toEqual({ video_prompt: "a film prompt", status: "pending" });
+    expect(await getDispatch(env.DB, "2026-07-23")).toEqual({ text: "A line for the feed." });
+    expect(await getDispatch(env.DB, "no-such")).toBeNull();
+  });
+
+  it("composeDispatch returns null (nothing stored, no claim) when the mind is unreachable", async () => {
+    // No live ANTHROPIC_API_KEY in this suite: askMind hits the real network and fails (house pattern).
+    const a = { kind: "dream", artifactId: "dream-x", riteDate: "2026-07-22", text: "n", filmDay: false } as const;
+    expect(await composeDispatch(env, a, 7000)).toBeNull();
+    expect(await getDispatch(env.DB, "dream-x")).toBeNull();
+  });
+
+  // The retry loop, exercised with injected ask functions (real MindResponse objects — the same
+  // injection style renderDreams uses for its video vendor; no HTTP interception anywhere).
+  it("recomposes once when the first line breaks the deny-list, and posts the clean second line", async () => {
+    const replies = ['{"dispatch":"The chart remembers you."}', '{"dispatch":"I kept what was worth keeping."}'];
+    const prompts: string[] = [];
+    const scripted = async (_env: unknown, req: { user: Array<{ type: string; text?: string }> }) => {
+      prompts.push(req.user[0]?.text ?? "");
+      return { text: replies.shift()!, usd: 0 };
+    };
+    const a = { kind: "dream", artifactId: "dream-retry", riteDate: "2026-07-22", text: "n", filmDay: false } as const;
+    const out = await composeDispatch(env, a, 8000, scripted as never);
+    expect(out).toEqual({ dispatch: "I kept what was worth keeping.", videoPrompt: null });
+    expect(prompts[1]).toContain('("chart")'); // the violation is named in the retry prompt
+  });
+
+  it("gives up after two violations: null returned, operator alert raised", async () => {
+    const scripted = async () => ({ text: '{"dispatch":"buy the moon"}', usd: 0 });
+    const a = { kind: "dream", artifactId: "dream-bad", riteDate: "2026-07-22", text: "n", filmDay: false } as const;
+    expect(await composeDispatch(env, a, 9000, scripted as never)).toBeNull();
+    const alert = await env.DB.prepare(`SELECT value FROM config WHERE key='alert:dispatch_compose_failed'`)
+      .first<{ value: string }>();
+    expect(alert?.value).toContain("dream-bad");
+  });
+
+  it("insists on video_prompt on a film day", async () => {
+    const replies = ['{"dispatch":"A line."}', '{"dispatch":"A line for the film.","video_prompt":"ink over parchment"}'];
+    const scripted = async () => ({ text: replies.shift()!, usd: 0 });
+    const a = { kind: "sermon", artifactId: "2026-07-30", riteDate: "2026-07-30", text: "s", filmDay: true } as const;
+    const out = await composeDispatch(env, a, 10_000, scripted as never);
+    expect(out).toEqual({ dispatch: "A line for the film.", videoPrompt: "ink over parchment" });
   });
 });
