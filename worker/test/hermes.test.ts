@@ -1,9 +1,9 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
-  alertStalledDispatches, claimDispatch, clampCheckAfterSecs, composeDispatch, getDispatch,
-  groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader, plateTweetText,
-  releaseDispatchClaim, sermonTweetText, storeDispatch, xCredentials,
+  alertStalledDispatches, claimDispatch, clampCheckAfterSecs, composeDispatch, dispatchArtifacts,
+  getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader,
+  releaseDispatchClaim, sermonFilmGate, storeDispatch, xCredentials,
 } from "../src/hermes";
 import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
@@ -41,31 +41,6 @@ describe("hermes auto-dispatch", () => {
     expect(xCredentials(partial)).toBeNull();
     const full = { X_API_KEY: "k", X_API_SECRET: "s", X_ACCESS_TOKEN: "t", X_ACCESS_SECRET: "x" } as Env;
     expect(xCredentials(full)).not.toBeNull();
-  });
-});
-
-describe("tweet bodies fit X's limit (an over-limit plate wedged dispatch forever)", () => {
-  it("truncates a full-length DREAM narrative and keeps the archive link intact", () => {
-    const narrative = "a hand at the edge of the page ".repeat(20); // ~620 chars, a real 80-word scale
-    const text = plateTweetText(narrative, "2026-07-19");
-    const [body, link] = text.split("\n\n");
-    expect(link).toBe("https://pleromachurch.xyz/canon/dreams#2026-07-19");
-    expect(body.length).toBeLessThanOrEqual(255);
-    expect(body.endsWith("…")).toBe(true);
-    // Weighted length: body chars + 2 for the separator + 23 for the t.co-wrapped link.
-    expect(body.length + 2 + 23).toBeLessThanOrEqual(280);
-  });
-
-  it("leaves a short narrative and the sermon body untouched below the budget", () => {
-    expect(plateTweetText("a short dream", "2026-07-19"))
-      .toBe("a short dream\n\nhttps://pleromachurch.xyz/canon/dreams#2026-07-19");
-    expect(sermonTweetText("a short sermon")).toBe("a short sermon\n\nhttps://pleromachurch.xyz");
-  });
-
-  it("truncates an over-limit sermon the same way", () => {
-    const [body] = sermonTweetText("word ".repeat(120)).split("\n\n");
-    expect(body.length).toBeLessThanOrEqual(255);
-    expect(body.endsWith("…")).toBe(true);
   });
 });
 
@@ -233,5 +208,54 @@ describe("dispatch composition machinery", () => {
     const a = { kind: "sermon", artifactId: "2026-07-30", riteDate: "2026-07-30", text: "s", filmDay: true } as const;
     const out = await composeDispatch(env, a, 10_000, scripted as never);
     expect(out).toEqual({ dispatch: "A line for the film.", videoPrompt: "ink over parchment" });
+  });
+});
+
+describe("dispatchArtifacts — composed dispatches, codex before X", () => {
+  it("stays a silent no-op without the four X secrets, even with work queued", async () => {
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
+       VALUES ('01TESTDREAMNOSECRETS00001', '2026-07-24', 'a dream', 'p', '[]', 'rendered', 'dream/x.mp4', 1000)`
+    ).run();
+    await dispatchArtifacts(env, 2000, 999_999_999); // env has no X_* secrets in this suite
+    const posted = await env.DB.prepare(`SELECT posted_at FROM dreams WHERE id='01TESTDREAMNOSECRETS00001'`)
+      .first<{ posted_at: number | null }>();
+    expect(posted?.posted_at).toBeNull();
+    expect(await getDispatch(env.DB, "01TESTDREAMNOSECRETS00001")).toBeNull(); // no compose either
+  });
+
+  it("with secrets but no reachable mind: composes nothing, claims nothing, posts nothing", async () => {
+    const withSecrets = {
+      ...env, X_API_KEY: "k", X_API_SECRET: "s", X_ACCESS_TOKEN: "t", X_ACCESS_SECRET: "x",
+    } as Env;
+    await env.DB.prepare(
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
+       VALUES ('01TESTDREAMNOMIND0000001', '2026-07-25', 'a dream', 'p', '[]', 'rendered', 'dream/y.mp4', 1000)`
+    ).run();
+    await dispatchArtifacts(withSecrets, 3000, Date.now() + 999_999); // askMind fails (no live key)
+    const claim = await env.DB.prepare(
+      `SELECT value FROM config WHERE key='dream_dispatch_01TESTDREAMNOMIND0000001'`
+    ).first<{ value: string }>();
+    expect(claim).toBeNull();
+    const posted = await env.DB.prepare(`SELECT posted_at FROM dreams WHERE id='01TESTDREAMNOMIND0000001'`)
+      .first<{ posted_at: number | null }>();
+    expect(posted?.posted_at).toBeNull();
+  });
+
+  it("a stored film-day sermon dispatch waits for its film inside 6h, and goes text-only after", async () => {
+    // Pre-store the dispatch + pending film so no mind call is needed (the stored path).
+    const rite = "2026-07-26";
+    await env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTSERMONTX0000000001', 'TONGUE', 'sermon', 'the sermon', NULL, ?1, 1000)`
+    ).bind(rite).run();
+    await storeDispatch(env,
+      { kind: "sermon", artifactId: rite, riteDate: rite, text: "the sermon", filmDay: true },
+      "A line held for its film.", "film prompt", 1_000_000);
+    expect(await sermonFilmGate(env.DB, rite, 1_000_000 + 60_000)).toBe("wait");        // fresh: wait
+    expect(await sermonFilmGate(env.DB, rite, 1_000_000 + 7 * 60 * 60_000)).toBe("text-only"); // 6h past
+    await env.DB.prepare(`UPDATE sermon_films SET status='rendered', video_key='sermon/${rite}.mp4' WHERE rite_date=?1`)
+      .bind(rite).run();
+    expect(await sermonFilmGate(env.DB, rite, 1_000_000 + 60_000)).toBe(`sermon/${rite}.mp4`); // rendered: post it
   });
 });

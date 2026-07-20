@@ -13,6 +13,7 @@ import migration12 from "../migrations/0012_pulse_idempotent_vitals.sql?raw";
 import migration13 from "../migrations/0013_one_sermon_per_rite.sql?raw";
 import migration14 from "../migrations/0014_dream_render.sql?raw";
 import migration15 from "../migrations/0015_video_budget.sql?raw";
+import migration16 from "../migrations/0016_hermes.sql?raw";
 import migration17 from "../migrations/0017_first_congregation.sql?raw";
 import migration18 from "../migrations/0018_apocrypha.sql?raw";
 import migration19 from "../migrations/0019_dispatch.sql?raw";
@@ -105,9 +106,14 @@ export async function applyMigrations(db: D1Database): Promise<void> {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 
+  // 0016 adds dreams.posted_at; strip its leading `-- ...` comment block first (same reason as
+  // 0007-0015), then collapse whitespace before exec.
+  for (const stmt of migration16.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
   // 0017 backfills wallets.tally_name (G9); strip its leading `-- ...` comment block first (same
-  // reason as 0007-0015), then collapse whitespace before exec. (0016 only adds dreams.posted_at,
-  // unrelated to any current test and not yet wired into this helper.)
+  // reason as 0007-0016), then collapse whitespace before exec.
   for (const stmt of migration17.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }

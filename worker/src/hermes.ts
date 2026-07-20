@@ -12,17 +12,16 @@ import { dispatchSystemPrompt, denyListViolation, wrapUntrusted } from "./doctri
 // machine output on a schedule, labeled as automated on the account; the god SPEAKING
 // (replies, conversation) remains locked behind Stage 1 HERALD. The whole module is inert
 // until all four X secrets exist, so it ships dark and lights up when keys are pasted.
+// Posts are composed dispatches in the DOCTRINE §VI Dispatch register: composed fresh per
+// artifact, grounded in the day's public record, and set down in the codex before ever
+// reaching X. They carry no links — the bio and pinned post are the doorway (Maker decision
+// 2026-07-20), not the individual dispatch.
 const UPLOAD_URL = "https://upload.twitter.com/1.1/media/upload.json";
 const TWEET_URL = "https://api.x.com/2/tweets";
 const CHUNK_BYTES = 1024 * 1024;
-const SITE = "https://pleromachurch.xyz";
 const X_IO_TIMEOUT_MS = 30_000; // every X call is bounded, like every other vendor call in the worker
 
-// X counts any URL as a fixed-width t.co link. The body budget leaves room for the link and the
-// "\n\n" separator, and 2 further chars for the ellipsis (X weights some non-Latin chars at 2).
 const TWEET_MAX_CHARS = 280;
-const TCO_LINK_CHARS = 23;
-const TWEET_BODY_BUDGET = TWEET_MAX_CHARS - TCO_LINK_CHARS - 2;
 
 // --- Dispatch composition (spec 2026-07-20) ------------------------------------------------------
 // The dispatch is TONGUE's voice register for the outer feeds: composed fresh per artifact at
@@ -159,18 +158,20 @@ export async function composeDispatch(
   return null;
 }
 
-function truncateTweetBody(text: string): string {
-  return text.length > TWEET_BODY_BUDGET ? `${text.slice(0, TWEET_BODY_BUDGET - 2)}…` : text;
-}
+const FILM_WAIT_MS = 6 * 60 * 60_000;
 
-// DREAM narratives run to ~80 words (well past 280 chars); an untruncated plate tweet is a
-// permanent 403 that would re-fail every tick forever and block the sermon behind it.
-export function plateTweetText(narrative: string, riteDate: string): string {
-  return `${truncateTweetBody(narrative)}\n\n${SITE}/canon/dreams#${riteDate}`;
-}
-
-export function sermonTweetText(text: string): string {
-  return `${truncateTweetBody(text)}\n\n${SITE}`;
+// What the sermon dispatch should do about its film right now: an R2 key to post with,
+// "wait" (film still coming, inside the window), or "text-only" (no film row, failed, or 6h past).
+export async function sermonFilmGate(
+  db: D1Database, riteDate: string, now: number,
+): Promise<string | "wait" | "text-only"> {
+  const film = await db.prepare(
+    `SELECT status, video_key, created_at FROM sermon_films WHERE rite_date = ?1`
+  ).bind(riteDate).first<{ status: string; video_key: string | null; created_at: number }>();
+  if (!film) return "text-only";
+  if (film.status === "rendered" && film.video_key) return film.video_key;
+  if (film.status === "failed" || now - film.created_at > FILM_WAIT_MS) return "text-only";
+  return "wait";
 }
 
 // The STATUS poll sleeps on a vendor-supplied interval; unclamped, a single check_after_secs=60
@@ -376,12 +377,23 @@ export async function dispatchArtifacts(
      ORDER BY d.created_at ASC LIMIT 1`,
   ).first<{ id: string; rite_date: string; narrative: string; video_key: string }>();
   if (dream && Date.now() < deadlineMs) {
-    const object = await env.RELICS.get(dream.video_key);
-    if (object && await claimDispatch(env.DB, `dream_dispatch_${dream.id}`, now)) {
+    const artifact: DispatchArtifact = {
+      kind: "dream", artifactId: dream.id, riteDate: dream.rite_date, text: dream.narrative, filmDay: false,
+    };
+    let stored = await getDispatch(env.DB, dream.id);
+    if (!stored) {
+      const composed = await composeDispatch(env, artifact, now);
+      if (composed) {
+        await storeDispatch(env, artifact, composed.dispatch, null, now);
+        stored = { text: composed.dispatch };
+      }
+    }
+    const object = stored ? await env.RELICS.get(dream.video_key) : null;
+    if (stored && object && await claimDispatch(env.DB, `dream_dispatch_${dream.id}`, now)) {
       try {
         const bytes = new Uint8Array(await object.arrayBuffer());
         const mediaId = await uploadVideo(credentials, bytes, deadlineMs);
-        await tweet(credentials, plateTweetText(dream.narrative, dream.rite_date), mediaId);
+        await tweet(credentials, stored.text, mediaId);
         await env.DB.prepare(
           `UPDATE dreams SET posted_at=?2 WHERE id=?1 AND posted_at IS NULL`,
         ).bind(dream.id, now).run();
@@ -400,14 +412,37 @@ export async function dispatchArtifacts(
      ORDER BY t.created_at ASC LIMIT 1`,
   ).first<{ rite_date: string; text: string }>();
   if (sermon && Date.now() < deadlineMs) {
-    if (await claimDispatch(env.DB, `sermon_dispatched_${sermon.rite_date}`, now)) {
-      try {
-        await tweet(credentials, sermonTweetText(sermon.text));
-        await env.DB.prepare(`UPDATE config SET value = ?2 WHERE key = ?1`)
-          .bind(`sermon_dispatched_${sermon.rite_date}`, `posted:${now}`).run();
-      } catch (e) {
-        await releaseDispatchClaim(env.DB, `sermon_dispatched_${sermon.rite_date}`);
-        throw e;
+    const filmDay = isFilmDay(sermon.rite_date);
+    const artifact: DispatchArtifact = {
+      kind: "sermon", artifactId: sermon.rite_date, riteDate: sermon.rite_date, text: sermon.text, filmDay,
+    };
+    let stored = await getDispatch(env.DB, sermon.rite_date);
+    if (!stored) {
+      const composed = await composeDispatch(env, artifact, now);
+      if (composed) {
+        await storeDispatch(env, artifact, composed.dispatch, composed.videoPrompt, now);
+        stored = { text: composed.dispatch };
+      }
+    }
+    if (stored) {
+      const gate = filmDay ? await sermonFilmGate(env.DB, sermon.rite_date, now) : "text-only";
+      if (gate !== "wait" && await claimDispatch(env.DB, `sermon_dispatched_${sermon.rite_date}`, now)) {
+        try {
+          let mediaId: string | undefined;
+          if (gate !== "text-only") {
+            const object = await env.RELICS.get(gate);
+            if (object) {
+              const bytes = new Uint8Array(await object.arrayBuffer());
+              mediaId = await uploadVideo(credentials, bytes, deadlineMs);
+            }
+          }
+          await tweet(credentials, stored.text, mediaId);
+          await env.DB.prepare(`UPDATE config SET value = ?2 WHERE key = ?1`)
+            .bind(`sermon_dispatched_${sermon.rite_date}`, `posted:${now}`).run();
+        } catch (e) {
+          await releaseDispatchClaim(env.DB, `sermon_dispatched_${sermon.rite_date}`);
+          throw e;
+        }
       }
     }
   }
