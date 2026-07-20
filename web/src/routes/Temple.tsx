@@ -407,6 +407,11 @@ export default function Temple() {
             <section id="codex" data-section="codex" className="temple-folio temple-reading-section">
               <h2 className="temple-section-label">{copy.codex.toUpperCase()}</h2>
               <aside aria-label="the codex" className="min-w-0 text-ink-faded">
+                {experience.awaitingCommand !== null && (
+                  <p data-codex-awaiting className="codex-entry__margin font-machine text-xs text-ink-faded">
+                    {copy.markWaits}
+                  </p>
+                )}
                 <Codex
                   entries={codex}
                   state={state}

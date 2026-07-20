@@ -179,6 +179,7 @@ export function signalForBodyCommand(command: BodyCommand): BodySignal | null {
     case "accrete":
     case "converge":
     case "dissolve":
+    case "awaiting":
       return null;
     default: {
       const exhaustive: never = command;

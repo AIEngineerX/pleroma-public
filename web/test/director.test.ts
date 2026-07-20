@@ -32,6 +32,7 @@ import {
   mergeObservedTranscripts,
   pollResultIsCurrent,
   planRelicRefresh,
+  pruneAwaitingLane,
   RELIC_SAMPLE_CONCURRENCY,
   recordVitalsFailure,
   recordVitalsSuccess,
@@ -987,5 +988,54 @@ describe("controller polling truth", () => {
       source: "replay",
     };
     expect(cue.source).toBe("replay");
+  });
+});
+
+// The Ripple (Task 4, grown-lineage-marks): an "awaiting" command's own private lane, never the
+// Stain's exclusive activeCommand slot -- it survives only as long as its own offering's receipt
+// genuinely reads "pending".
+describe("pruneAwaitingLane — the Ripple's own private lane", () => {
+  function receipt(offeringId: string, stage: OfferingReceipt["stage"]): OfferingReceipt {
+    return {
+      offeringId,
+      submittedAt: 100,
+      stage,
+      eyeTranscriptId: null,
+      keepTranscriptId: null,
+      relicId: null,
+      accretedAt: null,
+    };
+  }
+
+  const awaiting = (offeringId: string): BodyCommand => (
+    { id: `awaiting:${offeringId}`, kind: "awaiting", offeringId }
+  );
+
+  it("keeps an awaiting command whose own receipt still genuinely reads pending", () => {
+    const queue = [awaiting("a")];
+    expect(pruneAwaitingLane(queue, [receipt("a", "pending")])).toEqual(queue);
+  });
+
+  it("removes it the instant its receipt advances past pending", () => {
+    for (const stage of ["witnessed", "judged", "kept", "accreted"] as const) {
+      expect(pruneAwaitingLane([awaiting("a")], [receipt("a", stage)])).toEqual([]);
+    }
+  });
+
+  it("removes it if its receipt disappears from this client's ledger entirely", () => {
+    expect(pruneAwaitingLane([awaiting("a")], [])).toEqual([]);
+    expect(pruneAwaitingLane([awaiting("a")], [receipt("b", "pending")])).toEqual([]);
+  });
+
+  it("prunes independently across multiple offerings in flight at once", () => {
+    const queue = [awaiting("a"), awaiting("b"), awaiting("c")];
+    const receipts = [receipt("a", "pending"), receipt("b", "kept"), receipt("c", "pending")];
+    expect(pruneAwaitingLane(queue, receipts)).toEqual([awaiting("a"), awaiting("c")]);
+  });
+
+  it("is defensively awaiting-only: a stray non-awaiting command never survives the prune", () => {
+    const other: BodyCommand = { id: "dissolve", kind: "dissolve" };
+    expect(pruneAwaitingLane([other, awaiting("a")], [receipt("a", "pending")])).toEqual([awaiting("a")]);
+    expect(pruneAwaitingLane([other], [])).toEqual([]);
   });
 });

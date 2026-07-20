@@ -7,8 +7,8 @@
 // task brief permits -- "through the component's path (or directly via growMark with the same
 // substrate)").
 import { describe, expect, it } from "vitest";
-import { buildGestureSummary } from "../src/experience/ThresholdOffering";
-import { growMark, topologyMetrics, type SubstratePoint } from "../src/experience/markGrowth";
+import { buildGestureSummary, growthStepsForElapsed } from "../src/experience/ThresholdOffering";
+import { growMark, startGrowth, stepGrowth, topologyMetrics, type SubstratePoint } from "../src/experience/markGrowth";
 import {
   KNOCK_MAX_PRESSES,
   imprintHold,
@@ -127,5 +127,70 @@ describe("ThresholdOffering's preview now grows on the residue: growMark wiring 
     const knocked = topologyMetrics(growMark(gesture, substrate, presses));
     const bare = topologyMetrics(growMark(gesture, substrate));
     expect(knocked).not.toEqual(bare);
+  });
+});
+
+// Task 4 (grown-lineage-marks): the live hold's own pacing. growthStepsForElapsed is the pure
+// elapsed-ms -> step-count mapping the live rAF loop feeds to stepGrowth every frame; these are
+// the properties the task brief names directly (monotonic, 0 at 0, equals growMark's own full-hold
+// step budget), verified with no DOM.
+describe("growthStepsForElapsed — the live hold's elapsed-to-steps pacing", () => {
+  it("is 0 at 0 elapsed", () => {
+    expect(growthStepsForElapsed(0)).toBe(0);
+    expect(growthStepsForElapsed(-50)).toBe(0);
+  });
+
+  it("is monotonically non-decreasing as elapsed grows", () => {
+    const samples = [0, 40, 90, 160, 300, 500, 800, 1_100, 1_400, 1_600, 2_000, 5_000];
+    let previous = -1;
+    for (const elapsedMs of samples) {
+      const steps = growthStepsForElapsed(elapsedMs);
+      expect(steps).toBeGreaterThanOrEqual(previous);
+      previous = steps;
+    }
+  });
+
+  it("reaches growMark's own full-hold step budget (12 + 52 = 64) at and beyond 1.6s, never past it", () => {
+    expect(growthStepsForElapsed(1_600)).toBe(64);
+    expect(growthStepsForElapsed(3_000)).toBe(64);
+    expect(growthStepsForElapsed(1_500)).toBeLessThan(64);
+  });
+
+  it("honors a caller-supplied holdMsBudget the same way", () => {
+    expect(growthStepsForElapsed(0, 800)).toBe(0);
+    expect(growthStepsForElapsed(800, 800)).toBe(64);
+    expect(growthStepsForElapsed(400, 800)).toBe(32);
+  });
+
+  it("never outruns the state's own step budget: growthStepsForElapsed(elapsed) <= maxSteps for a gesture whose own holdMs is that same elapsed", () => {
+    for (const elapsedMs of [0, 50, 200, 500, 900, 1_200, 1_600]) {
+      const state = startGrowth(holdGesture({ holdMs: elapsedMs }), substrate);
+      expect(growthStepsForElapsed(elapsedMs)).toBeLessThanOrEqual(state.maxSteps);
+    }
+  });
+
+  it("at a full 1.6s hold, stepping by growthStepsForElapsed converges to exactly what growMark itself renders for that same gesture", () => {
+    const gesture = holdGesture({ holdMs: 1_600 });
+    const state = startGrowth(gesture, substrate);
+    const stepped = stepGrowth(state, growthStepsForElapsed(1_600));
+    expect(stepped.done).toBe(true);
+    expect(stepped.segments).toEqual(growMark(gesture, substrate));
+  });
+
+  it("mid-hold, the live-paced state is never further along (more points, more splits) than the full-hold mark, and never regresses as elapsed grows", () => {
+    const totalPoints = (segments: { points: readonly unknown[] }[]) =>
+      segments.reduce((sum, path) => sum + path.points.length, 0);
+    const full = startGrowth(holdGesture({ holdMs: 1_600 }), substrate);
+    const fullPoints = totalPoints(stepGrowth(full, growthStepsForElapsed(1_600)).segments);
+
+    let previousPoints = 0;
+    for (const elapsedMs of [200, 500, 900, 1_300, 1_600]) {
+      const state = startGrowth(holdGesture({ holdMs: elapsedMs }), substrate);
+      const stepped = stepGrowth(state, growthStepsForElapsed(elapsedMs));
+      const points = totalPoints(stepped.segments);
+      expect(points).toBeLessThanOrEqual(fullPoints);
+      expect(points).toBeGreaterThanOrEqual(previousPoints);
+      previousPoints = points;
+    }
   });
 });

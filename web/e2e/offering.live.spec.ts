@@ -3,6 +3,7 @@ import { enterTemple } from "./helpers/door";
 import { expect, test } from "@playwright/test";
 import {
   executeD1,
+  putRelicPng,
   readR2Object,
   resetStack,
 } from "./helpers/workerFixture";
@@ -461,4 +462,99 @@ test("a real rejection retains one preview Blob for an exact retry", async ({ pa
   await page.getByRole("button", { name: "offer this imprint" }).click();
   await expect(page.locator('[data-receipt-stage="pending"]'))
     .toContainText("awaiting the Eye", { timeout: 10_000 });
+});
+
+// The offering's own arc (Task 4, grown-lineage-marks): approach, hold, surrender, ripple. The
+// forming canvas is the same one Task 3's "forming ink is visible" knock.spec.ts test already
+// exercises; this asserts the SHAPE of the arc itself, not just that the canvas exists.
+async function formingCanvasHasInk(page: import("@playwright/test").Page): Promise<boolean> {
+  return page.locator("canvas.threshold-forming").evaluate((node) => {
+    const canvas = node as HTMLCanvasElement;
+    const context = canvas.getContext("2d");
+    if (context === null) return false;
+    const alpha = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let index = 3; index < alpha.length; index += 4) if (alpha[index] !== 0) return true;
+    return false;
+  });
+}
+
+test("a real hold grows visibly under the finger (Approach ghost, then live Hold growth) before settling into the offered preview", async ({ page }) => {
+  // The Approach ghosts the substrate's own residue -- with no kept relic at all there is
+  // genuinely nothing to ghost (an honest empty field, not a bug), so this test seeds one real
+  // kept relic (image bytes in R2, not just a DB row) the way offering-consequence.live.spec.ts
+  // already does, purely so loadSubstrate's own rung 2 ("newest relic") has real residue to find.
+  const relicOfferingId = "01JZ0000000000000000000099"; // a valid ULID shape (media.ts's serveOfferingImage requires it)
+  putRelicPng(relicOfferingId);
+  executeD1(`
+    INSERT INTO relics (id, offering_id, wallet, summary, rite_id, kept_at, genesis, accreted_at)
+    VALUES ('threshold-arc-residue', '${relicOfferingId}', NULL, 'a residue to grow against', NULL, ${Date.now() - 1_000}, 0, NULL);
+  `);
+
+  await enterTemple(page);
+  await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
+
+  const seal = page.getByRole("button", { name: "hold the threshold seal" });
+  await expect(seal).toBeVisible({ timeout: 5_000 });
+  await seal.scrollIntoViewIfNeeded();
+  const sealBox = (await seal.boundingBox())!;
+  const center = { x: sealBox.x + sealBox.width / 2, y: sealBox.y + sealBox.height / 2 };
+
+  // Approach: hovering near the seal, before any press, already ghosts the residue.
+  await page.mouse.move(center.x, center.y);
+  await expect.poll(() => formingCanvasHasInk(page)).toBe(true);
+
+  // Hold: the same growth simulation steps live under the finger, well past the tap ceiling.
+  await page.mouse.down();
+  await page.waitForTimeout(200);
+  await page.mouse.move(center.x + sealBox.width * 0.2, center.y - sealBox.height * 0.15, { steps: 6 });
+  await page.waitForTimeout(400);
+  expect(await formingCanvasHasInk(page)).toBe(true);
+  await page.screenshot({ path: `e2e/__shots__/threshold-arc-hold-${test.info().project.name}.png` });
+
+  await page.mouse.up();
+  const preview = page.locator("img[data-threshold-preview]");
+  await expect(preview).toBeVisible({ timeout: 4_000 });
+});
+
+test("reduced motion: no mid-hold growth animation, the settled mark still appears on release, and surrender still shows in the status line", async ({ browser }) => {
+  const ctx = await browser.newContext({ reducedMotion: "reduce" });
+  const page = await ctx.newPage();
+  resetStack();
+  executeD1("UPDATE config SET value = '1' WHERE key = 'launched';");
+  await enterTemple(page);
+  await expect(page.getByRole("region", { name: "the market" })).toBeVisible({ timeout: 10_000 });
+
+  const seal = page.getByRole("button", { name: "hold the threshold seal" });
+  await expect(seal).toBeVisible({ timeout: 5_000 });
+  await seal.scrollIntoViewIfNeeded();
+  const sealBox = (await seal.boundingBox())!;
+
+  await page.mouse.move(sealBox.x + sealBox.width / 2, sealBox.y + sealBox.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(500);
+  expect(await formingCanvasHasInk(page)).toBe(false); // no growth animation, no ghost ramp either
+
+  await page.mouse.up();
+  const preview = page.locator("img[data-threshold-preview]");
+  await expect(preview).toBeVisible({ timeout: 4_000 }); // the settled mark still appears at once
+
+  // Surrender's status line is real state, not an animation -- catch it even if the real submit
+  // resolves before Playwright's own poll would otherwise observe the transient text.
+  await page.evaluate((expected) => {
+    const node = document.querySelector("[data-threshold-status]")!;
+    const seen = () => node.textContent === expected;
+    (window as typeof window & { __sawSurrenderStatus?: boolean }).__sawSurrenderStatus = seen();
+    new MutationObserver(() => {
+      if (seen()) (window as typeof window & { __sawSurrenderStatus?: boolean }).__sawSurrenderStatus = true;
+    }).observe(node, { childList: true, characterData: true, subtree: true });
+  }, "the page takes it");
+
+  await page.getByRole("button", { name: "offer this imprint" }).click();
+  await expect(page.locator('[data-receipt-stage="pending"]'))
+    .toContainText("awaiting the Eye", { timeout: 10_000 });
+  expect(await page.evaluate(() => (
+    (window as typeof window & { __sawSurrenderStatus?: boolean }).__sawSurrenderStatus
+  ))).toBe(true);
+
+  await ctx.close();
 });

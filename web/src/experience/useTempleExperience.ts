@@ -169,6 +169,22 @@ export function reduceRelicPageTruth(
   };
 }
 
+// The Ripple's own private lane (Task 4, grown-lineage-marks): an "awaiting" command survives in
+// this queue only as long as ITS OWN offering's receipt genuinely reads "pending" -- removed the
+// instant it advances (witnessed, judged, kept, accreted) or the receipt disappears from this
+// client's ledger entirely. Pure so the removal rule is verifiable with no DOM: reused both by the
+// reconciliation effect below (whenever `receipts` changes) and, implicitly, by offeringAccepted's
+// own enqueue (which only ever adds a command whose receipt it just built as "pending").
+export function pruneAwaitingLane(
+  queue: readonly BodyCommand[],
+  receipts: readonly OfferingReceipt[],
+): BodyCommand[] {
+  return queue.filter(
+    (command) => command.kind === "awaiting"
+      && receipts.some((receipt) => receipt.offeringId === command.offeringId && receipt.stage === "pending"),
+  );
+}
+
 function receiptListsMatch(a: readonly OfferingReceipt[], b: readonly OfferingReceipt[]): boolean {
   return a.length === b.length && a.every((receipt, index) => {
     const other = b[index];
@@ -536,6 +552,12 @@ export function useTempleExperience(apiBase: string): TempleExperience {
   const [relicMemory, setRelicMemory] = useState<RelicInkSample[]>([]);
   const [receipts, setReceipts] = useState<OfferingReceipt[]>(loadPersistedReceipts);
   const [activeCommand, setActiveCommand] = useState<BodyCommand | null>(null);
+  // The Ripple's own private lane (Task 4, grown-lineage-marks): an "awaiting" notice is a page-margin
+  // fact, never a body gesture, so it is dispatched through enqueueControllerCommand's own dedup logic
+  // against ITS OWN queue -- never the `queue`/`active` pair Stain's activeCommand slot below owns --
+  // so it can never contend for, block, or be blocked by the body's single exclusive presentation.
+  const [awaitingQueue, setAwaitingQueue] = useState<BodyCommand[]>([]);
+  const awaitingQueueRef = useRef<BodyCommand[]>([]);
   const [replayWitness, setReplayWitness] = useState<DreamCue | null>(null);
 
   const stateRef = useRef<TempleState | null>(null);
@@ -648,7 +670,27 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     const reconciled = reconcileReceipt(pending, entries, relicsRef.current);
     persistReceipts([reconciled, ...receiptsRef.current.filter((receipt) => receipt.offeringId !== offeringId)]);
     relicWake.current();
+
+    // The Ripple: the temple's own margin registers the act, for as long as this exact offering's
+    // receipt genuinely reads "pending" (never if it was somehow already reconciled past that on
+    // arrival -- honest about the real state, not the moment of the click).
+    if (reconciled.stage === "pending") {
+      const awaiting: BodyCommand = { id: `awaiting:${offeringId}`, kind: "awaiting", offeringId };
+      awaitingQueueRef.current = enqueueControllerCommand(awaitingQueueRef.current, awaiting, locks.current, null);
+      setAwaitingQueue(awaitingQueueRef.current);
+    }
   }, [persistReceipts]);
+
+  // Removed the instant its own receipt advances past "pending" (kept, judged, witnessed, accreted)
+  // or disappears from this client's ledger -- the margin note never outlives the genuine state it
+  // reports.
+  useEffect(() => {
+    const pruned = pruneAwaitingLane(awaitingQueueRef.current, receipts);
+    if (pruned.length !== awaitingQueueRef.current.length) {
+      awaitingQueueRef.current = pruned;
+      setAwaitingQueue(pruned);
+    }
+  }, [receipts]);
 
   const setThresholdActive = useCallback((threshold: boolean) => {
     locks.current = { ...locks.current, threshold };
@@ -693,6 +735,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     queue.current = reset.queue;
     active.current = reset.activeCommand;
     locks.current = reset.locks;
+    awaitingQueueRef.current = [];
     dreamRelicBarrier.current = reset.dreamRelicBarrier;
     arrivalSettled.current = reset.arrivalSettled;
     codexWake.current = () => undefined;
@@ -704,6 +747,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     setRelics(reset.relics);
     setRelicMemory(reset.relicMemory);
     setActiveCommand(reset.activeCommand);
+    setAwaitingQueue([]);
     setReplayWitness(reset.replayWitness);
   }, [apiBase]);
 
@@ -1004,6 +1048,7 @@ export function useTempleExperience(apiBase: string): TempleExperience {
     relicMemory,
     receipts,
     activeCommand,
+    awaitingCommand: awaitingQueue[0] ?? null,
     replayWitness,
     arrivalDone,
     commandComplete,

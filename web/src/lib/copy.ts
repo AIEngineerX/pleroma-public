@@ -104,4 +104,6 @@ export const copy = {
   tongueSpoken: "spoken",
   playSermon: "play the sermon",
   pauseSermon: "pause the sermon",
+  offeringSurrendered: "the page takes it",
+  markWaits: "a mark waits at the Threshold",
 } as const;

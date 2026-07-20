@@ -44,7 +44,12 @@ export type BodyCommand =
   | { id: string; kind: "utterance"; entry: TranscriptEntry; mode: UtteranceMode; intensity: number; pipeline: PipelineLink }
   | { id: string; kind: "accrete"; relic: AccretedRelic; ink: RelicInkSample }
   | { id: string; kind: "converge"; dream: DreamCue }
-  | { id: string; kind: "dissolve" };
+  | { id: string; kind: "dissolve" }
+  // The Ripple (Task 4, grown-lineage-marks): a page-margin fact, not a body gesture -- this offering's
+  // own receipt genuinely reads "pending". Carried in its own private lane (see useTempleExperience's
+  // awaitingQueue), never the Stain's single exclusive activeCommand slot: it must never block or be
+  // blocked by the body's own quicken/utterance/accrete/converge presentation.
+  | { id: string; kind: "awaiting"; offeringId: string };
 
 export interface DirectorLocks {
   arrival: boolean;
@@ -70,6 +75,7 @@ export interface TempleExperience {
   relicMemory: RelicInkSample[];
   receipts: OfferingReceipt[];
   activeCommand: BodyCommand | null;
+  awaitingCommand: BodyCommand | null;
   replayWitness: DreamCue | null;
   arrivalDone(): void;
   commandComplete(id: string): void;

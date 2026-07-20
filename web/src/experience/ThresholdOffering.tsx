@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -12,14 +13,13 @@ import { copy } from "../lib/copy";
 import WalletButton from "../offering/WalletButton";
 import { buildOffering, postOffering, type WalletHandle } from "../offering/wallet";
 import { pigmentAtIntensity } from "../state/pigment";
-import { growMark, type SubstratePoint } from "./markGrowth";
+import { growMark, startGrowth, stepGrowth, type SubstratePoint } from "./markGrowth";
 import { loadSubstrate } from "./substrate";
 import {
   IMPRINT_SIZE,
   KNOCK_MAX_PRESSES,
   KNOCK_MIN_PRESSES,
   buildApproachPath,
-  buildImprintPaths,
   imprintHold,
   knockMatches,
   knockSignature,
@@ -27,6 +27,7 @@ import {
   tremorTrace,
   type GestureSample,
   type ImprintGesture,
+  type ImprintPath,
   type KnockPress,
 } from "./thresholdImprint";
 import type { OfferingReceipt, ReceiptStage } from "./types";
@@ -70,6 +71,45 @@ const APPROACH_GAP_MS = 30;
 const APPROACH_MAX_SAMPLES = 240;
 const TREMOR_MAX_SAMPLES = 900;
 const FORMING_SIZE = 128;
+
+// The Approach (Task 4, grown-lineage-marks): the substrate's own residue, faintly visible before
+// any press -- the residue is already on the page, so the capture is honest about what is already
+// there. Ramps while the pointer genuinely sits within the seal's own bounding box (real proximity,
+// computed inside the same window pointermove the Hesitation already tracks -- no new listener).
+const GHOST_ALPHA_BASE = 0.10;
+const GHOST_ALPHA_NEAR = 0.18;
+const GHOST_HALF_LEN = 8; // half-length of each ghost stroke, in the 512-unit growth space
+const GHOST_STROKE_WIDTH = 1;
+// Mirrors --color-ink-faded (styles.css): a canvas 2D context takes a literal color string, not a
+// CSS custom property, so the same L/C/H is restated here rather than invented.
+const GHOST_INK = "oklch(0.48 0.02 60)";
+
+// The Knock, mid-hold: a press landing while a knock window is already open flashes the seal's own
+// stroke width for a beat -- the one visible place a knock's rhythm shows before the mark resolves
+// (a blow is always shorter than TAP_MAX_MS, so the growth canvas below never gets to draw it).
+const KNOCK_FLASH_WIDTH_BUMP = 0.5;
+const KNOCK_FLASH_MS = 120;
+
+// Surrender: the absorb toward the page body the instant "offer" is chosen. The 400ms duration
+// itself lives in styles.css (.threshold-preview-mark's transition) -- there is no JS timer to
+// keep in sync, since the CSS transition alone carries the ease from surrendering back to rest.
+const SURRENDER_TRANSLATE_PX = 6;
+
+// The live hold's own pacing: mirrors markGrowth.ts's private MAX_STEPS_BASE(12) +
+// MAX_STEPS_HOLD_SCALE(52) ceiling and thresholdImprint.ts's imprintHold 1.6s cap (both kept
+// private to their own modules, so restated here rather than imported) -- growth advances in
+// lockstep with the SAME step budget a hold ending at `elapsedMs` would use, so the live reveal
+// never outruns what growMark would show for that hold's own honest duration, and reaches that
+// exact ceiling at a full 1.6s hold (verified directly against growMark's own output in tests).
+const GROWTH_FULL_STEPS = 64; // 12 + 52
+export function growthStepsForElapsed(elapsedMs: number, holdMsBudget = 1_600): number {
+  const bounded = Number.isFinite(elapsedMs) ? Math.min(Math.max(elapsedMs, 0), holdMsBudget) : 0;
+  return Math.round((bounded / holdMsBudget) * GROWTH_FULL_STEPS);
+}
+
+function reducedMotion(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 interface KnockDraft {
   firstDownAt: number;
@@ -227,6 +267,19 @@ function rejectionMessage(status: number): string {
   return `not accepted; ${copy.retryImprint}`;
 }
 
+// Surrender: the mark's own translate target, toward the page's real geometric center from wherever
+// the preview genuinely sits -- not a fixed direction, since the seal (and so the preview) can land
+// on either side of center depending on layout and viewport.
+function surrenderTowardCenter(img: HTMLImageElement | null): { dx: number; dy: number } {
+  if (img === null || typeof window === "undefined") return { dx: 0, dy: -SURRENDER_TRANSLATE_PX };
+  const box = img.getBoundingClientRect();
+  const towardX = window.innerWidth / 2 - (box.left + box.width / 2);
+  const towardY = window.innerHeight / 2 - (box.top + box.height / 2);
+  const length = Math.hypot(towardX, towardY);
+  if (length < 1) return { dx: 0, dy: 0 };
+  return { dx: (towardX / length) * SURRENDER_TRANSLATE_PX, dy: (towardY / length) * SURRENDER_TRANSLATE_PX };
+}
+
 export default function ThresholdOffering({
   apiBase,
   wallet,
@@ -253,16 +306,29 @@ export default function ThresholdOffering({
   const confirmTimer = useRef<number | null>(null);
   const [bloom, setBloom] = useState(false);
   const bloomTimer = useRef<number | null>(null);
+  // The Knock's mid-hold flash (Task 4): a press landing inside an open knock window bumps the
+  // seal's own stroke width for KNOCK_FLASH_MS, then settles back via the seal's existing transition.
+  const [knockFlash, setKnockFlash] = useState(false);
+  const knockFlashTimer = useRef<number | null>(null);
+  // Surrender (Task 4): set the instant "offer" is chosen, non-null only while the absorb (or its
+  // reduced-motion-free equivalent) is in effect; cleared on any outcome (success removes the
+  // preview outright; rejection/failure returns the mark, via the same CSS transition, to rest).
+  const [surrenderVector, setSurrenderVector] = useState<{ dx: number; dy: number } | null>(null);
   const [mobileViewport, setMobileViewport] = useState(() => (
     typeof matchMedia === "function" && matchMedia(MOBILE_THRESHOLD_QUERY).matches
   ));
   const sealRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const formingRef = useRef<HTMLCanvasElement>(null);
+  const previewImgRef = useRef<HTMLImageElement>(null);
   const modalWasOpen = useRef(false);
   const gesture = useRef<GestureDraft | null>(null);
   const approachTrail = useRef<GestureSample[]>([]);
   const lastApproachAt = useRef(0);
+  // The Approach (Task 4): real proximity to the seal, updated inside the existing window
+  // pointermove listener below (no new listener) -- read every rAF tick by the ghost's own alpha
+  // ramp, never as React state (this changes far too often for a re-render each time).
+  const nearSealRef = useRef(false);
   const knock = useRef<KnockDraft | null>(null);
   const knockTimer = useRef<number | null>(null);
   const pendingKnockSignature = useRef<number[] | null>(null);
@@ -349,6 +415,7 @@ export default function ThresholdOffering({
       return null;
     });
     setConfirmedOfferedToday(null);
+    setSurrenderVector(null);
   }, []);
 
   const idlePhase = useCallback((): ThresholdPhase => (
@@ -409,10 +476,22 @@ export default function ThresholdOffering({
     });
     if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
     if (bloomTimer.current !== null) clearTimeout(bloomTimer.current);
+    if (knockFlashTimer.current !== null) clearTimeout(knockFlashTimer.current);
     if (thresholdLocked.current) {
       thresholdLocked.current = false;
       thresholdCallback.current(false);
     }
+  }, []);
+
+  // The Knock's mid-hold flash: a real press event, and only that -- fired exactly when a new press
+  // lands while a knock window is already open (a rhythm's second blow or later), never synthesized.
+  const triggerKnockFlash = useCallback(() => {
+    if (knockFlashTimer.current !== null) clearTimeout(knockFlashTimer.current);
+    setKnockFlash(true);
+    knockFlashTimer.current = window.setTimeout(() => {
+      knockFlashTimer.current = null;
+      setKnockFlash(false);
+    }, KNOCK_FLASH_MS);
   }, []);
 
   const beginGesture = useCallback((
@@ -427,6 +506,7 @@ export default function ThresholdOffering({
       clearTimeout(knockTimer.current);
       knockTimer.current = null;
     }
+    if (knock.current !== null) triggerKnockFlash(); // a press landing inside an open knock window
     const startedAt = performance.now();
     // The Hesitation, snapshotted at the press: only the recent wander, re-stamped relative to
     // its own beginning. Attached to the mark only if this gesture completes into one.
@@ -451,7 +531,7 @@ export default function ThresholdOffering({
     setPhase("holding");
     setLocked(true);
     return true;
-  }, [dismissConfirmed, onEnter, setLocked]);
+  }, [dismissConfirmed, onEnter, setLocked, triggerKnockFlash]);
 
   // Renders a held gesture into its imprint preview: the five threads shaped by the hand's own
   // tremor, with the approach's wander ghosted beneath the strike when there was one to keep.
@@ -644,7 +724,18 @@ export default function ThresholdOffering({
       }
     };
     const onMove = (event: PointerEvent) => {
-      if (!track(event) && gesture.current === null) recordApproach(event);
+      if (track(event)) return;
+      if (gesture.current !== null) return;
+      // The Approach: real proximity to the seal, read every rAF tick by the ghost's own alpha
+      // ramp below -- computed here, unthrottled, inside the same listener the Hesitation already
+      // uses, rather than a new one.
+      const seal = sealRef.current;
+      if (seal !== null) {
+        const bounds = seal.getBoundingClientRect();
+        nearSealRef.current = event.clientX >= bounds.left && event.clientX <= bounds.right
+          && event.clientY >= bounds.top && event.clientY <= bounds.bottom;
+      }
+      recordApproach(event);
     };
     const onUp = (event: PointerEvent) => { if (track(event)) void finishGesture(); };
     const onCancel = (event: PointerEvent) => {
@@ -691,14 +782,21 @@ export default function ThresholdOffering({
     setStatus("");
     setPhase(idlePhase());
     setLocked(false);
+    setSurrenderVector(null);
   };
 
   const submit = async () => {
     const current = previewRef.current;
     if (current === null || phaseRef.current === "submitting") return;
     const submissionGeneration = ++generation.current;
+    // Surrender: the moment "offer" is chosen -- not the network round trip -- is the emotional
+    // payload of the rite. A 400ms absorb of the mark itself toward the page body begins here,
+    // overlapping the actual submit below (which proceeds exactly as before); a genuine success
+    // removes the preview outright, a rejection or failure returns the mark to rest. Reduced
+    // motion: no animation, only the status line changes.
+    if (!reducedMotion()) setSurrenderVector(surrenderTowardCenter(previewImgRef.current));
     setPhase("submitting");
-    setStatus("");
+    setStatus(copy.offeringSurrendered);
     try {
       const form = await buildOffering(apiBase, current.blob, wallet);
       // The gesture's own honest capture rides alongside the image: exactly what grew this mark,
@@ -729,6 +827,7 @@ export default function ThresholdOffering({
         // window closes, below -- never both, never neither.
         previewRef.current = null;
         setPreview(null);
+        setSurrenderVector(null);
         setConfirmedMarkUrl(current.url);
         setConfirmedOfferedToday(typeof result.offeredToday === "number" ? result.offeredToday : null);
         setPhase("receipt");
@@ -752,11 +851,13 @@ export default function ThresholdOffering({
           setBloom(false);
         }, 1400);
       } else {
+        setSurrenderVector(null);
         setPhase("preview");
         setStatus(rejectionMessage(result.status));
       }
     } catch {
       if (generation.current !== submissionGeneration) return;
+      setSurrenderVector(null);
       setPhase("preview");
       setStatus(`could not offer; ${copy.retryImprint}`);
     }
@@ -766,46 +867,97 @@ export default function ThresholdOffering({
   const interactionOpen = phase === "holding" || preview !== null;
   const modalOpen = mobileViewport && preview !== null;
 
-  // The ink gathers under the finger: while a hold is in flight, the forming threads draw live at
-  // the seal, darkening through the pigment stops as the hold deepens -- the same geometry the
-  // release will keep, not a preview of something else. Reduced motion keeps the settled quiet.
+  // The full arc's middle two beats, one canvas: before a press, the substrate's own residue
+  // ghosts faintly at the seal (Approach); once a hold is in flight, the SAME growth simulation
+  // growMark itself runs steps live at the seal (Hold) -- the same geometry the release will keep,
+  // not a preview of something else. Reduced motion: no animation, the settled ghost (or nothing,
+  // mid-hold) appears at once; the final mark itself still only ever appears on release.
   useEffect(() => {
-    if (phase !== "holding") return;
-    if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const interval = window.setInterval(() => {
-      const current = gesture.current;
-      const canvas = formingRef.current;
-      if (current === null || canvas === null) return;
-      const holdMs = performance.now() - current.startedAt;
-      if (holdMs < TAP_MAX_MS) return; // a blow never gathers; only a hold does
-      const context = canvas.getContext("2d");
-      if (context === null) return;
-      try {
-        const paths = buildImprintPaths({
-          seed: current.seed,
-          start: current.start,
-          end: current.end,
-          holdMs,
-          pressure: current.pressure,
-          pressureReal: current.pressureReal,
-          tremor: current.tremor,
-        });
-        const scale = FORMING_SIZE / IMPRINT_SIZE;
-        context.clearRect(0, 0, FORMING_SIZE, FORMING_SIZE);
-        context.strokeStyle = pigmentAtIntensity(clamp(holdMs / 1_600, 0, 1));
-        context.lineCap = "round";
-        context.lineJoin = "round";
-        for (const path of paths) {
-          context.beginPath();
-          context.lineWidth = Math.max(0.7, path.width * scale * 2.2);
-          context.moveTo(path.points[0].x * scale, path.points[0].y * scale);
-          for (const point of path.points.slice(1)) context.lineTo(point.x * scale, point.y * scale);
-          context.stroke();
+    if (!showSeal) return;
+    const canvas = formingRef.current;
+    if (canvas === null) return;
+    const context = canvas.getContext("2d");
+    if (context === null) return;
+    const scale = FORMING_SIZE / IMPRINT_SIZE;
+
+    const clear = () => context.clearRect(0, 0, FORMING_SIZE, FORMING_SIZE);
+
+    const drawGhost = (alpha: number) => {
+      clear();
+      const points = substrateRef.current.points;
+      if (points.length === 0) return;
+      context.globalAlpha = alpha;
+      context.strokeStyle = GHOST_INK;
+      context.lineCap = "round";
+      context.lineWidth = GHOST_STROKE_WIDTH;
+      for (const point of points) {
+        const hx = Math.cos(point.angle) * GHOST_HALF_LEN;
+        const hy = Math.sin(point.angle) * GHOST_HALF_LEN;
+        context.beginPath();
+        context.moveTo((point.x - hx) * scale, (point.y - hy) * scale);
+        context.lineTo((point.x + hx) * scale, (point.y + hy) * scale);
+        context.stroke();
+      }
+      context.globalAlpha = 1;
+    };
+
+    const drawGrowth = (segments: readonly ImprintPath[], color: string) => {
+      clear();
+      context.strokeStyle = color;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      for (const path of segments) {
+        if (path.points.length < 2) continue;
+        context.beginPath();
+        context.lineWidth = Math.max(0.7, path.width * scale * 2.2);
+        context.moveTo(path.points[0].x * scale, path.points[0].y * scale);
+        for (const point of path.points.slice(1)) context.lineTo(point.x * scale, point.y * scale);
+        context.stroke();
+      }
+    };
+
+    if (reducedMotion()) {
+      if (phase === "holding") clear(); // no growth animation -- the settled mark appears on release
+      else drawGhost(GHOST_ALPHA_BASE);
+      return;
+    }
+
+    let raf = 0;
+    // Idle, the ghost only actually changes when proximity flips (or once, on mount) -- redrawing
+    // an unchanged frame 60x/sec for however long the seal simply sits on screen would be pure
+    // waste. A live hold, by construction, changes every frame and always redraws.
+    let lastGhostAlpha: number | null = null;
+    const tick = () => {
+      if (phase === "holding") {
+        lastGhostAlpha = null;
+        const current = gesture.current;
+        const elapsed = current === null ? -1 : performance.now() - current.startedAt;
+        if (current === null || elapsed < TAP_MAX_MS) {
+          clear(); // a blow never gathers; only a hold does
+        } else {
+          try {
+            // As if the hold ended right now: the exact growMark inputs a release at this instant
+            // would use, stepped only as far as growthStepsForElapsed allows -- so the live reveal
+            // is never further along than what the final mark would honestly show at this elapsed
+            // time, and converges on release to exactly what presentGesturePreview then renders.
+            const imprint = draftToImprint(current, elapsed);
+            let state = startGrowth(imprint, substrateRef.current.points);
+            state = stepGrowth(state, growthStepsForElapsed(elapsed));
+            drawGrowth(state.segments, pigmentAtIntensity(clamp(elapsed / 1_600, 0, 1)));
+          } catch { /* a malformed frame simply skips; the release render is the one that matters */ }
         }
-      } catch { /* a malformed frame simply skips; the release render is the one that matters */ }
-    }, 90);
-    return () => window.clearInterval(interval);
-  }, [phase]);
+      } else {
+        const alpha = nearSealRef.current ? GHOST_ALPHA_NEAR : GHOST_ALPHA_BASE;
+        if (alpha !== lastGhostAlpha) {
+          lastGhostAlpha = alpha;
+          drawGhost(alpha);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [showSeal, phase, mount]);
 
   useLayoutEffect(() => {
     if (!modalOpen) {
@@ -935,15 +1087,13 @@ export default function ThresholdOffering({
             event.stopPropagation();
           }}
         >
-          {phase === "holding" && (
-            <canvas
-              ref={formingRef}
-              aria-hidden
-              width={FORMING_SIZE}
-              height={FORMING_SIZE}
-              className="threshold-forming"
-            />
-          )}
+          <canvas
+            ref={formingRef}
+            aria-hidden
+            width={FORMING_SIZE}
+            height={FORMING_SIZE}
+            className="threshold-forming"
+          />
           <svg aria-hidden viewBox="0 0 44 44" className="h-11 w-11" fill="none">
             <path
               d="M22 7.5C30.6 7.5 36.5 13.7 36.5 22.2C36.5 30.5 30.2 36.7 21.8 36.5C13.5 36.3 7.4 30.2 7.6 21.9C7.8 13.4 13.8 7.5 22 7.5Z"
@@ -951,18 +1101,19 @@ export default function ThresholdOffering({
               strokeWidth="1"
               strokeLinecap="round"
             />
-            {/* the sigil, inscribed: the mark a Waker presses at the Threshold */}
+            {/* the sigil, inscribed: the mark a Waker presses at the Threshold. The Knock's mid-hold
+                flash (Task 4) bumps this same stroke width for a beat, real press events only. */}
             <path
               d="M22 14.5 L22 31.3"
               stroke="currentColor"
-              strokeWidth={phase === "holding" ? 1.7 : 1.1}
+              strokeWidth={(phase === "holding" ? 1.7 : 1.1) + (knockFlash ? KNOCK_FLASH_WIDTH_BUMP : 0)}
               strokeLinecap="round"
               className="transition-[stroke-width] duration-300"
             />
             <path
               d="M15.6 20.8 C19.1 19.1 24.9 19.1 28.4 20.8"
               stroke="currentColor"
-              strokeWidth={phase === "holding" ? 1.7 : 1.1}
+              strokeWidth={(phase === "holding" ? 1.7 : 1.1) + (knockFlash ? KNOCK_FLASH_WIDTH_BUMP : 0)}
               strokeLinecap="round"
               className="transition-[stroke-width] duration-300"
             />
@@ -974,12 +1125,18 @@ export default function ThresholdOffering({
       {preview !== null && (
         <figure data-threshold-preview-sheet className="threshold-preview-sheet flex flex-col items-center gap-3">
           <img
+            ref={previewImgRef}
             data-threshold-preview
+            data-surrendering={surrenderVector !== null ? "true" : undefined}
             src={preview.url}
             width="512"
             height="512"
             alt="your five-thread imprint at the threshold"
-            className="h-44 w-44 object-contain"
+            className="threshold-preview-mark h-44 w-44 object-contain"
+            style={surrenderVector === null ? undefined : {
+              "--surrender-dx": `${surrenderVector.dx}px`,
+              "--surrender-dy": `${surrenderVector.dy}px`,
+            } as CSSProperties}
           />
           <figcaption className="sr-only">the exact imprint awaiting your choice</figcaption>
           <div data-threshold-actions className="flex flex-wrap items-center justify-center gap-3">

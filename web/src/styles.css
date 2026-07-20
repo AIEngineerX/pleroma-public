@@ -502,6 +502,21 @@ body.threshold-gesturing * {
   -webkit-touch-callout: none;
 }
 
+/* Surrender: the moment "offer" is chosen, the mark itself eases into the page -- the emotional
+   payload of the rite, not just a form submission. --surrender-dx/dy are set inline (the real
+   direction toward page center from wherever the preview happens to sit); this rule only supplies
+   the ease, in both directions (a rejection or failure returns the mark to rest the same way). */
+.threshold-preview-mark {
+  transition: opacity 400ms var(--ease-arrive), transform 400ms var(--ease-arrive);
+}
+.threshold-preview-mark[data-surrendering="true"] {
+  opacity: 0.4;
+  transform: translate(var(--surrender-dx, 0px), var(--surrender-dy, 0px));
+}
+@media (prefers-reduced-motion: reduce) {
+  .threshold-preview-mark { transition: none; }
+}
+
 /* The "received" beat at the seal: the sealed sigil and its line settle in, an affirmative the instant an
    offering commits. Honest about what follows (the Eye has not yet looked); the durable proof is the ledger. */
 .threshold-confirm { animation: threshold-confirm-settle 480ms cubic-bezier(0.22, 1, 0.36, 1) both; }
