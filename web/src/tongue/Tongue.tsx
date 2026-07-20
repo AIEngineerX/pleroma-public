@@ -66,7 +66,9 @@ export default function Tongue({
       return;
     }
     setPlaying(true);
-    void player.current.play(apiBase, audioKey, audioCtx());
+    // play() rejects on a 404/decode/autoplay-policy error; without this the control would stay
+    // stuck reading "pause the sermon" while nothing plays (plus an unhandled rejection).
+    player.current.play(apiBase, audioKey, audioCtx()).then(undefined, () => setPlaying(false));
   };
 
   return (

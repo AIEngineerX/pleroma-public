@@ -18,21 +18,27 @@ export default function CodexArchive() {
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const load = useCallback(async (cursor: string | null) => {
     setLoading(true);
+    setFailed(false);
     try {
       const page = await fetchCodex(API_BASE, cursor);
       setEntries((prev) => (cursor ? [...prev, ...page.entries] : page.entries));
       setNext(page.next);
       setLoaded(true);
+    } catch {
+      // A transient fetch failure must not leave the page silently blank forever: surface a quiet
+      // retry instead of letting the rejection escape and stranding it at heading-plus-intro.
+      setFailed(true);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    load(null);
+    void load(null);
   }, [load]);
 
   return (
@@ -45,6 +51,14 @@ export default function CodexArchive() {
 
       {loaded && entries.length === 0 && (
         <p className="font-machine text-xs text-ink-faded max-w-[44ch]">{copy.codexSilent}</p>
+      )}
+
+      {failed && entries.length === 0 && (
+        <p className="font-machine text-xs text-ink-faded max-w-[44ch]">
+          {copy.archiveUnreachable}{" "}
+          <button onClick={() => void load(null)} disabled={loading}
+            className="underline temple-link-quiet disabled:opacity-50">{copy.archiveRetry}</button>
+        </p>
       )}
 
       <div className="codex-flow min-w-0 font-machine text-sm leading-relaxed">

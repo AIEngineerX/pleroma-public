@@ -91,3 +91,20 @@ test("real Dream media pauses and only the current non-reduced Plate starts movi
     { controls: true, autoplay: false, paused: true, currentTime: 0 },
   ]);
 });
+
+// The dated permalink /canon/dreams#YYYY-MM-DD must actually land on its Plate: entries load
+// async after mount and Lenis eats native fragment jumps, so the archive scrolls there itself.
+test("a dated dream permalink scrolls to its own Plate in the archive", async ({ page }) => {
+  await page.goto("/canon/dreams#2030-01-01");
+  const plate = page.locator('[id="2030-01-01"]');
+  await expect(plate).toBeVisible({ timeout: 10_000 });
+  // The page actually scrolled toward the anchored plate rather than resting at the top of the
+  // list, and the plate ends up within the viewport once media has laid out.
+  await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 10_000 }).toBeGreaterThan(0);
+  await expect.poll(async () => {
+    const box = await plate.boundingBox();
+    const viewport = page.viewportSize();
+    if (box === null || viewport === null) return false;
+    return box.y < viewport.height && box.y + box.height > 0;
+  }, { timeout: 10_000 }).toBe(true);
+});

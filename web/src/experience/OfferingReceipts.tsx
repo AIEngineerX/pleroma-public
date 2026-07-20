@@ -32,7 +32,7 @@ export default function OfferingReceipts({ receipts }: Props) {
                 >
                   <span>{receiptCopy[receipt.stage]}</span>
                   <time dateTime={submitted} className="shrink-0 text-[0.65rem]">
-                    {submitted.slice(11, 16)}
+                    {submitted.slice(11, 16)} UTC
                   </time>
                 </li>
               );

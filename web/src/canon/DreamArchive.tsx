@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { resolveApiBase } from "../config";
 import { fetchDreams } from "./dreamsClient";
 import type { DreamArchiveEntry } from "../state/types";
 import { copy } from "../lib/copy";
+import { scrollToId } from "../lib/smoothScroll";
 
 // The room the Plates were missing (PLANNING): the full archive of DREAM's nightly Plates, each the day's
 // kept marks returned "as gods you have not met" (DOCTRINE II.5). Dynamic (fetched from /api/dreams), so
@@ -18,26 +19,49 @@ function caption(d: DreamArchiveEntry): string {
 }
 
 export default function DreamArchive() {
+  const location = useLocation();
   const [entries, setEntries] = useState<DreamArchiveEntry[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const load = useCallback(async (cursor: string | null) => {
     setLoading(true);
+    setFailed(false);
     try {
       const page = await fetchDreams(API_BASE, cursor);
       setEntries(prev => (cursor ? [...prev, ...page.entries] : page.entries));
       setNext(page.next);
       setLoaded(true);
+    } catch {
+      setFailed(true);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    load(null);
+    void load(null);
   }, [load]);
+
+  // Each Plate anchors on its rite date and /canon/dreams#YYYY-MM-DD is its advertised permalink,
+  // but entries arrive async after mount and Lenis eats a native fragment jump — so scroll to the
+  // dated plate ourselves once it is in the DOM (react-router does no hash scrolling of its own).
+  // A second scroll after the Plates' media has had a beat to lay out catches the layout shift that
+  // would otherwise leave a one-shot jump short of a plate whose video only just sized itself.
+  useEffect(() => {
+    const date = location.hash.slice(1);
+    if (date === "") return;
+    if (entries.some((entry) => entry.rite_date === date)) {
+      scrollToId(date);
+      const settle = window.setTimeout(() => scrollToId(date), 400);
+      return () => window.clearTimeout(settle);
+    }
+    if (next !== null && !loading) {
+      void load(next); // keep paging until the dated plate loads or the archive is exhausted
+    }
+  }, [location.hash, entries, next, loading, load]);
 
   return (
     <main className="mx-auto max-w-[60ch] px-6 py-10 font-liturgy">
@@ -49,6 +73,14 @@ export default function DreamArchive() {
 
       {loaded && entries.length === 0 && (
         <p className="font-machine text-xs text-ink-faded max-w-[44ch]">{copy.dreamEmpty}</p>
+      )}
+
+      {failed && entries.length === 0 && (
+        <p className="font-machine text-xs text-ink-faded max-w-[44ch]">
+          {copy.archiveUnreachable}{" "}
+          <button onClick={() => void load(null)} disabled={loading}
+            className="underline temple-link-quiet disabled:opacity-50">{copy.archiveRetry}</button>
+        </p>
       )}
 
       <ol className="space-y-14">
@@ -66,9 +98,9 @@ export default function DreamArchive() {
                 </div>
               )}
               <figcaption className="font-machine text-xs text-ink-faded pt-2">
-                <a href={`/canon/dreams#${d.rite_date}`} className="no-underline text-ink-faded">
+                <Link to={{ hash: d.rite_date }} className="no-underline text-ink-faded">
                   DREAM · {d.rite_date} · {caption(d)}
-                </a>
+                </Link>
               </figcaption>
             </figure>
             {d.video_key && (

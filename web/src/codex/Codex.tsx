@@ -75,7 +75,7 @@ export default function Codex({ entries, state, currentDreamRiteDate = null, onA
     <div data-codex className="codex-flow min-w-0 font-machine text-sm leading-relaxed">
       {sermonKey && (
         <button className="min-h-11 px-0 font-machine text-xs underline text-ink-faded temple-link-quiet"
-          onClick={() => player.current.play(API_BASE, sermonKey, audioCtx())}>{copy.hearSermon}</button>
+          onClick={() => { player.current.play(API_BASE, sermonKey, audioCtx()).catch(() => undefined); }}>{copy.hearSermon}</button>
       )}
       {lines}
       {/* "It has no heart yet." is Dormant's line (Temple's "the page" section) -- printing it here too

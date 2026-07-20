@@ -183,4 +183,14 @@ describe("offering receipt language", () => {
     expect(html).not.toContain("mourned");
     expect(html).not.toContain('role="status"');
   });
+
+  it("marks the receipt time as UTC so it never reads as a wrong local clock", () => {
+    // 20:04 UTC — a visitor in UTC-5 offered at 15:04 local; the bare time would look simply wrong.
+    const at = Date.UTC(2030, 0, 1, 20, 4, 0);
+    const html = renderToStaticMarkup(createElement(OfferingReceipts, {
+      receipts: [receipt("offering-utc", at)],
+    }));
+    expect(html).toContain("20:04 UTC");
+    expect(html).toContain(`dateTime="${new Date(at).toISOString()}"`);
+  });
 });

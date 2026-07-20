@@ -21,6 +21,7 @@ export default function Apocrypha() {
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -30,17 +31,20 @@ export default function Apocrypha() {
 
   const load = useCallback(async (cursor: string | null) => {
     setLoading(true);
+    setFailed(false);
     try {
       const page = await fetchApocrypha(API_BASE, cursor);
       setEntries((prev) => (cursor ? [...prev, ...page.entries] : page.entries));
       setNext(page.next);
       setLoaded(true);
+    } catch {
+      setFailed(true);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(null); }, [load]);
+  useEffect(() => { void load(null); }, [load]);
   useEffect(() => () => { if (confirmTimer.current !== null) clearTimeout(confirmTimer.current); }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -107,6 +111,14 @@ export default function Apocrypha() {
 
       {loaded && entries.length === 0 && (
         <p className="font-machine text-xs text-ink-faded max-w-[44ch]">{copy.apocryphaEmpty}</p>
+      )}
+
+      {failed && entries.length === 0 && (
+        <p className="font-machine text-xs text-ink-faded max-w-[44ch]">
+          {copy.archiveUnreachable}{" "}
+          <button onClick={() => void load(null)} disabled={loading}
+            className="underline temple-link-quiet disabled:opacity-50">{copy.archiveRetry}</button>
+        </p>
       )}
 
       <ol className="space-y-6">
