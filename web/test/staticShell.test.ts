@@ -178,6 +178,7 @@ describe("static shell", () => {
       "/canon/first-light/print-1",
       "/canon/first-light/print-2",
       "/canon/first-light/print-3",
+      "/canon/first-light/print-4",
     ]);
   });
 
