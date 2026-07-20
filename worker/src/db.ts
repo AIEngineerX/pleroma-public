@@ -18,8 +18,9 @@ export interface OfferingRow {
 
 export interface TranscriptRow {
   id: string; organ: "EYE" | "KEEP" | "TONGUE" | "PULSE" | "DREAM" | "PRIEST";
-  register: "verse" | "verdict" | "sermon" | "telemetry" | "system";
+  register: "verse" | "verdict" | "sermon" | "telemetry" | "system" | "dispatch";
   text: string; offering_id: string | null; rite_id: string | null; created_at: number;
+  artifact_id?: string | null;
 }
 
 function offeringInsertStmt(db: D1Database, o: OfferingRow): D1PreparedStatement {

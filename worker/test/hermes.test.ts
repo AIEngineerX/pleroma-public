@@ -104,3 +104,34 @@ describe("dispatch claims — the durable claim lands before any send", () => {
     expect(alert?.value).not.toContain("dream_dispatch_fresh");
   });
 });
+
+describe("migration 0019 — dispatch transcripts and sermon films", () => {
+  it("admits register='dispatch' with a unique artifact_id, and still rejects unknown registers", async () => {
+    await env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, artifact_id, created_at)
+       VALUES ('01TESTDISPATCH000000000001', 'TONGUE', 'dispatch', 'a line', NULL, '2026-07-20', 'dream-abc', 1000)`
+    ).run();
+    // Second dispatch for the same artifact loses to the unique partial index.
+    await expect(env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, artifact_id, created_at)
+       VALUES ('01TESTDISPATCH000000000002', 'TONGUE', 'dispatch', 'another', NULL, '2026-07-20', 'dream-abc', 2000)`
+    ).run()).rejects.toThrow();
+    // The CHECK constraint still guards the register enum.
+    await expect(env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTDISPATCH000000000003', 'TONGUE', 'tweet', 'nope', NULL, NULL, 3000)`
+    ).run()).rejects.toThrow();
+  });
+
+  it("holds sermon film lifecycle rows", async () => {
+    await env.DB.prepare(
+      `INSERT INTO sermon_films (rite_date, video_prompt, created_at) VALUES ('2026-07-21', 'a prompt', 1000)`
+    ).run();
+    const row = await env.DB.prepare(`SELECT status, render_attempts FROM sermon_films WHERE rite_date='2026-07-21'`)
+      .first<{ status: string; render_attempts: number }>();
+    expect(row).toEqual({ status: "pending", render_attempts: 0 });
+    await expect(env.DB.prepare(
+      `UPDATE sermon_films SET status='exploded' WHERE rite_date='2026-07-21'`
+    ).run()).rejects.toThrow();
+  });
+});
