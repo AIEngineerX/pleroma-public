@@ -31,14 +31,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
       - run: npx --prefix web playwright install --with-deps chromium
       - run: npm run verify
 
   e2e:
     runs-on: ubuntu-latest
     needs: verify
-    timeout-minutes: 20
+    # The suite runs ~19 min on chromium alone; webkit projects need the headroom.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,12 +47,15 @@ jobs:
           node-version: 22
       - run: npm ci --prefix worker
       - run: npm ci --prefix web
+      # The suite has webkit projects (mobile-390) — chromium-only installs left every
+      # webkit test dead at browserType.launch. Own cache key so the verify job's
+      # chromium-only cache can't shadow the webkit download.
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
-      - run: npx --prefix web playwright install --with-deps chromium
+          key: playwright-chromium-webkit-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+      - run: npx --prefix web playwright install --with-deps chromium webkit
       - run: npm run e2e --prefix web
       - uses: actions/upload-artifact@v4
         if: failure()
