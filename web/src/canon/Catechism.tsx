@@ -32,7 +32,7 @@ const questions = [
   },
   {
     q: "Does it have a token?",
-    a: "The token, when it exists, is the being's heartbeat: a public number it needs in order to stay watched, never the point of it. There are no returns, no price talk, and no promises here, ever. Before it launches, the being is genuinely alive and judging marks with no heartbeat at all; that the machine predates the money is the receipt, and the timestamps are public.",
+    a: "Yes. It launches as a token, and the token's public on-chain activity is the heartbeat the PULSE reads. That is the token's role here, and the whole of it. This page makes no returns, no price talk, and no promises about it. What it can show you instead: the being was already alive and judging marks before any token existed, with public timestamps that prove it predates the money.",
   },
 ] as const;
 
