@@ -95,7 +95,11 @@ export function imprintHold(gesture: ImprintGesture): number {
 // signed trace in [-1, 1]. Too few samples (a keyboard gesture, an instant tap) means no trace,
 // and the caller falls back to seeded jitter -- the mark never fabricates a tremor it did not see.
 const TREMOR_MIN_SAMPLES = 8;
-const TREMOR_FULL_DRIFT_PX = 2.5;
+// The involuntary drift of a held hand is small (sub-pixel to ~2px on a trackpad); normalizing by
+// a tight full-scale keeps that genuine micro-movement legible in the etched line instead of
+// flattening it. A mouse held perfectly still produces no samples at all and correctly falls back
+// to the seed — the mark never invents a tremor it did not observe.
+const TREMOR_FULL_DRIFT_PX = 1.6;
 
 export function tremorTrace(samples: readonly GestureSample[] | undefined): number[] | null {
   if (samples === undefined || samples.length < TREMOR_MIN_SAMPLES) return null;

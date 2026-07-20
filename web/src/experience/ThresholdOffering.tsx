@@ -885,6 +885,11 @@ export default function ThresholdOffering({
           consent-relevant line ("your mark is public... not given back") deserves to be read
           before committing, not just after. Shown whenever the seal itself is; the rest of this
           block (wallet choice etc.) stays gated to interactionOpen, since that's a later decision. */}
+      {showSeal && phase !== "holding" && preview === null && (
+        <p data-seal-hint className="font-machine text-[0.7rem] tracking-wide text-ink-faded opacity-70">
+          {copy.sealHint}
+        </p>
+      )}
       {(showSeal || modalOpen) && (
         <p id="threshold-terms" data-threshold-terms className="max-w-[52ch] font-machine text-xs leading-relaxed text-ink-faded">
           {copy.markExplainer} {copy.tosLine}
