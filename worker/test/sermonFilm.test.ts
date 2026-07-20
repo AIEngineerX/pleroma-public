@@ -2,16 +2,23 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { renderSermonFilms, sermonFilmKey } from "../src/sermonFilm";
 import { silentImagine } from "../src/imagine";
+import type { VideoVendor } from "../src/imagine";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
+
+// Mirrors imagine.test.ts's pendingVendor precedent: a hand-rolled vendor whose poll never
+// resolves, used to freeze a render at 'rendering' so the intermediate state is observable
+// without relying on same-tick skip behavior (renderSermonFilms kicks and polls unconditionally
+// in one call, same as dream.ts's renderDreams).
+const pendingVendor: VideoVendor = { name: "pending", async start() { return "req-pending"; }, async poll() { return { state: "pending" }; } };
 
 describe("sermon film render lifecycle (silent vendor: real state machine, real R2 bytes)", () => {
   it("kicks a pending film, then polls it to rendered with the mp4 in R2", async () => {
     await env.DB.prepare(
       `INSERT INTO sermon_films (rite_date, video_prompt, created_at) VALUES ('2026-07-27', 'a prompt', 1000)`
     ).run();
-    await renderSermonFilms(env, 2000, silentImagine()); // kick: pending -> rendering
+    await renderSermonFilms(env, 2000, pendingVendor); // kick: pending -> rendering (vendor holds it there)
     let row = await env.DB.prepare(`SELECT status FROM sermon_films WHERE rite_date='2026-07-27'`)
       .first<{ status: string }>();
     expect(row?.status).toBe("rendering");

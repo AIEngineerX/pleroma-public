@@ -41,7 +41,6 @@ export async function renderSermonFilms(
   ).all<{ rite_date: string; render_request_id: string | null; render_started_at: number | null }>()).results;
   for (const f of rendering) {
     if (!f.render_request_id) continue;
-    if (f.render_started_at === now) continue; // skip renders started this same tick
     const result = await vendor.poll(f.render_request_id).catch(() => null);
     if (!result) continue;
     if (result.state === "done" && result.bytes) {
