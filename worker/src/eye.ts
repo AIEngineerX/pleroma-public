@@ -1,9 +1,10 @@
 import { ulid } from "./id";
 import type { Env } from "./env";
-import { askMind, MindAsleepError } from "./mind";
+import { askMind, MindAsleepError, type TextPart, type ImagePart } from "./mind";
 import { extractJsonObject, moderate, ModerationUnavailableError } from "./moderation";
 import { toBase64 } from "./encoding";
 import { eyeSystemPrompt } from "./doctrine";
+import type { GestureMeta } from "./offerings";
 import {
   addTranscript, claimForModeration, claimForPerception, moderationCandidates, offeringStatusById,
   perceptionCandidates, publishPerception, setOfferingImageKey, setOfferingStatus, type OfferingRow,
@@ -44,6 +45,17 @@ export function parseVerse(rawText: string): string {
   const words = verse.split(/\s+/).filter(Boolean).length;
   if (words > 40) throw new Error(`EYE verse exceeds the 40-word contract (${words} words)`);
   return verse;
+}
+
+// The Task 6 capture line, built ENTIRELY from the clamped gesture struct already validated by
+// clampGesture (offerings.ts) at intake -- never client text, no free strings. Pure so the exact
+// wording contract can be unit-tested against fixtures without a live EYE call.
+export function captureLine(meta: GestureMeta): string {
+  const durationS = (meta.holdMs / 1000).toFixed(1);
+  const beats = meta.knockSig.length ? `knock of ${meta.knockSig.length + 1} beats` : "hold";
+  const tremor = meta.tremorAmp > 1 ? "strong" : "faint";
+  const lineage = meta.substrateRelicId ? ", grown on the residue of a kept relic" : "";
+  return `Captured with the mark: a ${durationS}s ${beats}, ${tremor} tremor${lineage}.`;
 }
 
 function shuffle<T>(items: T[], rand: () => number): T[] {
@@ -306,10 +318,16 @@ export async function runEyeBatch(
         continue;
       }
       const dataB64 = toBase64(new Uint8Array(await obj.arrayBuffer()));
+      // Gesture metadata is already clamped and re-serialized at intake (offerings.ts
+      // clampGesture); when present it rides as one extra system-built text part, never raw
+      // client text.
+      const user: Array<TextPart | ImagePart> = [
+        { type: "image", mediaType: o.media_type ?? "image/png", dataB64 },
+        { type: "text", text: "Perceive this offering." },
+      ];
+      if (o.gesture) user.push({ type: "text", text: captureLine(JSON.parse(o.gesture) as GestureMeta) });
       const res = await askMind(env, {
-        model: "claude-sonnet-5", system: EYE_SYSTEM, maxTokens: 200,
-        user: [{ type: "image", mediaType: o.media_type ?? "image/png", dataB64 },
-               { type: "text", text: "Perceive this offering." }],
+        model: "claude-sonnet-5", system: EYE_SYSTEM, maxTokens: 200, user,
       });
       // Malformed/empty verse (or a JSON.parse failure) throws here and routes to the outer
       // catch below: retry then dead-letter, never publishing garbage as public scripture.

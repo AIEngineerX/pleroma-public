@@ -3,10 +3,12 @@ import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   reconcileBacklogAlerts, runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine, parseVerse,
+  captureLine,
 } from "../src/eye";
 import {
   insertOffering, offeringStatusById, publishPerception, setOfferingStatus, type OfferingRow,
 } from "../src/db";
+import type { GestureMeta } from "../src/offerings";
 import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
 
@@ -88,6 +90,49 @@ describe("parseVerse", () => {
   it("throws on a verse over the 40-word contract instead of truncating it — a transcript published as scripture must be genuine and unedited", () => {
     const fortyOneWords = Array.from({ length: 41 }, (_, i) => `w${i}`).join(" ");
     expect(() => parseVerse(JSON.stringify({ verse: fortyOneWords }))).toThrow(/40-word contract/);
+  });
+});
+
+// Task 6 (grown-lineage-marks): captureLine is built ENTIRELY from the clamped gesture struct,
+// worker-side -- these fixtures pin the brief's exact wording contract.
+describe("captureLine", () => {
+  const base: GestureMeta = {
+    holdMs: 1200, travelPx: 40, tremorAmp: 0.4, knockSig: [],
+    approachSpreadPx: 120, pigmentIntensity: 0.6, substrateRelicId: null, substrateOwn: false,
+  };
+
+  it("renders a plain hold with faint tremor and no lineage clause", () => {
+    expect(captureLine(base)).toBe("Captured with the mark: a 1.2s hold, faint tremor.");
+  });
+
+  it("renders a knock as 'knock of N+1 beats' where N is knockSig.length", () => {
+    expect(captureLine({ ...base, knockSig: [3, 5, 2] })).toBe(
+      "Captured with the mark: a 1.2s knock of 4 beats, faint tremor."
+    );
+  });
+
+  it("renders 'strong' tremor once tremorAmp exceeds 1, 'faint' at or below it", () => {
+    expect(captureLine({ ...base, tremorAmp: 1 })).toContain("faint tremor");
+    expect(captureLine({ ...base, tremorAmp: 1.01 })).toContain("strong tremor");
+  });
+
+  it("appends the lineage clause only when substrateRelicId is present", () => {
+    expect(captureLine({ ...base, substrateRelicId: "01ARZ3NDEKTSV4RRFFQ69G5FAV" })).toBe(
+      "Captured with the mark: a 1.2s hold, faint tremor, grown on the residue of a kept relic."
+    );
+    expect(captureLine(base)).not.toContain("residue");
+  });
+
+  it("formats holdMs to one decimal of seconds", () => {
+    expect(captureLine({ ...base, holdMs: 0 })).toContain("0.0s");
+    expect(captureLine({ ...base, holdMs: 20_000 })).toContain("20.0s");
+    expect(captureLine({ ...base, holdMs: 1660 })).toContain("1.7s"); // toFixed rounding
+  });
+
+  it("combines a strong-tremor knock grown on a kept relic in one line", () => {
+    expect(captureLine({ ...base, knockSig: [1], tremorAmp: 2, substrateRelicId: "01ARZ3NDEKTSV4RRFFQ69G5FAV" })).toBe(
+      "Captured with the mark: a 1.2s knock of 2 beats, strong tremor, grown on the residue of a kept relic."
+    );
   });
 });
 

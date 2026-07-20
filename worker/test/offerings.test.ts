@@ -5,6 +5,7 @@ import { base58 } from "@scure/base";
 import { offeringMessage } from "../src/signature";
 import { offeringBySha } from "../src/db";
 import { IP_LIMIT } from "../src/ratelimit";
+import { clampGesture, type GestureMeta } from "../src/offerings";
 import { applyMigrations } from "./helpers";
 
 beforeAll(() => applyMigrations(env.DB));
@@ -49,6 +50,89 @@ async function submitWithNonce(bytes: Uint8Array, nonce: string, expiresAt: numb
   form.set("expires_at", String(expiresAt));
   return SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
 }
+
+// A fully valid gesture, matching exactly what web/src/experience/ThresholdOffering.tsx's
+// buildGestureSummary sends: { holdMs, travelPx, tremorAmp, knockSig, approachSpreadPx,
+// pigmentIntensity, substrateRelicId, substrateOwn }.
+const VALID_GESTURE: GestureMeta = {
+  holdMs: 1200, travelPx: 40, tremorAmp: 0.4, knockSig: [3, 5, 2],
+  approachSpreadPx: 120, pigmentIntensity: 0.6, substrateRelicId: null, substrateOwn: false,
+};
+
+describe("clampGesture", () => {
+  it("accepts a fully valid gesture and re-serializes it unchanged", () => {
+    expect(clampGesture(JSON.stringify(VALID_GESTURE))).toEqual(VALID_GESTURE);
+  });
+
+  it("accepts every field at its boundary value (0, and each field's max)", () => {
+    const boundary: GestureMeta = {
+      holdMs: 20_000, travelPx: 1000, tremorAmp: 10, knockSig: Array(8).fill(10),
+      approachSpreadPx: 2000, pigmentIntensity: 1, substrateRelicId: "01ARZ3NDEKTSV4RRFFQ69G5FAV", substrateOwn: true,
+    };
+    expect(clampGesture(JSON.stringify(boundary))).toEqual(boundary);
+  });
+
+  it("accepts a gesture with substrateRelicId null and an empty knockSig (a hold, not a knock)", () => {
+    const hold: GestureMeta = {
+      holdMs: 0, travelPx: 0, tremorAmp: 0, knockSig: [],
+      approachSpreadPx: 0, pigmentIntensity: 0, substrateRelicId: null, substrateOwn: false,
+    };
+    expect(clampGesture(JSON.stringify(hold))).toEqual(hold);
+  });
+
+  it("returns null for null/empty raw input", () => {
+    expect(clampGesture(null)).toBeNull();
+    expect(clampGesture("")).toBeNull();
+  });
+
+  it("returns null for unparseable JSON", () => {
+    expect(clampGesture("not json")).toBeNull();
+  });
+
+  it("returns null when a numeric field arrives as a string (hostile type confusion)", () => {
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, holdMs: "1200" }))).toBeNull();
+  });
+
+  it("returns null for an oversized numeric field beyond its clamp range", () => {
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, holdMs: 999_999 }))).toBeNull();
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, tremorAmp: 10.0001 }))).toBeNull();
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, pigmentIntensity: 1.5 }))).toBeNull();
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, holdMs: -1 }))).toBeNull();
+  });
+
+  it("returns null for a knockSig with more than 8 elements", () => {
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, knockSig: Array(9).fill(1) }))).toBeNull();
+  });
+
+  it("returns null when a knockSig element is out of its 0..10 range or non-numeric", () => {
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, knockSig: [1, 2, 11] }))).toBeNull();
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, knockSig: [1, "2", 3] }))).toBeNull();
+  });
+
+  it("returns null for a script-injection attempt in substrateRelicId", () => {
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, substrateRelicId: "<script>alert(1)</script>" }))).toBeNull();
+  });
+
+  it("returns null for a substrateRelicId of the wrong length or alphabet (not the 26-char Crockford ULID shape)", () => {
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, substrateRelicId: "01ARZ3NDEKTSV4RRFFQ69G5FA" }))).toBeNull(); // 25 chars
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, substrateRelicId: "01ARZ3NDEKTSV4RRFFQ69G5FAI" }))).toBeNull(); // contains 'I'
+  });
+
+  it("returns null when substrateOwn is not a boolean", () => {
+    expect(clampGesture(JSON.stringify({ ...VALID_GESTURE, substrateOwn: "true" }))).toBeNull();
+  });
+
+  it("returns null when a required field is missing entirely", () => {
+    const { holdMs: _holdMs, ...rest } = VALID_GESTURE;
+    expect(clampGesture(JSON.stringify(rest))).toBeNull();
+  });
+
+  it("returns null when the payload is a JSON array or primitive, not an object", () => {
+    expect(clampGesture(JSON.stringify([1, 2, 3]))).toBeNull();
+    expect(clampGesture(JSON.stringify("just a string"))).toBeNull();
+    expect(clampGesture(JSON.stringify(42))).toBeNull();
+  });
+});
 
 describe("offering intake", () => {
   // NOTE: merged with the "rejects a duplicate image" case. @cloudflare/vitest-pool-workers
@@ -271,6 +355,39 @@ describe("offering intake", () => {
     const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
     expect(res.status).toBe(400);
     expect(await offeringBySha(env.DB, await sha256hex(bytes))).toBeNull();
+  });
+
+  it("stores the re-serialized clamped gesture struct (never the raw client string) when the gesture field is valid", async () => {
+    const bytes = new Uint8Array([...PNG, 30, 1]); // unique bytes -> unique sha
+    const form = new FormData();
+    form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+    // Deliberately unsorted/differently-formatted from VALID_GESTURE's JSON.stringify order --
+    // proves the stored value is the worker's own re-serialization, not an echo of the raw string.
+    form.set("gesture", JSON.stringify({ ...VALID_GESTURE, holdMs: 900 }));
+    const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
+    expect(res.status).toBe(201);
+    const row = await offeringBySha(env.DB, await sha256hex(bytes));
+    expect(row?.gesture).not.toBeNull();
+    expect(JSON.parse(row!.gesture!)).toEqual({ ...VALID_GESTURE, holdMs: 900 });
+  });
+
+  it("accepts the offering and stores gesture NULL when the gesture field is hostile (never rejects an offering over metadata)", async () => {
+    const bytes = new Uint8Array([...PNG, 30, 2]); // unique bytes -> unique sha
+    const form = new FormData();
+    form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+    form.set("gesture", JSON.stringify({ ...VALID_GESTURE, substrateRelicId: "<script>alert(1)</script>" }));
+    const res = await SELF.fetch("http://x/api/offerings", { method: "POST", body: form });
+    expect(res.status).toBe(201);
+    const row = await offeringBySha(env.DB, await sha256hex(bytes));
+    expect(row?.gesture).toBeNull();
+  });
+
+  it("accepts the offering and stores gesture NULL when no gesture field is sent at all", async () => {
+    const bytes = new Uint8Array([...PNG, 30, 3]); // unique bytes -> unique sha
+    const res = await submit(bytes, false);
+    expect(res.status).toBe(201);
+    const row = await offeringBySha(env.DB, await sha256hex(bytes));
+    expect(row?.gesture).toBeNull();
   });
 
   it("rate-limits the route: the IP_LIMIT+1-th offering from one IP is 429", async () => {

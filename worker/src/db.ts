@@ -14,6 +14,10 @@ export interface OfferingRow {
   nonce?: string | null;
   // Set by claimForModeration/claimForPerception; NULL until a tick claims the row.
   claimed_at?: number | null;
+  // The web Threshold's honest gesture capture (Task 6, grown-lineage-marks), stored as the
+  // RE-SERIALIZED, worker-clamped JSON struct (never the raw client string) -- see
+  // clampGesture in offerings.ts. NULL when absent or when the raw payload failed any clamp.
+  gesture?: string | null;
 }
 
 export interface TranscriptRow {
@@ -25,11 +29,11 @@ export interface TranscriptRow {
 
 function offeringInsertStmt(db: D1Database, o: OfferingRow): D1PreparedStatement {
   return db.prepare(
-    `INSERT INTO offerings (id, wallet, sig, image_key, sha256, status, attempts, created_at, media_type, nonce)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
+    `INSERT INTO offerings (id, wallet, sig, image_key, sha256, status, attempts, created_at, media_type, nonce, gesture)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
   ).bind(
     o.id, o.wallet, o.sig, o.image_key, o.sha256, o.status, o.attempts, o.created_at,
-    o.media_type ?? "image/png", o.nonce ?? null,
+    o.media_type ?? "image/png", o.nonce ?? null, o.gesture ?? null,
   );
 }
 

@@ -8,6 +8,61 @@ import { checkRate, WINDOW_MS, WALLET_LIMIT, IP_LIMIT } from "./ratelimit";
 const MAX_BYTES = 512 * 1024;
 const TYPES = new Set(["image/png", "image/webp"]);
 
+// The web Threshold's honest gesture capture (Task 6, grown-lineage-marks): every field is a
+// channel the client's own hand actually produced, but the client is untrusted, so every value
+// is range-checked here before it ever rides an offering or reaches EYE. Any single violation
+// discards the WHOLE struct (return null) rather than the individual field -- the offering is
+// still accepted; gesture metadata is simply absent, never a reason to reject a genuine mark.
+export interface GestureMeta {
+  holdMs: number;
+  travelPx: number;
+  tremorAmp: number;
+  knockSig: number[];
+  approachSpreadPx: number;
+  pigmentIntensity: number;
+  substrateRelicId: string | null;
+  substrateOwn: boolean;
+}
+
+// Crockford base32 (no I/L/O/U), 26 chars -- the ULID shape relic ids are minted in (see id.ts).
+const RELIC_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
+function inRange(n: unknown, min: number, max: number): boolean {
+  return typeof n === "number" && Number.isFinite(n) && n >= min && n <= max;
+}
+
+export function clampGesture(raw: string | null): GestureMeta | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const g = parsed as Record<string, unknown>;
+
+  if (!inRange(g.holdMs, 0, 20_000)) return null;
+  if (!inRange(g.travelPx, 0, 1000)) return null;
+  if (!inRange(g.tremorAmp, 0, 10)) return null;
+  if (!Array.isArray(g.knockSig) || g.knockSig.length > 8 || !g.knockSig.every(n => inRange(n, 0, 10))) return null;
+  if (!inRange(g.approachSpreadPx, 0, 2000)) return null;
+  if (!inRange(g.pigmentIntensity, 0, 1)) return null;
+  if (g.substrateRelicId !== null && !(typeof g.substrateRelicId === "string" && RELIC_ID_RE.test(g.substrateRelicId))) return null;
+  if (typeof g.substrateOwn !== "boolean") return null;
+
+  return {
+    holdMs: g.holdMs as number,
+    travelPx: g.travelPx as number,
+    tremorAmp: g.tremorAmp as number,
+    knockSig: g.knockSig as number[],
+    approachSpreadPx: g.approachSpreadPx as number,
+    pigmentIntensity: g.pigmentIntensity as number,
+    substrateRelicId: g.substrateRelicId as string | null,
+    substrateOwn: g.substrateOwn,
+  };
+}
+
 export async function handleOffering(env: Env, form: FormData, clientIp: string): Promise<Response> {
   const image = form.get("image");
   if (!(image instanceof File) || !TYPES.has(image.type)) {
@@ -57,6 +112,11 @@ export async function handleOffering(env: Env, form: FormData, clientIp: string)
     return Response.json({ error: "too many offerings; rest a moment" }, { status: 429 });
   }
 
+  // Never trust the client's raw gesture string; store only the re-serialized, clamped struct.
+  // A hostile/malformed payload clamps to null -- the offering below is still accepted.
+  const rawGesture = form.get("gesture");
+  const clampedGesture = clampGesture(typeof rawGesture === "string" ? rawGesture : null);
+
   const id = ulid();
   // Uploads are quarantined until a moderation ALLOW promotes them to offerings/ (see
   // eye.ts). Rejects purge the quarantine object and are never kept in permanent R2. The R2
@@ -70,6 +130,7 @@ export async function handleOffering(env: Env, form: FormData, clientIp: string)
       id, wallet, sig, image_key: key, sha256, media_type: image.type,
       status: "pending", attempts: 0, created_at: Date.now(), perceived_at: null,
       nonce: wallet ? nonce : null,
+      gesture: clampedGesture ? JSON.stringify(clampedGesture) : null,
     }, wallet);
   } catch (e) {
     if (e instanceof Error && e.message.includes("UNIQUE")) {
