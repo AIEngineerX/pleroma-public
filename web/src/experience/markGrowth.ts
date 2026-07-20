@@ -167,8 +167,10 @@ function mixSeedWord(value: number): number {
   return (value ^ (value >>> 15)) >>> 0;
 }
 
-// Byte-identical to gestureRandom's own seed construction.
-function seedRngState(gesture: ImprintGesture): RngState {
+// Byte-identical to gestureRandom's own seed construction. Exported (minimally, alongside
+// drawRandom below) solely so a test can pin the byte-identity claim above against
+// thresholdImprint's own gestureRandom instead of only asserting it in a comment.
+export function seedRngState(gesture: ImprintGesture): RngState {
   if (gesture.seed.length !== 4) throw new TypeError("an imprint seed has exactly four words");
   const inputs = [
     Math.round(gesture.start.x * 1_000),
@@ -188,8 +190,9 @@ function seedRngState(gesture: ImprintGesture): RngState {
 }
 
 // One xorshift128 draw as a pure function -- current state in, [0,1) value and next state out --
-// byte-identical to gestureRandom's closure body, just without the shared mutable cell.
-function drawRandom(state: RngState): { value: number; state: RngState } {
+// byte-identical to gestureRandom's closure body, just without the shared mutable cell. Exported
+// for the same test-pinning reason as seedRngState above.
+export function drawRandom(state: RngState): { value: number; state: RngState } {
   const t = (state[0] ^ (state[0] << 11)) >>> 0;
   const s3 = (state[3] ^ (state[3] >>> 19) ^ t ^ (t >>> 8)) >>> 0;
   return { value: s3 / 0x1_0000_0000, state: [state[1], state[2], state[3], s3] };

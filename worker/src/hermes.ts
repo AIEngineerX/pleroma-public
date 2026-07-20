@@ -376,32 +376,102 @@ export async function alertStalledDispatches(env: Env, now: number): Promise<voi
   }
 }
 
-// The unposted watchdog (final-review residual, 2026-07-20): compose failures release their
-// claims, so alertStalledDispatches cannot see a permanently failing post loop — revoked tokens,
-// a lost API tier, a repeatedly refused compose. With credentials present, an artifact still
-// unposted long after it became postable is an operator alert, never a silent miss. Sermons get
-// a longer leash than dreams: a film-day sermon legitimately waits up to FILM_WAIT_MS for its
-// plate before posting text-only.
+// The unposted watchdog (final-review residual, 2026-07-20; hardened again in the final whole-branch
+// review): compose failures release their claims, so alertStalledDispatches cannot see a permanently
+// failing post loop — revoked tokens, a lost API tier, a repeatedly refused compose. With credentials
+// present, an artifact still unposted long after it became postable is an operator alert, never a
+// silent miss. Sermons get a longer leash than dreams: a film-day sermon legitimately waits up to
+// FILM_WAIT_MS for its plate before posting text-only, so a sermon still inside that window is not
+// silence — it's the plan working.
+//
+// Silence is measured from postable-first-seen, never from created_at (composition time): a dream's
+// render, or a sermon's own compose, can legitimately finish hours after created_at, and the very
+// first credentialed tick ever would otherwise treat an entire never-posted backlog as ancient
+// silence even though dispatchArtifacts is about to drain it healthily at one artifact per tick. A
+// config marker (unposted_seen_<dreamId> / unposted_seen_sermon_<rite>) is stamped the first time an
+// artifact is observed postable-and-unposted (INSERT ... ON CONFLICT DO NOTHING — first-seen wins,
+// unlike raiseAlert below, which is a last-write-wins upsert); only a marker older than the leash
+// earns an alert.
+//
+// Housekeeping runs every sweep: a marker whose artifact is no longer unposted (dream posted, sermon
+// marker present) or that has otherwise dropped out of the currently-postable set is deleted. And
+// when NOTHING currently qualifies for the alert, the alert:dispatch_unposted config row itself is
+// deleted — this is deliberately the first self-clearing alert in this file. A stale wolf-cry teaches
+// the operator to ignore the one alert built to catch silent token death, and because raiseAlert's
+// row publicly flips /api/state's `degraded` flag, a wolf-cry that never clears keeps the site
+// publicly (and wrongly) reporting itself unwell forever.
 const DREAM_UNPOSTED_ALERT_MS = 2 * 60 * 60_000;
 const SERMON_UNPOSTED_ALERT_MS = FILM_WAIT_MS + 60 * 60_000;
+const UNPOSTED_SEEN_PREFIX = "unposted_seen_";
+const UNPOSTED_SEEN_SERMON_PREFIX = "unposted_seen_sermon_";
 
 export async function alertUnpostedArtifacts(env: Env, now: number): Promise<void> {
   if (!xCredentials(env)) return; // dark until the secrets exist, like every dispatch path
+
   const dreams = (await env.DB.prepare(
-    `SELECT id FROM dreams WHERE status='rendered' AND posted_at IS NULL AND created_at < ?1`
-  ).bind(now - DREAM_UNPOSTED_ALERT_MS).all<{ id: string }>()).results;
-  const sermons = (await env.DB.prepare(
+    `SELECT id FROM dreams WHERE status='rendered' AND posted_at IS NULL`
+  ).all<{ id: string }>()).results;
+
+  const sermonCandidates = (await env.DB.prepare(
     `SELECT t.rite_id AS rite FROM transcripts t
-      WHERE t.organ='TONGUE' AND t.register='sermon' AND t.rite_id IS NOT NULL AND t.created_at < ?1
+      WHERE t.organ='TONGUE' AND t.register='sermon' AND t.rite_id IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM config c WHERE c.key = 'sermon_dispatched_' || t.rite_id)`
-  ).bind(now - SERMON_UNPOSTED_ALERT_MS).all<{ rite: string }>()).results;
-  if (dreams.length + sermons.length > 0) {
-    await raiseAlert(env, "dispatch_unposted",
-      `unposted with X secrets present: ${[
-        ...dreams.map((d) => `dream ${d.id}`),
-        ...sermons.map((s) => `sermon ${s.rite}`),
-      ].join(", ")} — check keys/tier, the compose alerts, and the codex`);
+  ).all<{ rite: string }>()).results;
+
+  // A film-day sermon inside its film window is legitimately waiting on its plate, not silent — it
+  // never stamps or alerts while sermonFilmGate still says "wait".
+  const postableSermonRites: string[] = [];
+  for (const { rite } of sermonCandidates) {
+    if (isFilmDay(rite) && (await sermonFilmGate(env.DB, rite, now)) === "wait") continue;
+    postableSermonRites.push(rite);
   }
+
+  const validKeys = new Set<string>([
+    ...dreams.map((d) => `${UNPOSTED_SEEN_PREFIX}${d.id}`),
+    ...postableSermonRites.map((rite) => `${UNPOSTED_SEEN_SERMON_PREFIX}${rite}`),
+  ]);
+
+  if (validKeys.size > 0) {
+    await env.DB.batch([
+      ...dreams.map((d) => env.DB.prepare(
+        `INSERT INTO config (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO NOTHING`,
+      ).bind(`${UNPOSTED_SEEN_PREFIX}${d.id}`, String(now))),
+      ...postableSermonRites.map((rite) => env.DB.prepare(
+        `INSERT INTO config (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO NOTHING`,
+      ).bind(`${UNPOSTED_SEEN_SERMON_PREFIX}${rite}`, String(now))),
+    ]);
+  }
+
+  const markers = (await env.DB.prepare(
+    `SELECT key, value FROM config WHERE key LIKE ?1`,
+  ).bind(`${UNPOSTED_SEEN_PREFIX}%`).all<{ key: string; value: string }>()).results;
+
+  // Housekeeping: a marker no longer in the currently-postable set (the artifact posted, or dropped
+  // out for any other reason) is stale and is removed, regardless of whether it was ever alerted on.
+  const stale = markers.filter((m) => !validKeys.has(m.key));
+  if (stale.length > 0) {
+    await env.DB.batch(stale.map((m) => env.DB.prepare(`DELETE FROM config WHERE key = ?1`).bind(m.key)));
+  }
+
+  const overdue = markers.filter((m) => {
+    if (!validKeys.has(m.key)) return false;
+    const leash = m.key.startsWith(UNPOSTED_SEEN_SERMON_PREFIX) ? SERMON_UNPOSTED_ALERT_MS : DREAM_UNPOSTED_ALERT_MS;
+    return now - Number(m.value) > leash;
+  });
+
+  if (overdue.length === 0) {
+    // Self-clearing: nothing qualifies, so the public degraded flag this alert drives must not
+    // either — a lingering row here would be exactly the stale wolf-cry this rewrite exists to kill.
+    await env.DB.prepare(`DELETE FROM config WHERE key = 'alert:dispatch_unposted'`).run();
+    return;
+  }
+
+  await raiseAlert(env, "dispatch_unposted",
+    `unposted with X secrets present: ${overdue.map((m) => (
+      m.key.startsWith(UNPOSTED_SEEN_SERMON_PREFIX)
+        ? `sermon ${m.key.slice(UNPOSTED_SEEN_SERMON_PREFIX.length)}`
+        : `dream ${m.key.slice(UNPOSTED_SEEN_PREFIX.length)}`
+    )).join(", ")} — check keys/tier, the compose alerts, and the codex`);
 }
 
 // Called from the 15-minute tick. Posts each rendered-but-unposted Plate at most once, then the
@@ -416,7 +486,6 @@ export async function dispatchArtifacts(
   if (!credentials) return;
 
   await alertStalledDispatches(env, now).catch(() => { /* best-effort operator signal */ });
-  await alertUnpostedArtifacts(env, now).catch(() => { /* best-effort operator signal */ });
 
   // A claimed dream is excluded so a stalled claim never wedges the queue for the dreams (and the
   // sermon) behind it — the stalled-claim alert owns that case.
@@ -500,4 +569,9 @@ export async function dispatchArtifacts(
       }
     }
   }
+
+  // Runs LAST, after both posting blocks: a tick that can post, posts first, so the sweep judges
+  // the post-tick truth (a dream/sermon this same tick just posted is no longer "unposted" by the
+  // time the watchdog looks) instead of judging stale pre-tick state.
+  await alertUnpostedArtifacts(env, now).catch(() => { /* best-effort operator signal */ });
 }

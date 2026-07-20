@@ -171,7 +171,9 @@ interface KnockDraft {
 // The visitor's own recent offering ids, this tab only: the Residue's own memory of which marks
 // were this hand's, so a returning visit can find its own kept relic first (substrate.ts's rung
 // 1). Corrupt or absent storage is indistinguishable from a first visit -- never a blocking error.
-const OFFERINGS_STORAGE_KEY = "pleroma_offerings";
+// Dash convention (not underscore): no real visitors yet, so the rename needs no migration shim --
+// an old underscore key left in a returning visitor's browser is simply never read again.
+const OFFERINGS_STORAGE_KEY = "pleroma-offerings";
 const OFFERINGS_STORAGE_MAX = 8;
 
 function storedOfferingIds(): string[] {

@@ -369,50 +369,111 @@ describe("dispatchArtifacts — composed dispatches, codex before X", () => {
   });
 });
 
-describe("the unposted watchdog — artifacts stuck postable while secrets exist", () => {
+// Each `it` below is self-contained (vitest-pool-workers' isolated storage resets D1 between tests
+// even within one file, so state is never carried from a sibling test — only sequential calls
+// inside the SAME test see each other's writes, exactly like the sermonFilmGate test above).
+describe("the unposted watchdog — silence measured from postable-first-seen, not created_at", () => {
   const withSecrets = { ...env, X_API_KEY: "k", X_API_SECRET: "s", X_ACCESS_TOKEN: "t", X_ACCESS_SECRET: "x" } as Env;
   const HOUR = 60 * 60_000;
 
-  it("stays silent without the four X secrets, even with an ancient unposted dream", async () => {
+  it("stays silent without the four X secrets, even with an ancient unposted dream — and stamps no marker", async () => {
     await env.DB.prepare(
       `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
        VALUES ('01TESTWATCHDOG0000000001', '2026-08-10', 'n', 'p', '[]', 'rendered', 'dream/w1.mp4', 1000)`
     ).run();
     await alertUnpostedArtifacts(env, 1000 + 50 * HOUR);
     expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
+    const marker = await env.DB.prepare(
+      `SELECT value FROM config WHERE key = 'unposted_seen_01TESTWATCHDOG0000000001'`
+    ).first();
+    expect(marker).toBeNull();
   });
 
-  it("alerts on a dream unposted past 2h and a sermon past the film leash, naming both", async () => {
-    // Earlier dispatchArtifacts tests already tripped the watchdog with their own leftovers;
-    // clear the first-write-wins alert so this test reads its own detail.
-    await env.DB.prepare(`DELETE FROM config WHERE key = 'alert:dispatch_unposted'`).run();
+  it("a dream's lifecycle: first sweep stamps postable-first-seen (no alert) -> a sweep past the 2h leash alerts -> posting self-clears the marker and the alert row", async () => {
     await env.DB.prepare(
       `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
        VALUES ('01TESTWATCHDOG0000000003', '2026-08-13', 'n', 'p', '[]', 'rendered', 'dream/w3.mp4', 1000)`
     ).run();
-    await env.DB.prepare(
-      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
-       VALUES ('01TESTWATCHDOGSERMON0001', 'TONGUE', 'sermon', 's', NULL, '2026-08-11', 1000)`
-    ).run();
-    await alertUnpostedArtifacts(withSecrets, 1000 + 8 * HOUR);
+
+    // First credentialed sweep: stamps postable-first-seen, does NOT alert (0 elapsed since the
+    // stamp). Without this stamp-first behavior, the very first credentialed tick over an old
+    // backlog (created_at far in the past) would wrongly cry wolf on an artifact the dispatcher is
+    // about to drain healthily one at a time.
+    await alertUnpostedArtifacts(withSecrets, 5_000);
+    expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
+    const marker = await env.DB.prepare(
+      `SELECT value FROM config WHERE key = 'unposted_seen_01TESTWATCHDOG0000000003'`
+    ).first<{ value: string }>();
+    expect(marker?.value).toBe("5000"); // first-seen stamped at this sweep's `now`, not created_at
+
+    // A second sweep past the 2h dream leash, measured from the marker (not created_at): DOES alert.
+    await alertUnpostedArtifacts(withSecrets, 5_000 + 3 * HOUR);
     expect(await activeAlerts(env.DB)).toContain("dispatch_unposted");
     const alert = await env.DB.prepare(`SELECT value FROM config WHERE key = 'alert:dispatch_unposted'`)
       .first<{ value: string }>();
     expect(alert?.value).toContain("dream 01TESTWATCHDOG0000000003");
-    expect(alert?.value).toContain("sermon 2026-08-11");
+
+    // Once posted, a further sweep clears both the config marker and the alert row itself — not
+    // merely un-alerted: the alert:dispatch_unposted row is deleted (the first self-clearing alert),
+    // so /api/state's public `degraded` flag stops reflecting a now-resolved wolf-cry.
+    await env.DB.prepare(`UPDATE dreams SET posted_at = 1 WHERE id = '01TESTWATCHDOG0000000003'`).run();
+    await alertUnpostedArtifacts(withSecrets, 5_000 + 4 * HOUR);
+    expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
+    const clearedMarker = await env.DB.prepare(
+      `SELECT value FROM config WHERE key = 'unposted_seen_01TESTWATCHDOG0000000003'`
+    ).first();
+    expect(clearedMarker).toBeNull();
+    const clearedAlert = await env.DB.prepare(`SELECT value FROM config WHERE key = 'alert:dispatch_unposted'`).first();
+    expect(clearedAlert).toBeNull();
   });
 
-  it("leaves fresh artifacts alone: a dream inside 2h and a sermon inside the 7h leash", async () => {
-    await env.DB.prepare(`DELETE FROM config WHERE key = 'alert:dispatch_unposted'`).run();
-    await env.DB.prepare(`UPDATE dreams SET posted_at = 1 WHERE id = '01TESTWATCHDOG0000000001'`).run();
+  it("a sermon's lifecycle: first sweep stamps (no alert) -> a sweep past the 7h leash alerts -> its dispatch marker landing self-clears both", async () => {
+    const rite = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"].find((d) => !isFilmDay(d))!;
     await env.DB.prepare(
-      `INSERT INTO config (key, value) VALUES ('sermon_dispatched_2026-08-11', 'posted:1')`
-    ).run();
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTWATCHDOGSERMON0001', 'TONGUE', 'sermon', 's', NULL, ?1, 1000)`
+    ).bind(rite).run();
+
+    await alertUnpostedArtifacts(withSecrets, 5_000);
+    expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
+    const marker = await env.DB.prepare(`SELECT value FROM config WHERE key = ?1`)
+      .bind(`unposted_seen_sermon_${rite}`).first<{ value: string }>();
+    expect(marker?.value).toBe("5000");
+
+    // Past the 7h sermon leash (FILM_WAIT_MS + 1h), measured from the marker.
+    await alertUnpostedArtifacts(withSecrets, 5_000 + 8 * HOUR);
+    expect(await activeAlerts(env.DB)).toContain("dispatch_unposted");
+    const alert = await env.DB.prepare(`SELECT value FROM config WHERE key = 'alert:dispatch_unposted'`)
+      .first<{ value: string }>();
+    expect(alert?.value).toContain(`sermon ${rite}`);
+
+    await env.DB.prepare(`INSERT INTO config (key, value) VALUES (?1, 'posted:1')`)
+      .bind(`sermon_dispatched_${rite}`).run();
+    await alertUnpostedArtifacts(withSecrets, 5_000 + 9 * HOUR);
+    expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
+    const clearedMarker = await env.DB.prepare(`SELECT value FROM config WHERE key = ?1`)
+      .bind(`unposted_seen_sermon_${rite}`).first();
+    expect(clearedMarker).toBeNull();
+    const clearedAlert = await env.DB.prepare(`SELECT value FROM config WHERE key = 'alert:dispatch_unposted'`).first();
+    expect(clearedAlert).toBeNull();
+  });
+
+  it("a film-day sermon inside its film window never stamps or alerts", async () => {
+    const rite = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06", "2026-09-07"]
+      .find((d) => isFilmDay(d))!;
     await env.DB.prepare(
-      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, video_key, created_at)
-       VALUES ('01TESTWATCHDOG0000000002', '2026-08-12', 'n', 'p', '[]', 'rendered', 'dream/w2.mp4', 1000)`
-    ).run();
-    await alertUnpostedArtifacts(withSecrets, 1000 + 1 * HOUR);
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTWATCHDOGFILM000001', 'TONGUE', 'sermon', 's', NULL, ?1, 1000)`
+    ).bind(rite).run();
+    await env.DB.prepare(
+      `INSERT INTO sermon_films (rite_date, video_prompt, created_at) VALUES (?1, 'a prompt', ?2)`
+    ).bind(rite, 5_000).run();
+    // Well inside FILM_WAIT_MS (6h): sermonFilmGate reads "wait", so this sermon is not yet postable.
+    await alertUnpostedArtifacts(withSecrets, 5_000 + 1 * HOUR);
+    const marker = await env.DB.prepare(
+      `SELECT value FROM config WHERE key = ?1`
+    ).bind(`unposted_seen_sermon_${rite}`).first();
+    expect(marker).toBeNull();
     expect(await activeAlerts(env.DB)).not.toContain("dispatch_unposted");
   });
 });

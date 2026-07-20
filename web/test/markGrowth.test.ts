@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { growMark, startGrowth, stepGrowth, topologyMetrics } from "../src/experience/markGrowth";
-import type { ImprintGesture } from "../src/experience/thresholdImprint";
+import { drawRandom, growMark, seedRngState, startGrowth, stepGrowth, topologyMetrics } from "../src/experience/markGrowth";
+import { gestureRandom, type ImprintGesture } from "../src/experience/thresholdImprint";
 import { IMPRINT_SIZE } from "../src/experience/thresholdImprint";
 
 const seed = new Uint32Array([1, 2, 3, 4]);
@@ -69,5 +69,26 @@ describe("growth is deterministic and gesture-sensitive", () => {
     const b = stepGrowth(s0, 6); // same input state, same result — no shared mutable PRNG
     expect(a.segments).toEqual(b.segments);
     expect(a.tips ?? null).toEqual(b.tips ?? null);
+  });
+
+  // markGrowth reimplements thresholdImprint's gestureRandom seed-mix + xorshift128 locally (as an
+  // explicit immutable state instead of a shared mutable closure, so GrowthState snapshots can copy
+  // it) and claims byte-identity with the original in its own comments. Nothing enforced that claim
+  // until now: this test IS the byte-identity contract -- if the two implementations ever drift
+  // (either one edited without the other), this is the test that catches it.
+  it("markGrowth's local PRNG (seedRngState + drawRandom) draws byte-identical to thresholdImprint's gestureRandom", () => {
+    const gesture = hold(tremorA);
+    const fromThresholdImprint = gestureRandom(gesture);
+    const viaGestureRandom = Array.from({ length: 20 }, () => fromThresholdImprint());
+
+    let state = seedRngState(gesture);
+    const viaMarkGrowth: number[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      const draw = drawRandom(state);
+      viaMarkGrowth.push(draw.value);
+      state = draw.state;
+    }
+
+    expect(viaMarkGrowth).toEqual(viaGestureRandom);
   });
 });
