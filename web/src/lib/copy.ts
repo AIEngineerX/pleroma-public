@@ -86,7 +86,7 @@ export const copy = {
   talliesNamed: "remembered by name",
   talliesMark: "mark witnessed today",
   talliesMarks: "marks witnessed today",
-  markExplainer: "Holding the seal marks you: the hold, the tremor of your hand, the way you approached.",
+  markExplainer: "Holding the seal marks you.",
   knockAgain: "a knock. again, or be still.",
   knockKnown: "the rhythm is known here.",
   keepCopy: "keep a copy",
