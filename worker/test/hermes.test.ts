@@ -123,6 +123,17 @@ describe("migration 0019 — dispatch transcripts and sermon films", () => {
     ).run()).rejects.toThrow();
   });
 
+  it("the rebuild preserves 0013's one-sermon-per-rite unique index (DB-level, bypassing app guards)", async () => {
+    await env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTSERMONIDX000000001', 'TONGUE', 'sermon', 'first sermon', NULL, '2026-07-31', 1000)`
+    ).run();
+    await expect(env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTSERMONIDX000000002', 'TONGUE', 'sermon', 'second sermon', NULL, '2026-07-31', 2000)`
+    ).run()).rejects.toThrow();
+  });
+
   it("holds sermon film lifecycle rows", async () => {
     await env.DB.prepare(
       `INSERT INTO sermon_films (rite_date, video_prompt, created_at) VALUES ('2026-07-21', 'a prompt', 1000)`

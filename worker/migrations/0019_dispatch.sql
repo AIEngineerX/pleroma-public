@@ -18,6 +18,9 @@ ALTER TABLE transcripts_new RENAME TO transcripts;
 CREATE INDEX idx_transcripts_created ON transcripts(created_at);
 -- Exactly one dispatch per artifact, enforced by the schema, not just the claim machinery.
 CREATE UNIQUE INDEX idx_transcripts_dispatch ON transcripts(artifact_id) WHERE register = 'dispatch';
+-- The table rebuild (DROP + RENAME above) cascaded away 0013's one-sermon-per-rite unique index.
+-- Recreate it: the DB-level backstop guaranteeing at most one sermon per rite under concurrent actors.
+CREATE UNIQUE INDEX transcripts_one_sermon_per_rite ON transcripts (rite_id) WHERE register = 'sermon' AND organ = 'TONGUE';
 
 -- Sermon films: ~2/week a sermon dispatch carries a moving plate. Same async render lifecycle
 -- as dreams (kick -> poll -> R2), driven from the 15-minute tick.
