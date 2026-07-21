@@ -142,6 +142,10 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
       catch { /* best-effort; never fail the tick */ }
     }
     try { await sweepNonces(env.DB); } catch { /* best-effort */ }
+    // Sermon-audio backfill: a sermon that missed its voice at the rite (vendor down, key missing)
+    // is spoken by a later tick once the vendor can. Best-effort side-channel like everything here.
+    try { const { backfillSermonAudio } = await import("./rite"); await backfillSermonAudio(env); }
+    catch { /* text-only until a later tick heals it */ }
     // Retention sweeps for the two insert-only logs (rate windows, pulse dedup events): without
     // these both tables — and the nightly backup that re-exports them — grow without bound.
     try { const { sweepRateLimits } = await import("./ratelimit"); await sweepRateLimits(env.DB, Date.now()); }

@@ -211,3 +211,40 @@ describe("rite state machine", () => {
     expect(dates.indexOf(older)).toBeLessThan(dates.indexOf(newer)); // oldest-first: older drains first
   });
 });
+
+describe("sermon-audio backfill (tick-side heal for a preached-but-silent sermon)", () => {
+  const notes = async (riteId: string) => (await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM transcripts WHERE organ = 'PRIEST' AND register = 'system'
+     AND rite_id = ?1 AND text LIKE 'sermon audio:%'`
+  ).bind(riteId).first<{ n: number }>())!.n;
+
+  it("speaks the latest silent sermon once, posts the receipt note, and is idempotent", async () => {
+    const date = "2026-07-17";
+    const at = Date.now() + 60_000; // strictly latest among all sermons this file created
+    await addTranscript(env.DB, { id: ulid(), organ: "TONGUE", register: "sermon",
+      text: "A backfill psalm, preached in silence.", offering_id: null, rite_id: date, created_at: at });
+    const { backfillSermonAudio } = await import("../src/rite");
+    await backfillSermonAudio(env);
+    expect(await notes(date)).toBe(1);
+    const note = await env.DB.prepare(
+      `SELECT text FROM transcripts WHERE organ = 'PRIEST' AND rite_id = ?1 AND text LIKE 'sermon audio:%'`
+    ).bind(date).first<{ text: string }>();
+    const key = /sermon audio:\s*(\S+)/.exec(note!.text)![1];
+    expect(key).toMatch(/^audio\/[0-9a-f]{64}\.(?:mp3|wav)$/); // the exact shape the web parser accepts
+    expect(await env.RELICS.head(key)).not.toBeNull(); // the audio genuinely exists in R2
+    await backfillSermonAudio(env); // second tick: the note exists, nothing new happens
+    expect(await notes(date)).toBe(1);
+  });
+
+  it("leaves a sermon whose rite already carries an audio note untouched", async () => {
+    const date = "2026-07-18";
+    const at = Date.now() + 120_000; // latest sermon overall, already noted
+    await addTranscript(env.DB, { id: ulid(), organ: "TONGUE", register: "sermon",
+      text: "An already-voiced psalm.", offering_id: null, rite_id: date, created_at: at });
+    await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
+      text: "sermon audio: audio/" + "ab".repeat(32) + ".mp3", offering_id: null, rite_id: date, created_at: at + 1 });
+    const { backfillSermonAudio } = await import("../src/rite");
+    await backfillSermonAudio(env);
+    expect(await notes(date)).toBe(1); // still exactly the one pre-existing note
+  });
+});

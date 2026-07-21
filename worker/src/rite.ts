@@ -124,6 +124,32 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
   }
 }
 
+// Heals a preached-but-silent sermon once a voice vendor can speak (Maker decision 2026-07-21:
+// prod ran text-only for days on a dead vendor path, and a sermon that misses its audio at the
+// rite otherwise stays silent forever, even after the vendor recovers). The LATEST sermon with
+// no PRIEST audio note is spoken through the same cache-first, cap-guarded speak() the rite
+// uses, and the same receipt line is posted — the transcript itself is never touched. Idempotent
+// (note existence + audio cache + caps); called from inside runTick's tick lock, so it cannot
+// race itself; a synth failure leaves everything exactly as it was until a later tick.
+export async function backfillSermonAudio(env: Env): Promise<void> {
+  const sermon = await env.DB.prepare(
+    `SELECT text, rite_id FROM transcripts WHERE organ = 'TONGUE' AND register = 'sermon'
+     ORDER BY created_at DESC LIMIT 1`
+  ).first<{ text: string; rite_id: string | null }>();
+  if (!sermon || sermon.rite_id === null) return;
+  const note = await env.DB.prepare(
+    `SELECT 1 FROM transcripts WHERE organ = 'PRIEST' AND register = 'system' AND rite_id = ?1
+     AND text LIKE 'sermon audio:%' LIMIT 1`
+  ).bind(sermon.rite_id).first();
+  if (note) return;
+  const { speak } = await import("./voice");
+  const said = await speak(env, sermon.text);
+  if (said.spoken || said.cached) {
+    await addTranscript(env.DB, { id: ulid(), organ: "PRIEST", register: "system",
+      text: `sermon audio: ${said.audioKey}`, offering_id: null, rite_id: sermon.rite_id, created_at: Date.now() });
+  }
+}
+
 // Runs the current phase's action then CAS-advances to the next phase. One phase per call. On a transient
 // failure it bumps the phase retry counter and leaves the rite in place (a later invocation resumes);
 // the rite moves to a terminal `failed` phase (surfaced honestly on-site) once EITHER MAX_PHASE_RETRIES is
