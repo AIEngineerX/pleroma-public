@@ -51,3 +51,20 @@ export function placePieces(relics: readonly RelicSeed[]): BecomingPiece[] {
   }
   return pieces;
 }
+
+// The newest kept relic glints — shared by SettledBecoming (the glinting piece) and Becoming.tsx
+// (the WebGL layer's glint uniform), so the two never drift on which piece is "newest". Real data
+// only (kept_at).
+export function newestOfferingId(
+  relics: readonly Pick<RelicEntry, "offering_id" | "kept_at">[],
+): string | null {
+  let newestId: string | null = null;
+  let newestAt = Number.NEGATIVE_INFINITY;
+  for (const relic of relics) {
+    if (relic.kept_at > newestAt) {
+      newestAt = relic.kept_at;
+      newestId = relic.offering_id;
+    }
+  }
+  return newestId;
+}

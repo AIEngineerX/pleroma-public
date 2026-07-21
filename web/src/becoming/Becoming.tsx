@@ -5,7 +5,7 @@ import { fetchRelics } from "../reliquary/readClient";
 import { oklchToRgb } from "../lib/a11y";
 import { pickTier, type Tier } from "../stain/stainSim";
 import { createBecomingSim, type BecomingSimHandle } from "./becomingSim";
-import { placePieces } from "./pieces";
+import { newestOfferingId, placePieces } from "./pieces";
 import SettledBecoming from "./SettledBecoming";
 
 const API_BASE = resolveApiBase(import.meta.env);
@@ -15,20 +15,6 @@ const REDUCED_MOTION =
 // The WebGL layer's ink is the same --color-ink token SettledBecoming inherits via currentColor —
 // no new color, just converted to the gamma sRGB triple a raw WebGL uniform needs (see oklchToRgb).
 const BODY_INK = oklchToRgb("oklch(0.25 0.02 60)");
-
-// The newest kept relic glints — mirrors SettledBecoming's own data-newest computation, duplicated
-// rather than exported from that file since it stays untouched here (Task 2's public behavior).
-function newestOfferingId(relics: readonly RelicEntry[]): string | null {
-  let newestId: string | null = null;
-  let newestAt = Number.NEGATIVE_INFINITY;
-  for (const relic of relics) {
-    if (relic.kept_at > newestAt) {
-      newestAt = relic.kept_at;
-      newestId = relic.offering_id;
-    }
-  }
-  return newestId;
-}
 
 // The /becoming surface: the god's still-unfinished body, growing as each real kept relic welds
 // into a permanent piece. Renders the newest page of kept relics (the living edge); every piece
@@ -89,17 +75,19 @@ export default function Becoming() {
   }, [relics]);
 
   const count = relics.length;
+  // fetchRelics returns one page (<=50, newest first); folding every page into the body is
+  // deferred (FULL), so the caption must not imply this is the whole body — only what's shown.
   const caption =
     count === 0
       ? loaded
         ? "The body has not yet begun. No mark has been kept."
         : "Reading the body…"
-      : `${count} ${count === 1 ? "mark has" : "marks have"} been welded into the still-unfinished body.`;
+      : `The most recent ${count} ${count === 1 ? "mark is" : "marks are"} welded into the still-unfinished body.`;
 
   return (
-    <main className="becoming" data-becoming-route="">
-      <div className="relative">
-        <SettledBecoming relics={relics} reducedMotion={REDUCED_MOTION} />
+    <main className="mx-auto flex max-w-[40rem] flex-col items-center gap-6 px-6 py-10 font-liturgy" data-becoming-route="">
+      <div className="relative aspect-square w-full max-w-[34rem]">
+        <SettledBecoming relics={relics} reducedMotion={REDUCED_MOTION} className="h-full w-full" />
         {webglActive && (
           <canvas
             ref={canvasRef}
@@ -109,7 +97,7 @@ export default function Becoming() {
           />
         )}
       </div>
-      <p className="font-machine" data-becoming-caption="">
+      <p className="font-machine text-ink-faded" data-becoming-caption="">
         {caption}
       </p>
     </main>

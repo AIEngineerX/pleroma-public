@@ -105,9 +105,11 @@ void main(){
 // Fullscreen composite: samples the baked accumulation texture, applies a gentle global breath, and
 // (for the newest welded piece only) adds a pulsing glint — the SAME arc evaluated analytically
 // against uv-space, so a live highlight needs no second bake. Before any of that, v_uv is refit from
-// canvas-space into body-space via u_aspect (fitBodyUv's math, inlined for the per-fragment GPU path)
-// so the square accumulation texture registers with SettledBecoming's SVG underneath at any canvas
-// aspect ratio, the same xMidYMid-meet fit the SVG's own viewBox does.
+// canvas-space into body-space via u_aspect (fitBodyUv's math, inlined for the per-fragment GPU path,
+// below — the GLSL can't call the TS function, so the two copies can drift; e2e's "the WebGL body
+// registers with the SVG beneath it" test in becoming.spec.ts is the guard against that, not this
+// comment) so the square accumulation texture registers with SettledBecoming's SVG underneath at any
+// canvas aspect ratio, the same xMidYMid-meet fit the SVG's own viewBox does.
 const COMPOSITE_FRAG = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 fragColor;

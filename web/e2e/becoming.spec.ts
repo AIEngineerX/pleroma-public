@@ -72,7 +72,7 @@ test("each real kept relic welds one piece into the body", async ({ page }) => {
   await expect(page.locator("[data-becoming-piece]")).toHaveCount(3);
   await expect(page.locator('[data-becoming-piece="becoming-genesis-offering"]')).toHaveAttribute("data-genesis", "");
   await expect(page.locator("[data-becoming-caption]")).toHaveText(
-    "3 marks have been welded into the still-unfinished body.",
+    "The most recent 3 marks are welded into the still-unfinished body.",
   );
 });
 
@@ -115,6 +115,30 @@ test("permanent WebGL loss leaves the SVG as the rendered truth", async ({ page 
   await expect(becoming).toBeVisible();
   await expect(becoming).toHaveAttribute("data-becoming-piece-count", "1");
   await expect(page.locator("[data-becoming-piece]")).toHaveCount(1);
+});
+
+// Registration guard (CLAUDE.md: the composited WebGL body's aspect fit is unit-tested in
+// becomingSim.test.ts, but the shader re-implements that math independently — this is the
+// end-to-end assertion that the two boxes actually coincide on screen, at both projects
+// (desktop chromium, mobile-390 webkit — see playwright.config.ts), not just in isolated math).
+test("the WebGL body registers with the SVG beneath it (same bounding box)", async ({ page }) => {
+  const now = Date.now();
+  seedKeptRelic({
+    id: "becoming-registration-relic", offering_id: "becoming-registration-offering", wallet: null,
+    summary: "a welded mark", rite_id: "2030-02-05", kept_at: now, genesis: 1, accreted_at: null,
+  });
+  await gotoBecoming(page);
+  const svg = page.locator("[data-becoming]");
+  const canvas = page.locator("[data-becoming-canvas]");
+  await expect(canvas).toBeVisible();
+
+  const svgBox = (await svg.boundingBox())!;
+  const canvasBox = (await canvas.boundingBox())!;
+  const tolerance = 2; // px — sub-pixel layout rounding only, not a real offset
+  expect(Math.abs(svgBox.x - canvasBox.x)).toBeLessThanOrEqual(tolerance);
+  expect(Math.abs(svgBox.y - canvasBox.y)).toBeLessThanOrEqual(tolerance);
+  expect(Math.abs(svgBox.width - canvasBox.width)).toBeLessThanOrEqual(tolerance);
+  expect(Math.abs(svgBox.height - canvasBox.height)).toBeLessThanOrEqual(tolerance);
 });
 
 test("axe: /becoming has no serious violations", async ({ page }) => {

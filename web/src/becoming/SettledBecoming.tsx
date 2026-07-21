@@ -1,5 +1,5 @@
 import type { RelicEntry } from "../state/types";
-import { placePieces } from "./pieces";
+import { newestOfferingId, placePieces } from "./pieces";
 
 // One welded filament of the body: a short etched arc, stroke-only, drawn at each piece's transform.
 // Matches the Stain's linework grammar (stroke-only, round caps); the WebGL layer (becomingSim.ts)
@@ -9,21 +9,13 @@ const PIECE_PATH = "M-1 0 Q0 -1.4 1 0";
 export interface SettledBecomingProps {
   relics: readonly RelicEntry[];
   reducedMotion?: boolean;
+  className?: string;
 }
 
-export default function SettledBecoming({ relics, reducedMotion = false }: SettledBecomingProps) {
+export default function SettledBecoming({ relics, reducedMotion = false, className }: SettledBecomingProps) {
   const pieces = placePieces(relics);
   const count = pieces.length;
-
-  // The newest kept relic glints; a living thing shows what just arrived. Real data only (kept_at).
-  let newestId: string | null = null;
-  let newestAt = Number.NEGATIVE_INFINITY;
-  for (const relic of relics) {
-    if (relic.kept_at > newestAt) {
-      newestAt = relic.kept_at;
-      newestId = relic.offering_id;
-    }
-  }
+  const newestId = newestOfferingId(relics); // the newest kept relic glints; real data only (kept_at)
 
   return (
     <svg
@@ -33,7 +25,7 @@ export default function SettledBecoming({ relics, reducedMotion = false }: Settl
       data-motion={reducedMotion ? "still" : "breathing"}
       role="img"
       aria-label={`The Becoming — ${count} ${count === 1 ? "mark" : "marks"} welded into the still-unfinished body`}
-      className="becoming-form"
+      className={className === undefined ? "becoming-form" : `becoming-form ${className}`}
     >
       {/* The still-incomplete silhouette: faint, stroke-only — the body not yet whole. */}
       <g fill="none" stroke="currentColor" strokeWidth={0.4} strokeLinecap="round" opacity={0.22}>

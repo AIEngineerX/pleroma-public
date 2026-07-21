@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { placePieces } from "../src/becoming/pieces";
+import { newestOfferingId, placePieces } from "../src/becoming/pieces";
 
 const relic = (offering_id: string, genesis = 0) => ({ offering_id, genesis });
 
@@ -35,5 +35,23 @@ describe("placePieces", () => {
     const [g] = placePieces([relic("genesis-mark", 1)]);
     expect(g.genesis).toBe(true);
     expect(Math.hypot(g.x - 0.5, g.y - 0.5)).toBeLessThan(0.08);
+  });
+});
+
+describe("newestOfferingId", () => {
+  const kept = (offering_id: string, kept_at: number) => ({ offering_id, kept_at });
+
+  it("picks the relic with the greatest kept_at", () => {
+    const id = newestOfferingId([kept("a", 10), kept("b", 30), kept("c", 20)]);
+    expect(id).toBe("b");
+  });
+
+  it("returns null for an empty list", () => {
+    expect(newestOfferingId([])).toBeNull();
+  });
+
+  it("on a tie, keeps the first relic reaching that kept_at", () => {
+    const id = newestOfferingId([kept("a", 10), kept("b", 10)]);
+    expect(id).toBe("a");
   });
 });
