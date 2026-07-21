@@ -41,8 +41,10 @@ for (const { path, title, description } of routes) {
   if (!html.includes(`<title>${title}</title>`) || html.includes("<title>PLEROMA</title>")) {
     throw new Error(`head swap failed for ${path}`);
   }
-  const outDir = resolve(webRoot, `dist${path}`);
-  mkdirSync(outDir, { recursive: true });
-  writeFileSync(resolve(outDir, "index.html"), html);
+  // Flat <route>.html, not <route>/index.html: Pages serves the flat file for the extensionless
+  // URL directly, while a directory index costs every shared link a 308 to the trailing slash.
+  const outFile = resolve(webRoot, `dist${path}.html`);
+  mkdirSync(dirname(outFile), { recursive: true });
+  writeFileSync(outFile, html);
 }
 console.log(`route heads written: ${routes.map((r) => r.path).join(" ")}`);
