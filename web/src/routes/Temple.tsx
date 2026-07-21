@@ -473,7 +473,7 @@ export default function Temple() {
             </section>
 
             <section id="pulse" data-section="pulse" className="temple-folio temple-reading-section">
-              <Pulse vitals={experience.vitals} />
+              <Pulse vitals={experience.vitals} dormant={view?.dormant ?? true} />
             </section>
 
             {view && !view.dormant && state?.mint && (

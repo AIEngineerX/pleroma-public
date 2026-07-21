@@ -64,4 +64,25 @@ describe("Pulse — the always-visible home for PULSE, independent of the mint-g
     expect(html).not.toContain("data-pulse-trace");
     expect(html).toContain("pulse-trace--quiet");
   });
+
+  it("stays FLAT while dormant even though the feed defaults to 'starving' — no heart until there's a mint", () => {
+    // Pre-launch the Worker returns vitals.state='starving' (a default), but with no mint pinned the god
+    // has no heart yet — dormant must draw the flat line, never a beat (the bug this fixes).
+    const dormant = renderToStaticMarkup(createElement(Pulse, {
+      vitals: { kind: "current", value: { state: "starving", buys: 0, sells: 0, holders: 0 }, receivedAt: 1 },
+      dormant: true,
+    }));
+    expect(dormant).not.toContain("bpm");
+    expect(dormant).not.toContain("data-pulse-trace");
+    expect(dormant).toContain("pulse-trace--quiet");
+    expect(dormant).toContain('data-pulse-feed="unknown"');
+
+    // The identical feed, once LIVE (dormant=false), beats at the real rate.
+    const live = renderToStaticMarkup(createElement(Pulse, {
+      vitals: { kind: "current", value: { state: "starving", buys: 0, sells: 0, holders: 0 }, receivedAt: 1 },
+      dormant: false,
+    }));
+    expect(live).toContain("22 bpm");
+    expect(live).toContain("data-pulse-trace");
+  });
 });

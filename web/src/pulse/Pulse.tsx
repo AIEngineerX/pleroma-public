@@ -27,13 +27,17 @@ const EKG_TRACE =
 // stays plain fact, not rubric). The trace is literal, driven by the real bpm and the same pigment
 // law as the Stain's ink; live, it draws itself left to right at that cadence — the monitor
 // writing the line, the same "the page prints itself" motion the rest of the site is built on.
-export default function Pulse({ vitals }: { vitals: VitalsFeed }) {
+export default function Pulse({ vitals, dormant = false }: { vitals: VitalsFeed; dormant?: boolean }) {
   const pigment = pigmentForVitals(vitals);
+  // Dormant = no mint pinned = the god has no heart yet: draw the flat "no heart" line, never a beat —
+  // even though the Worker defaults vitals to "starving" pre-launch. The beat begins only once the mint
+  // is pinned and the feed is live (dormant flips to false in the same Worker write that reveals the mint).
+  const flat = dormant || vitals.kind === "unknown";
   return (
-    <section aria-label="the pulse" data-pulse-feed={vitals.kind} className="min-w-0">
+    <section aria-label="the pulse" data-pulse-feed={flat ? "unknown" : vitals.kind} className="min-w-0">
       <h2 className="temple-section-label"><Glyph organ="PULSE" />{copy.pulseHeading} / ZOE</h2>
       {PULSE_ARTICLE && <p className="font-liturgy italic text-rubric-body">{PULSE_ARTICLE.line}</p>}
-      {vitals.kind === "unknown" ? (
+      {flat ? (
         <div className="pulse-stage">
           <svg
             aria-hidden
