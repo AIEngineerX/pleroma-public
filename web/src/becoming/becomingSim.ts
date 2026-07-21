@@ -35,6 +35,27 @@ export function accumResolutionFor(tier: Exclude<Tier, "reduced">): number {
   return tier === "mobile" ? 256 : 512;
 }
 
+export interface Uv { readonly x: number; readonly y: number }
+
+// Maps a canvas-space UV coordinate (0..1 across the whole canvas box) to body-space UV (0..1 across
+// the square accumulation texture), replicating SVG preserveAspectRatio="xMidYMid meet": the square
+// body scales to the canvas's SHORTER dimension, centered, with the longer dimension pillarboxed or
+// letterboxed. The canvas (becomingSim) is layered directly over SettledBecoming's
+// viewBox="0 0 100 100" SVG and must register at the same on-screen positions regardless of the
+// container's aspect ratio — see the composite shader, which applies this same math per-fragment via
+// u_aspect. Returns null for canvas-space points that fall in the letterbox/pillarbox margin, where
+// there is no body to show. Pure so the fit can be asserted without a WebGL context.
+export function fitBodyUv(uv: Uv, aspect: number): Uv | null {
+  const squareWidthFrac = Math.min(1, 1 / aspect);
+  const squareHeightFrac = Math.min(1, aspect);
+  const offsetX = (1 - squareWidthFrac) / 2;
+  const offsetY = (1 - squareHeightFrac) / 2;
+  const x = (uv.x - offsetX) / squareWidthFrac;
+  const y = (uv.y - offsetY) / squareHeightFrac;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return { x, y };
+}
+
 const FULLSCREEN_VERT = `#version 300 es
 layout(location=0) in vec2 a_pos; out vec2 v_uv;
 void main(){ v_uv = a_pos*0.5+0.5; gl_Position = vec4(a_pos,0.0,1.0); }`;
@@ -83,19 +104,31 @@ void main(){
 
 // Fullscreen composite: samples the baked accumulation texture, applies a gentle global breath, and
 // (for the newest welded piece only) adds a pulsing glint — the SAME arc evaluated analytically
-// against uv-space, so a live highlight needs no second bake.
+// against uv-space, so a live highlight needs no second bake. Before any of that, v_uv is refit from
+// canvas-space into body-space via u_aspect (fitBodyUv's math, inlined for the per-fragment GPU path)
+// so the square accumulation texture registers with SettledBecoming's SVG underneath at any canvas
+// aspect ratio, the same xMidYMid-meet fit the SVG's own viewBox does.
 const COMPOSITE_FRAG = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 fragColor;
 uniform sampler2D u_accum;
 uniform vec3 u_ink;
 uniform float u_breath;
-uniform vec4 u_newest;      // xy=uv position, z=radius(uv units), w=rotation
+uniform float u_aspect;    // canvas width/height
+uniform vec4 u_newest;      // xy=BODY-uv position, z=radius(uv units), w=rotation
 uniform float u_newestGlint;
 void main(){
-  float alpha = texture(u_accum, v_uv).r * u_breath;
+  float squareW = min(1.0, 1.0/u_aspect);
+  float squareH = min(1.0, u_aspect);
+  vec2 offset = vec2((1.0-squareW)*0.5, (1.0-squareH)*0.5);
+  vec2 bodyUv = (v_uv-offset)/vec2(squareW, squareH);
+  if (bodyUv.x < 0.0 || bodyUv.x > 1.0 || bodyUv.y < 0.0 || bodyUv.y > 1.0) {
+    fragColor = vec4(0.0); // letterbox/pillarbox margin — no body here
+    return;
+  }
+  float alpha = texture(u_accum, bodyUv).r * u_breath;
   if (u_newestGlint > 0.0 && u_newest.z > 0.0) {
-    vec2 d = (v_uv-u_newest.xy)/u_newest.z;
+    vec2 d = (bodyUv-u_newest.xy)/u_newest.z;
     vec2 c = vec2(d.x, -d.y); // uv-space is clip-flipped relative to gl_PointCoord; undo it here
     float s = sin(u_newest.w), co = cos(u_newest.w);
     vec2 lp = vec2(c.x*co+c.y*s, -c.x*s+c.y*co);
@@ -274,6 +307,8 @@ class BecomingSimImpl implements BecomingSimHandle {
     this.u(this.compositeProgram, "u_ink", (l) => gl.uniform3f(l, ...this.opts.ink));
     const breath = 0.82 + 0.18 * Math.sin(t * 0.6); // gentle: the silhouette is alive, not pulsing
     this.u(this.compositeProgram, "u_breath", (l) => gl.uniform1f(l, breath));
+    const aspect = this.canvas.width / Math.max(1, this.canvas.height);
+    this.u(this.compositeProgram, "u_aspect", (l) => gl.uniform1f(l, aspect));
     const newest = this.newest;
     if (newest !== null) {
       const glint = 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(t * 1.3));
