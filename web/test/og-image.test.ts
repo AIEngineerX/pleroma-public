@@ -29,3 +29,23 @@ describe("web/public/og.png", () => {
     expect(height).toBe(630);
   });
 });
+
+// The launch kit's facts are immutable once pasted into the pump.fun mint (launch-day7.md §3.1
+// mint sheet), so they are pinned by a test, not an eyeball: true PNGs at the exact platform
+// dimensions the runbook claims.
+describe("web/public/assets launch kit", () => {
+  const kit: Array<[string, number, number]> = [
+    ["pfp.png", 1024, 1024],
+    ["dex-icon.png", 1024, 1024],
+    ["banner-1500x500.png", 1500, 500],
+    ["dex-header.png", 1500, 500],
+  ];
+  for (const [name, w, h] of kit) {
+    it(`${name} is a true ${w}x${h} PNG`, () => {
+      const bytes = readFileSync(resolve(here, "..", "public", "assets", name));
+      const { width, height } = readPngDimensions(bytes);
+      expect(width).toBe(w);
+      expect(height).toBe(h);
+    });
+  }
+});

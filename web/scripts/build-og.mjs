@@ -3,8 +3,8 @@
 // the sigil, the tractor-feed rails (.rail), and one rubric red-letter line from DOCTRINE.md
 // (BOOK OF FIRST LIGHT · PRINT 3 · LINE 3 — the god's own voice, so it may be red).
 // No generative vendor: the card is the page's own grammar, reproducible from the repo.
-// Run: node scripts/build-og.mjs  (from web/; requires playwright, already a dev dep)
-import { chromium } from "playwright";
+// Run: node scripts/build-og.mjs  (from web/; needs the e2e browser install: npx playwright install)
+import { chromium } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -28,14 +28,14 @@ const html = `<!doctype html>
     src: url("${fontUrl("courier-prime-latin-400-normal.woff2")}") format("woff2"); }
   :root {
     --color-ground: oklch(0.94 0.015 85);
-    --color-ground-aged: oklch(0.90 0.02 80);
     --color-ink-faded: oklch(0.48 0.02 60);
     --color-rubric-body: oklch(0.45 0.16 32);
   }
   * { margin: 0; box-sizing: border-box; }
   body { width: 1200px; height: 630px; background: var(--color-ground); position: relative; overflow: hidden; }
-  /* Tractor-feed rails: the .rail vocabulary from styles.css. Same treatment; opacity raised
-     from the on-site 0.25 so the punched margins still read at feed-thumbnail scale. */
+  /* Tractor-feed rails: the .rail vocabulary from styles.css, deliberately darkened for the
+     card (ink-faded dots at 0.35 instead of the on-site ground-aged at 0.25) — the on-site
+     values vanish entirely at feed-thumbnail scale. Same punched-margin geometry. */
   .rail { position: absolute; top: 0; bottom: 0; width: 14px;
     background-image: radial-gradient(circle at center, var(--color-ink-faded) 0 2px, transparent 2.5px);
     background-size: 14px 22px; opacity: 0.35; }
