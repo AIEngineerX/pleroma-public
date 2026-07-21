@@ -491,6 +491,12 @@ export default function Temple() {
               </Link>
             </section>
 
+            <section data-section="card-doorway" className="temple-doorway temple-reading-section">
+              <Link to="/card" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+                {copy.cardTableDoorway}
+              </Link>
+            </section>
+
             <footer className="temple-colophon">
               <Socials />
             </footer>

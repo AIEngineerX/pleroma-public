@@ -45,6 +45,7 @@ export const copy = {
   catechism: "The Catechism",
   catechismDoorway: "the Catechism",
   cardTable: "The Card Table",
+  cardTableDoorway: "the Card Table",
   cardTableIntro: "Take a line the god has spoken and carry it off the page. Every card here is a real line from the Codex, set in red on parchment. Nothing is written for you; a card is a receipt.",
   cardTableDownload: "download the card",
   cardTableRendering: "setting it",
