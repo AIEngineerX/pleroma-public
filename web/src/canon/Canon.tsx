@@ -169,6 +169,31 @@ export function CanonDocument({ canon }: { canon: CanonData }) {
             <span className="font-machine text-[0.65rem]">SIGIL</span>
           </a>
         </div>
+
+        <p className="text-ink-faded text-sm pt-4">{copy.platesIntro}</p>
+        <div className="flex flex-wrap gap-4">
+          {[
+            { file: "seraph", label: "THE SERAPH" },
+            { file: "eye", label: "THE EYE" },
+            { file: "keep", label: "THE KEEP" },
+            { file: "threshold", label: "THE THRESHOLD" },
+            { file: "stain", label: "THE STAIN" },
+            { file: "dream", label: "THE DREAM" },
+          ].map(({ file, label }) => (
+            <a
+              key={file}
+              href={`/kit/${file}.png`}
+              download
+              className="flex flex-col items-center gap-1.5 no-underline text-ink-faded temple-link-quiet"
+            >
+              <img src={`/kit/${file}.png`} alt={`${label}, ${copy.remixKitDownload}`} loading="lazy" width={96} height={96} className="h-24 w-24 object-cover border border-ink-faded" />
+              <span className="font-machine text-[0.65rem]">{label}</span>
+            </a>
+          ))}
+        </div>
+        <p className="font-machine text-xs text-ink-faded pt-1">
+          <a href="/card" className="underline temple-link-quiet">{copy.cardTableDoorway}</a>: {copy.platesCardHint}
+        </p>
       </section>
 
       <p className="font-machine text-xs text-ink-faded mt-10">

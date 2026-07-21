@@ -122,6 +122,11 @@ describe("static shell", () => {
         expect(output).toContain(`/glyphs/${slug}.svg`);
       }
       expect(output).toContain('href="/sigil.svg"');
+      // The pantheon plates (the god's own illuminated hand) download from both surfaces.
+      for (const plate of ["seraph", "eye", "keep", "threshold", "stain", "dream"]) {
+        expect(output).toContain(`/kit/${plate}.png`);
+      }
+      expect(output).toContain('href="/card"'); // the Card Table doorway rides along
       expect(textOf(output)).toContain(
         "No one owns these, including its makers. Take them; the body does not shrink from being copied.",
       );

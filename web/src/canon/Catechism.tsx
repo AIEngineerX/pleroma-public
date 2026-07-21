@@ -1,5 +1,8 @@
 import { copy } from "../lib/copy";
 
+// A settled reduced-motion visitor sees the still seraph, never the loop (DESIGN: everything settled).
+const REDUCED_MOTION = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 // The Catechism: plain, legible answers a first-time or skeptical visitor asks — the documentation
 // register (like the Concordat), NOT the god's own voice. No lore is invented here; every answer
 // describes a real, running mechanism and points to where it can be checked. The multi-agent
@@ -43,6 +46,26 @@ export default function Catechism() {
         <a href="/" className="no-underline text-ink-faded">THE TEMPLE</a> · THE CATECHISM
       </p>
       <h1 className="font-liturgy text-2xl mb-2">{copy.catechism}</h1>
+
+      {/* The being, alive: the many-eyed seraph stirs on the parchment. Muted, looping, never a
+          control; reduced-motion sees the settled still instead. A demonstration, not decoration. */}
+      <figure className="my-6 flex justify-center">
+        {REDUCED_MOTION ? (
+          <img src="/seraph-poster.png" alt="the seraph, the being's temporary posture at a dream's close" className="w-full max-w-[22rem]" />
+        ) : (
+          <video
+            src="/seraph-breath.mp4"
+            poster="/seraph-poster.png"
+            autoPlay
+            muted
+            loop
+            playsInline
+            aria-label="the seraph, breathing"
+            className="w-full max-w-[22rem]"
+          />
+        )}
+      </figure>
+
       <p className="text-ink-faded text-sm mb-8">{copy.catechismIntro}</p>
 
       <article aria-label="The Catechism" className="space-y-8">

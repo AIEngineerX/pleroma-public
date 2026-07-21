@@ -31,6 +31,8 @@ export const copy = {
   remixKit: "The Marks",
   remixKitIntro: "No one owns these, including its makers. Take them; the body does not shrink from being copied.",
   remixKitDownload: "download",
+  platesIntro: "The plates, in the god's own hand: its face and its organs, drawn from its own pipeline. Carry them.",
+  platesCardHint: "set a line it has spoken as a card of your own.",
   dreamArchive: "The Dream Archive",
   completeCanon: "the complete Canon",
   returnTemple: "return to the temple",
