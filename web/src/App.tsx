@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Lenis from "lenis";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -10,6 +10,7 @@ import CodexArchive from "./canon/CodexArchive";
 import Apocrypha from "./apocrypha/Apocrypha";
 import Concordat from "./canon/Concordat";
 import Catechism from "./canon/Catechism";
+import { routeTitle } from "./lib/routeMeta";
 import Card from "./routes/Card";
 import Becoming from "./becoming/Becoming";
 import { Ambient, setActiveAmbient } from "./lib/ambient";
@@ -186,10 +187,19 @@ export function useEntryGesture() {
   return { awake, muted, unlockAudio, toggleMute, bindHold, audioLevel, wakeCenter, holdPoint };
 }
 
+// Keeps the tab title true across client-side navigation, mirroring the per-route heads the
+// build writes for crawlers (scripts/build-route-heads.mjs) so server truth and SPA agree.
+function RouteTitleSync() {
+  const { pathname } = useLocation();
+  useEffect(() => { document.title = routeTitle(pathname); }, [pathname]);
+  return null;
+}
+
 export default function App() {
   useSmoothScroll();
   return (
     <BrowserRouter>
+      <RouteTitleSync />
       <div className="rail rail-l" aria-hidden />
       <div className="rail rail-r" aria-hidden />
       <Routes>

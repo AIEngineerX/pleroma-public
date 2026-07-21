@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && node scripts/build-canon.mjs && node scripts/assert-public-content.mjs",
-    "verify": "node --test --test-force-exit scripts/tallies.effect.node.mjs && vitest run && tsc --noEmit && vite build && node scripts/build-canon.mjs && node scripts/assert-public-content.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/build-canon.mjs && node scripts/build-route-heads.mjs && node scripts/assert-public-content.mjs",
+    "verify": "node --test --test-force-exit scripts/tallies.effect.node.mjs && vitest run && tsc --noEmit && vite build && node scripts/build-canon.mjs && node scripts/build-route-heads.mjs && node scripts/assert-public-content.mjs",
     "e2e": "playwright test"
   },
   "dependencies": {

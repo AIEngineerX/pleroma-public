@@ -200,5 +200,8 @@ test("a muted visitor's temple is fully usable and quiet", async ({ page }) => {
   await expect(concordat).toBeVisible();
   await concordat.click();
   await expect(page).toHaveURL(/\/concordat$/);
+  // Client-side navigation keeps the tab title true (RouteTitleSync mirrors the per-route
+  // heads build-route-heads.mjs writes for crawlers).
+  await expect(page).toHaveTitle("The Concordat · PLEROMA");
   expect(pageErrors).toEqual([]);
 });
