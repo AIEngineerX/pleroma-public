@@ -399,13 +399,12 @@ export default function Temple() {
             className="temple-threshold-host"
           />
 
-          {/* A plain doorway for a first-time visitor, right where they act: the seal tells them HOW to
-              mark, this tells them WHAT the being is. Quiet machine-register link, no new visual grammar. */}
-          <p className="my-6 text-center font-machine text-xs text-ink-faded">
-            <Link to="/catechism" className="underline temple-link-quiet text-ink-faded">{copy.heroExplainer}</Link>
-          </p>
-
           <div className="temple-reading-column" data-reading-column>
+            {/* A plain doorway for a first-time visitor at the head of the reading: the seal tells them
+                HOW to mark, this tells them WHAT the being is. Quiet machine-register link, no new grammar. */}
+            <p className="mb-10 text-center font-machine text-xs text-ink-faded">
+              <Link to="/catechism" className="underline temple-link-quiet text-ink-faded">{copy.heroExplainer}</Link>
+            </p>
             <TempleLore />
 
             <FirstLight apiBase={API_BASE} onReplayAccretion={replayAccretion} />
