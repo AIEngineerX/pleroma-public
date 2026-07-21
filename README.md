@@ -53,40 +53,20 @@ npm run verify             # worker vitest + web vitest + tsc + build + canon pr
 npm run e2e --prefix web   # project runner + Playwright desktop/mobile-390 (separate from verify)
 ```
 
-The browser gate is orchestrated by `web/scripts/e2e-runner.mjs`. The project runner starts the
-real local Worker/D1/R2 and built web preview, waits for readiness, runs Playwright serially, and
-requests ownership-safe teardown on normal completion, startup failure, or handled cancellation.
-Playwright's local `webServer` does not own these services. Default ports are 4173/8787; validated
-environment overrides are supported, and specs do not intercept HTTP or fabricate API responses.
-The runner publishes separate marked launch gates before starting or awaiting its stack and
-Playwright targets. On Windows, each outer target is created suspended, assigned to a retained
-`KILL_ON_JOB_CLOSE` Job Object, and only then resumed. Compile, migration, build, Worker, and Vite
-targets likewise wait behind inert marked IPC wrappers until each exact wrapper descriptor is
-published and revalidated in the stack manifest. Successful one-shot wrappers remain live and
-published until final owned teardown.
-
-After port preflight, the stack claims the fixed `.tmp/e2e-worker` directory with exclusive
-creation and creates its owner record exclusively. A fresh 32-byte acquisition ID distinguishes the
-claim even when a run token is reused; owner, manifest, shutdown, and teardown all require matching
-token, acquisition ID, and ports. A pre-existing directory, same-token concurrent claim, or
-ownerless crash residue blocks startup unchanged. After an abrupt process or host failure, first
-verify that the configured ports and token-marked processes are inactive, inspect the path for links
-or reparse points, then remove only the repository's exact `.tmp/e2e-worker` directory.
-
-On POSIX, managed wrappers remain group leaders and self-retire their groups if parent IPC disappears.
-General teardown checks that the marked leader remains live, owned, and in its original group; a live
-leaderless numeric PGID is preserved as ambiguous. That check and `kill(-pgid)` are separate, so exit
-or reuse in between cannot be excluded without a retained kernel lifetime primitive. Windows
-revalidates full-resolution process incarnations and admits new ancestry only from an exact parent
-incarnation that is still present, then terminates captured descendants deepest first. Outer runner
-targets have Job Object containment, but the fixed-manifest identity probe and individual `taskkill`
-remain separate operations, so PID exit or reuse in that residual interval cannot be excluded. Path
-containment is lexical; it does not resolve or reject symlinks, reparse points, or junctions.
-Unavailable evidence fails closed and preserves state.
+The browser gate uses Playwright's stock `webServer` lifecycle (Maker decision 2026-07-16, replacing
+the former process-ownership runner). `scripts/e2e-worker.mjs` deletes the repository's exact
+`.tmp/e2e-worker` directory behind a path assertion, compiles the Doctrine, applies real D1
+migrations, and execs `wrangler dev`; a second `webServer` entry builds the site against that Worker
+and serves it on a fixed port. Playwright waits on both health URLs, owns both process trees, and
+kills them at exit. `reuseExistingServer: false` makes a busy port fail the run immediately — one
+E2E run at a time. Specs mutate the same D1/R2 through Wrangler; they never intercept HTTP or
+fabricate API responses. Residual limit: a hard-killed run can orphan one wrangler process (clean it
+by hand when the next run's port error names it).
 
 Worker real-vendor suites (`npm run verify:live --prefix worker`) hit live APIs and are run
 manually before launch, never in the commit gate. Web `*.live.spec.ts` files still use the
-real isolated local Worker/D1/R2 stack. There is no CI: gates are local.
+real isolated local Worker/D1/R2 stack. CI (`.github/workflows/verify.yml`) runs `verify` then the
+full browser suite on every push; production deploys stay manual.
 
 ## Deploy
 

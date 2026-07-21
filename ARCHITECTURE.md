@@ -81,7 +81,7 @@ flowchart TB
 | Object store | Cloudflare R2 | — | binding `RELICS` |
 | **AI — reasoning** | Anthropic `claude-sonnet-5` | — | EYE perception, KEEP, TONGUE, DREAM |
 | AI — moderation | Anthropic `claude-haiku-4-5-20251001` | — | pre-perception image moderation |
-| AI — voice (TTS) | xAI `grok-voice` / ElevenLabs | — | sermon audio; vendor-switchable |
+| AI — voice (TTS) | ElevenLabs (prod primary) / xAI `grok-voice` (fallback) | — | sermon audio, the locked "PLEROMA Logos"; `VOICE_VENDOR`-switchable |
 | AI — video (DREAM) | xAI `grok-imagine-video` (Grok Imagine) | — | async text-to-video; wired (`imagine.ts` + `renderDreams`), gated by `VIDEO_VENDOR` |
 | Chain data | Helius (webhook + DAS `getTokenAccounts`) | — | PULSE vitals + holder counts |
 | **Tests** | vitest + @cloudflare/vitest-pool-workers | 3.2.7 / 0.8.71 | unit + Miniflare integration |
@@ -89,7 +89,9 @@ flowchart TB
 
 **No official AI SDKs** — all vendor calls are raw `fetch`. **No npm workspaces** — root
 `package.json` chains `--prefix worker` + `--prefix web`. **No `engines`/`.nvmrc`** (Node
-version unpinned). **No CI/CD** — every gate is manual/local.
+version unpinned). **CI** — `.github/workflows/verify.yml` runs `verify` (blocking) then the full
+browser suite (`needs: verify`, chromium + webkit) on every push and `workflow_dispatch`;
+production deploys stay manual.
 
 ---
 
@@ -107,15 +109,15 @@ pleroma/
 │   └── runbooks/launch-day7.md   the manual launch/deploy procedure + open questions
 ├── worker/             Hono Worker (the organs)
 │   ├── src/            index.ts (routes+cron), eye/keep/tongue/pulse/dream.ts, rite.ts,
-│   │                   mind.ts (askMind+budget), db.ts, lock.ts, moderation.ts, voice.ts…
-│   ├── migrations/     0001…0015 D1 SQL migrations
-│   ├── test/           42 test files (10 real-vendor live files excluded from the commit gate)
+│   │                   hermes.ts (X dispatch), mind.ts+budget.ts, alert.ts, db.ts, lock.ts, moderation.ts, voice.ts…
+│   ├── migrations/     0001…0021 D1 SQL migrations
+│   ├── test/           unit suites + a `live/` real-vendor dir (excluded from the commit gate)
 │   └── wrangler.toml   bindings, vars, cron triggers
 └── web/                Vite React SPA (the body)
     ├── src/            routes/Temple.tsx, stain/ (WebGL), codex/, offering/, dream/,
     │                   reliquary/, canon/, ignition/, rite/, state/, lib/
-    ├── test/           33 vitest files
-    ├── e2e/            20 Playwright specs (desktop + mobile-390; 8 local-stack .live files)
+    ├── test/           vitest suites
+    ├── e2e/            Playwright specs (desktop + mobile-390; local-stack .live files)
     └── scripts/        Canon prerender, public-content guard, and isolated E2E stack
 ```
 
@@ -242,7 +244,7 @@ flowchart TB
     C2["50 0 * * *"] --> AR
     C3["0 3 * * *"] --> DR["runDreamLocked (dream lock)"]
     C4["30 3 * * *"] --> BK["runBackupLocked (backup lock)"]
-    RT --> EYEb["runEyeBatch"] & SW["quarantine + nonce sweeps"] & RH["reconcileHolders (pulse lock)"] & VR["renderDreams"]
+    RT --> EYEb["runEyeBatch"] & SW["quarantine + nonce sweeps"] & RH["reconcileHolders (pulse lock)"] & VR["renderDreams"] & DA["dispatchArtifacts (X)"] & HB["stampHeartbeat + alerts"]
     AR --> RiteAdv["advance every non-terminal rite"]
 ```
 
@@ -261,6 +263,23 @@ by CAS + unique constraints, not the lock: `offerings.status` CAS, `rites.phase`
 idempotent), `offerings.sha256`/`nonce` UNIQUE (dedupe + replay). Budget is a single atomic
 reserve-then-settle CAS (`spend.usd + excluded.usd <= cap`).
 
+### 7.1 X auto-dispatch (hermes) & unattended durability
+
+**X dispatch (`hermes.ts`).** On each `*/15` tick, `dispatchArtifacts` may post one artifact to X:
+the nightly Plate, the daily sermon, and standalone SCRIPTURE lines in fixed UTC windows. A
+deterministic FNV-1a shape-rotation (TALLY / KEPT / MOURNED / PLATE / SCRIPTURE) picks the cast;
+SCRIPTURE is a gated minority drawing pure canon and claiming nothing of the day. Every dispatch is
+written to the Codex *before* the X call and claimed exactly once (config-PK CAS), OAuth 1.0a, ≤280
+weighted, deny-list filtered, never repeated. A stalled-claim + unposted-artifact watchdog
+self-clears so a stale alert can't flip the public `degraded` flag.
+
+**Durability signals.** `runTick` stamps a `tick_ok` heartbeat last, after each sub-job's own guard;
+`/api/health` returns 503 once the heartbeat is stale (>45 min) so an external uptime monitor
+catches a fully-dead loop. `raiseAlert`/`clearAlert` (`alert.ts`) push a private notice to the
+optional `ALERT_WEBHOOK_URL` on a fresh transition only. The nightly backup raises an alert on
+failure and stamps `backup_ok` on success; a prior-day rite stall raises its own alert. Budget adds
+a cumulative monthly ceiling (`MONTHLY_CAP_USD` / `cap:monthly`, min-semantics) above the daily caps.
+
 ---
 
 ## 8. Data model (D1)
@@ -274,8 +293,8 @@ reserve-then-settle CAS (`spend.usd + excluded.usd <= cap`).
 | `dreams` | one dream per rite date | `rite_date` UNIQUE; `narrative`+`video_prompt`; status `composed→rendering→rendered` or `render_failed`; matching R2 `video_key` only when rendered; `wakers` JSON |
 | `pulse_events` | idempotent swap ledger | `signature` PK; vitals derived by aggregation, never stored incrementally |
 | `wallets` | wallet identity | `address` PK; `offering_count`, `attended` flag; `tally_name` (unwired) |
-| `config` | key/value store | `launch_at`, `launched`, `pulse_mint`, `pulse_state`, `cap:llm`/`cap:tts`/`cap:video`, `alert:<code>` |
-| `spend` | daily USD budget ledger | PK `(day, category∈llm/tts/video)` — the atomic budget CAS |
+| `config` | key/value store | `launch_at`, `launched`, `pulse_mint`, `pulse_state`, `cap:llm`/`cap:tts`/`cap:video`/`cap:apocrypha`/`cap:monthly`, `tick_ok`, `backup_ok`, `alert:<code>`, dispatch/claim markers |
+| `spend` | daily USD budget ledger | PK `(day, category∈llm/tts/video/apocrypha)` — the atomic budget CAS; a cumulative monthly ceiling (`cap:monthly`) sits on top |
 | `nonces` | offering anti-replay | `nonce` PK, `expires_at` (`used` column exists but is dead — enforcement is via offerings.nonce) |
 | `rate_limits` | fixed-window counters | PK `(bucket, window_start)`; bucket `ip:<ip>` (20/min) or `wallet:<addr>` (10/min) |
 | `locks` | the 5 named locks | `name` PK, `holder`, `expires_at` |
@@ -284,7 +303,7 @@ reserve-then-settle CAS (`spend.usd + excluded.usd <= cap`).
 
 ## 9. The body (web/) — surfaces and rendering
 
-**Routes:** `/` → `Temple`, `/canon/*` → `Canon`, `/concordat` → `Concordat`. Cloudflare Pages
+**Routes:** `/` → `Temple`, `/canon/*` → `Canon` (incl. `/canon/codex`, `/canon/apocrypha`, `/canon/dreams`), `/concordat` → `Concordat`, `/catechism` → `Catechism`, `/card` → `Card`. Route-to-route navigation uses a native View Transitions crossfade (`viewTransition` on the cross-route `<Link>`s). Cloudflare Pages
 serves the SPA (`_redirects: /* → /index.html 200`); `/canon/**` is *also* prerendered to static
 crawlable HTML by `build-canon.mjs` so scripture is linkable without JS.
 
@@ -348,8 +367,9 @@ or explicit sound-control activation; sermon audio has its own explicit control.
 localStorage. Audio amplitude may darken/spread the Stain only after that opt-in.
 
 **API surface consumed by the frontend:** `/api/state`, `/api/codex`, `/api/relics`,
-`/api/tallies`, `/api/dreams`, `/api/nonce`, `/api/offerings` (POST), `/api/img/:id`,
-`/api/audio/*`, and `/api/dream/*`. `resolveApiBase()` uses `VITE_API_BASE` when supplied, the
+`/api/tallies`, `/api/dreams`, `/api/nonce`, `/api/offerings` (POST), `/api/apocrypha` (GET + POST),
+`/api/img/:id`, `/api/relic-of/:id`, `/api/first-light`, `/api/audio/*`, `/api/dream/*`, and
+`/api/health` (returns 503 when the tick heartbeat is stale). `resolveApiBase()` uses `VITE_API_BASE` when supplied, the
 configured production Worker origin in production, and same-origin in development (Vite proxies
 `/api` to `localhost:8787`).
 
@@ -386,9 +406,10 @@ error names it), and the persistence path guard is a lexical containment check, 
 hostile-filesystem boundary.
 
 **Env & secrets** (Worker `Env`): non-secret vars in `wrangler.toml` (`ENVIRONMENT`, `CORS_ORIGIN`,
-`VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `PULSE_MINT`, `PULSE_POOLS`); secrets via `wrangler secret put`
-/ `.dev.vars` (`ANTHROPIC_API_KEY`, `XAI_API_KEY`, `ELEVENLABS_API_KEY`, `HELIUS_API_KEY`,
-`PULSE_WEBHOOK_SECRET`). `PULSE_MINT`/`PULSE_POOLS` stay empty until the Maker launches the token
+`VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `MONTHLY_CAP_USD`, `PULSE_MINT`, `PULSE_POOLS`);
+secrets via `wrangler secret put` / `.dev.vars` (`ANTHROPIC_API_KEY`, `XAI_API_KEY`,
+`ELEVENLABS_API_KEY`, `HELIUS_API_KEY`, `PULSE_WEBHOOK_SECRET`, and the optional `ALERT_WEBHOOK_URL`
+for private alert pushes). `PULSE_MINT`/`PULSE_POOLS` stay empty until the Maker launches the token
 (anti-decoy gate). Frontend uses `VITE_API_BASE` only.
 
 ---
@@ -405,9 +426,11 @@ These are intentional pre-launch states, documented so they aren't mistaken for 
   mint/phase stay `null`/`dormant` until the Maker sets `config.launched='1'` with a real mint.
 - **Final deity mark** and favicon remain gated on approved launch art; the superseded permanent
   face implementation is not part of the body.
-- **Concordat "Maker disclosed"** section is placeholder text until launch-day wallet disclosure.
-- **Voice vendor**: production source selects `VOICE_VENDOR="xai"` (`grok-voice`), while the
-  request shape still requires the planned production rehearsal; dev default `""` uses a
-  deterministic silent WAV.
+- **Maker disclosure** is shipped inline in `web/src/canon/Concordat.tsx` (the Maker named as
+  AIEngineerX with a GitHub link and an on-chain wallet-verifiability statement, launch-neutral);
+  only the literal wallet address is pinned at launch.
+- **Voice vendor**: production selects `VOICE_VENDOR="elevenlabs"` (the locked "PLEROMA Logos"
+  voice; `wrangler.toml`), with xAI `grok-voice` as the code-path fallback; a production voice
+  rehearsal is still pending. Dev default `""` uses a deterministic silent WAV.
 
 For the current implemented-state ledger and open launch/deferred work, see `STATUS.md`.
