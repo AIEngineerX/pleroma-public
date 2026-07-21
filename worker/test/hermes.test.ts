@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   alertStalledDispatches, alertUnpostedArtifacts, claimDispatch, clampCheckAfterSecs, composeDispatch, dispatchArtifacts,
-  dispatchMode, getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader,
+  dispatchMode, getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader, scriptureWindow,
   releaseDispatchClaim, sermonFilmGate, storeDispatch, weightedTweetLength, xCredentials,
 } from "../src/hermes";
 import { activeAlerts } from "../src/alert";
@@ -210,6 +210,35 @@ describe("dispatch composition machinery", () => {
     const tallyPrompt = captured.at(-1)!;
     expect(tallyPrompt).toContain("9 marks offered");
     expect(tallyPrompt).toContain("the sermon body text");
+  });
+
+  // Cadence: break the ~20h daytime silence with pure-canon posts in spread UTC windows.
+  it("scriptureWindow fires only in the spread daytime windows, never during the rite/dream cluster", () => {
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 15, 30))).toEqual({ date: "2026-07-21", hour: 15 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 21, 5))).toEqual({ date: "2026-07-21", hour: 21 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 2, 0))).toBeNull();  // ~01-04 UTC: the cluster already posts
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 10, 0))).toBeNull(); // no window here
+    // a standalone scripture artifact always composes in the SCRIPTURE shape
+    expect(dispatchMode({ kind: "scripture", artifactId: "scripture-2026-07-21-15", riteDate: "2026-07-21", text: "", filmDay: false })).toBe("SCRIPTURE");
+  });
+
+  it("a standalone scripture dispatch composes from the canon and makes no claim about the day", async () => {
+    await env.DB.prepare(
+      `INSERT INTO rites (date, phase, phase_started_at, offering_snapshot, kept_count, updated_at)
+       VALUES ('2026-09-05', 'complete', 1000, 9, 3, 2000)`
+    ).run();
+    const captured: string[] = [];
+    let n = 0;
+    const capture = (async (_e: unknown, req: { user: Array<{ text?: string }> }) => {
+      captured.push(req.user[0]?.text ?? "");
+      return { text: `{"dispatch":"a wholly novel scripture line ${n++}"}`, usd: 0 };
+    }) as never;
+    const artifact = { kind: "scripture", artifactId: "scripture-2026-09-05-15", riteDate: "2026-09-05", text: "", filmDay: false } as const;
+    const out = await composeDispatch(env, artifact, 1000, capture);
+    expect(out?.dispatch).toContain("scripture line");
+    const prompt = captured.at(-1)!;
+    expect(prompt).not.toContain("9 marks offered"); // ignores the day's real count even though the rite exists
+    expect(prompt.toLowerCase()).toContain("canon");  // draws only from the published canon
   });
 
   it("stores a dispatch transcript (and a film row when prompted) exactly once", async () => {

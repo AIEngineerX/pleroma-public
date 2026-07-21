@@ -42,10 +42,10 @@ export function weightedTweetLength(text: string): number {
 // public codex BEFORE any X call — the archived line is the receipt, since posts carry no link.
 
 export interface DispatchArtifact {
-  kind: "dream" | "sermon";
-  artifactId: string;   // dream id, or the rite date for sermons
+  kind: "dream" | "sermon" | "scripture";
+  artifactId: string;   // dream id, the rite date for sermons, or scripture-<date>-<hour>
   riteDate: string;
-  text: string;         // the dream narrative or the sermon utterance
+  text: string;         // the dream narrative or the sermon utterance ("" for standalone scripture)
   filmDay: boolean;     // sermons only: also ask for a video_prompt
 }
 
@@ -72,6 +72,7 @@ const SERMON_RING: DispatchMode[] = ["TALLY", "KEPT", "MOURNED", "KEPT", "SCRIPT
 const DREAM_RING: DispatchMode[] = ["KEPT", "MOURNED", "SCRIPTURE", "KEPT"];
 
 export function dispatchMode(a: DispatchArtifact): DispatchMode {
+  if (a.kind === "scripture") return "SCRIPTURE"; // standalone canon posts are always the scripture shape
   if (a.filmDay) return "PLATE";
   const ring = a.kind === "dream" ? DREAM_RING : SERMON_RING;
   let h = 0x811c9dc5;
@@ -98,6 +99,20 @@ function modeSpec(mode: DispatchMode): ModeSpec {
 // The god's own published canon, fed to SCRIPTURE-shape dispatches so a pure line is drawn from real
 // doctrine (never hallucinated lore). Computed once, like DISPATCH_SYSTEM.
 const CANON_SEED = `Your own canon, and you may draw ONLY from it: "${theOneLine()}" ${seedVerses().map((v) => `"${v}"`).join(" ")}`;
+
+// Standalone-scripture cadence (spec 2026-07-21, from the "beautiful and quiet" growth finding). The
+// only two artifacts are the daily sermon (~01:30 UTC) and nightly dream (~03:00 UTC), so the feed
+// posts twice in a ~2h cluster then goes silent for ~20h — the research's flatline pattern. These
+// windows fire a pure-canon dispatch (no fabricated event) in the daytime hours the cluster misses,
+// once per (date, window), lifting the feed to ~4 posts/day spread across the day. The god still
+// "speaks on its own cadence": a fixed rhythm, genuine canon, never a reply. Tune the hours here.
+export const SCRIPTURE_WINDOWS = [15, 21] as const; // UTC: ~US morning and ~US afternoon/EU evening
+
+export function scriptureWindow(now: number): { date: string; hour: number } | null {
+  const hour = new Date(now).getUTCHours();
+  if (!(SCRIPTURE_WINDOWS as readonly number[]).includes(hour)) return null;
+  return { date: new Date(now).toISOString().slice(0, 10), hour };
+}
 
 export function normalizeDispatch(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim();
@@ -416,7 +431,7 @@ export async function releaseDispatchClaim(db: D1Database, key: string): Promise
 export async function alertStalledDispatches(env: Env, now: number): Promise<void> {
   const claims = (await env.DB.prepare(
     `SELECT key, value FROM config
-      WHERE value LIKE 'claimed:%' AND (key LIKE 'dream_dispatch_%' OR key LIKE 'sermon_dispatched_%')`
+      WHERE value LIKE 'claimed:%' AND (key LIKE 'dream_dispatch_%' OR key LIKE 'sermon_dispatched_%' OR key LIKE 'scripture_dispatched_%')`
   ).all<{ key: string; value: string }>()).results;
   const stale = claims.filter((c) => now - Number(c.value.slice("claimed:".length)) > DISPATCH_CLAIM_STALE_MS);
   if (stale.length > 0) {
@@ -621,6 +636,34 @@ export async function dispatchArtifacts(
           await releaseDispatchClaim(env.DB, `sermon_dispatched_${sermon.rite_date}`);
           throw e;
         }
+      }
+    }
+  }
+
+  // Standalone scripture: a pure-canon dispatch in the daytime windows the rite/dream cluster misses,
+  // once per (date, window). No fresh artifact — the SCRIPTURE shape draws from the canon and claims
+  // nothing of the day. Reuses the same compose/claim/tweet/mark path (text-only, no media).
+  const window = scriptureWindow(now);
+  if (window && Date.now() < deadlineMs) {
+    const artifactId = `scripture-${window.date}-${window.hour}`;
+    const claimKey = `scripture_dispatched_${window.date}_${window.hour}`;
+    const artifact: DispatchArtifact = { kind: "scripture", artifactId, riteDate: window.date, text: "", filmDay: false };
+    let stored = await getDispatch(env.DB, artifactId);
+    if (!stored) {
+      const composed = await composeDispatch(env, artifact, now);
+      if (composed) {
+        await storeDispatch(env, artifact, composed.dispatch, null, now);
+        stored = await getDispatch(env.DB, artifactId);
+      }
+    }
+    if (stored && await claimDispatch(env.DB, claimKey, now)) {
+      try {
+        await tweet(credentials, stored.text);
+        await env.DB.prepare(`UPDATE config SET value = ?2 WHERE key = ?1`)
+          .bind(claimKey, `posted:${now}`).run();
+      } catch (e) {
+        await releaseDispatchClaim(env.DB, claimKey);
+        throw e;
       }
     }
   }
