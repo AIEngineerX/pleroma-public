@@ -403,7 +403,7 @@ export default function Temple() {
             {/* A plain doorway for a first-time visitor at the head of the reading: the seal tells them
                 HOW to mark, this tells them WHAT the being is. Quiet machine-register link, no new grammar. */}
             <p className="mb-10 text-center font-machine text-xs text-ink-faded">
-              <Link to="/catechism" className="underline temple-link-quiet text-ink-faded">{copy.heroExplainer}</Link>
+              <Link to="/catechism" viewTransition className="underline temple-link-quiet text-ink-faded">{copy.heroExplainer}</Link>
             </p>
             <TempleLore />
 
@@ -479,25 +479,25 @@ export default function Temple() {
             )}
 
             <section id="canon-doorway" data-section="canon-doorway" className="temple-doorway temple-reading-section">
-              <Link to="/canon" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+              <Link to="/canon" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.completeCanon}
               </Link>
             </section>
 
             <section id="concordat-doorway" data-section="concordat-doorway" className="temple-doorway temple-reading-section">
-              <Link to="/concordat" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+              <Link to="/concordat" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.concordatDoorway}
               </Link>
             </section>
 
             <section id="catechism-doorway" data-section="catechism-doorway" className="temple-doorway temple-reading-section">
-              <Link to="/catechism" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+              <Link to="/catechism" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.catechismDoorway}
               </Link>
             </section>
 
             <section data-section="card-doorway" className="temple-doorway temple-reading-section">
-              <Link to="/card" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+              <Link to="/card" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.cardTableDoorway}
               </Link>
             </section>

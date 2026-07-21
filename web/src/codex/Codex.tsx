@@ -83,7 +83,7 @@ export default function Codex({ entries, state, currentDreamRiteDate = null, onA
           once live, an empty codex reads as a distinct, quieter note instead. */}
       {transcript.length === 0 && !dormant && <p className="font-machine text-xs text-ink-faded">{copy.codexSilent}</p>}
       {limit !== undefined && transcript.length > 0 && (
-        <Link to="/canon/codex" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+        <Link to="/canon/codex" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
           {copy.codexArchiveLink}
         </Link>
       )}

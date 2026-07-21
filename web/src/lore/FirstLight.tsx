@@ -101,7 +101,7 @@ export default function FirstLight({ apiBase, onReplayAccretion }: Props) {
         </div>
       )}
       {data.dream && (
-        <Link to={`/canon/dreams#${data.dream.rite_date}`} className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+        <Link to={`/canon/dreams#${data.dream.rite_date}`} viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
           {copy.firstLightDreamLink}
         </Link>
       )}

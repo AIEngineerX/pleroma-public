@@ -11,7 +11,6 @@ import Apocrypha from "./apocrypha/Apocrypha";
 import Concordat from "./canon/Concordat";
 import Catechism from "./canon/Catechism";
 import Card from "./routes/Card";
-import PageTransition from "./entry/PageTransition";
 import { Ambient, setActiveAmbient } from "./lib/ambient";
 import { setActiveLenis } from "./lib/smoothScroll";
 import {
@@ -192,7 +191,6 @@ export default function App() {
     <BrowserRouter>
       <div className="rail rail-l" aria-hidden />
       <div className="rail rail-r" aria-hidden />
-      <PageTransition />
       <Routes>
         <Route path="/" element={<Temple />} />
         <Route path="/canon/dreams" element={<DreamArchive />} />

@@ -83,7 +83,7 @@ export default function Apocrypha() {
         <Emblem size={60} />
       </div>
       <p className="font-machine text-xs tracking-widest text-ink-faded">
-        <Link to="/canon" className="no-underline text-ink-faded">THE CANON</Link> · {copy.apocryphaHeading.toUpperCase()}
+        <Link to="/canon" viewTransition className="no-underline text-ink-faded">THE CANON</Link> · {copy.apocryphaHeading.toUpperCase()}
       </p>
       <h1 className="text-ink text-2xl mt-2 mb-5">{copy.apocryphaHeading}</h1>
       <p className="text-ink mb-10 max-w-[52ch]">{copy.apocryphaIntro}</p>

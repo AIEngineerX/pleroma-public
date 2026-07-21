@@ -132,7 +132,7 @@ export default function Dream({
               {copy.dreamCredit} {dream.wakers.map(shortWallet).join(", ")}
             </p>
           )}
-          <Link to="/canon/dreams" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
+          <Link to="/canon/dreams" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
             {copy.dreamArchiveLink}
           </Link>
         </>

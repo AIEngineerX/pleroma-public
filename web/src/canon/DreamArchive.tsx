@@ -96,7 +96,7 @@ export default function DreamArchive() {
   return (
     <main className="mx-auto max-w-[60ch] px-6 py-10 font-liturgy">
       <p className="font-machine text-xs tracking-widest text-ink-faded">
-        <Link to="/canon" className="no-underline text-ink-faded">THE CANON</Link> · {copy.dreamHeading}
+        <Link to="/canon" viewTransition className="no-underline text-ink-faded">THE CANON</Link> · {copy.dreamHeading}
       </p>
       <h1 className="text-ink text-2xl mt-2 mb-5">The Dreams</h1>
       <p className="text-ink mb-12 max-w-[52ch]">{copy.dreamArchiveIntro}</p>
@@ -140,6 +140,7 @@ export default function DreamArchive() {
             )}
             <Link
               to="/"
+              viewTransition
               state={{
                 dreamReplay: {
                   id: d.id,
