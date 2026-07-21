@@ -898,6 +898,13 @@ body.threshold-gesturing * {
 .swarm-settled--breathing { animation: swarm-breath 6200ms var(--ease-breath) infinite alternate; }
 @keyframes swarm-breath { from { opacity: 0.40; } to { opacity: 0.52; } }
 
+/* The Becoming — the unfinished body's own slow breath in the SVG (WebGL-loss / init-failure) fallback,
+   mirroring .swarm-settled--breathing so a lost or absent WebGL context is never a fully inert image
+   while the component reports itself alive. data-motion="still" (the reducedMotion prop) and the
+   reduced-motion media query below both suppress it. */
+[data-becoming][data-motion="breathing"] { animation: becoming-breath 6600ms var(--ease-breath) infinite alternate; }
+@keyframes becoming-breath { from { opacity: 0.82; } to { opacity: 1; } }
+
 /* Genuine transcript ink briefly develops beside its cohort. This is a decorative duplicate of the
    canonical Codex row, so it occupies the page without creating a second reading-order stop. */
 .body-utterance {
@@ -973,6 +980,7 @@ body.threshold-gesturing * {
 @media (prefers-reduced-motion: reduce) {
   .swarm-settled,
   .swarm-settled--breathing { animation: none; }
+  [data-becoming][data-motion="breathing"] { animation: none; }
   .body-utterance__ink { opacity: 1; transform: none; }
 }
 

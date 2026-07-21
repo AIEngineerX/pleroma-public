@@ -264,6 +264,10 @@ class BecomingSimImpl implements BecomingSimHandle {
     gl.deleteTexture(this.accumTex);
     gl.deleteVertexArray(this.fsQuadVao); gl.deleteBuffer(this.fsQuadBuf);
     gl.deleteVertexArray(this.pieceVao); gl.deleteBuffer(this.pieceBuf);
+    // Release the GPU context now rather than waiting for GC: /becoming is a re-enterable route, so
+    // remounts would otherwise pile up live WebGL2 contexts against the browser's per-page cap. Safe
+    // here because Becoming.tsx removes the webglcontextlost listener before this unmount dispose runs.
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
   }
 
   private bake() {
