@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { resolveApiBase } from "../config";
 import { fetchDreams } from "./dreamsClient";
@@ -16,6 +16,36 @@ const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
 function caption(d: DreamArchiveEntry): string {
   if (d.video_key) return "plate printed";
   return d.status === "rendering" ? "plate printing" : "plate pending";
+}
+
+// Video windowing. The archive grows a Plate a night and keeps every loaded <li> mounted (the pager
+// appends, never replaces), so attaching a live <video src> to each would let a deep-paging visitor
+// buffer dozens or hundreds of clips at once — a real, unbounded mobile-memory drain over time. Each
+// plate attaches its <video> only while it is near the viewport (IntersectionObserver + a rootMargin
+// lead-in) and drops it when scrolled well past, releasing the decoder and buffer. The aspect-ratio
+// box holds its space either way, so layout and the permalink scroll stay stable. Resident media is
+// thus bounded to what is roughly on screen, independent of how large the archive has grown.
+function PlateVideo({ videoKey, narrative }: { videoKey: string; narrative: string }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver !== "function") { setNear(true); return; } // no IO (e.g. SSR): show it
+    // A generous lead-in so a plate is already attached by the time it scrolls in (no pop-in), while a
+    // deep archive still only ever holds a small window of clips resident — bounded, not the whole list.
+    const io = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), { rootMargin: "600px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return (
+    <div ref={boxRef} className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
+      {near && (
+        <video className="w-full h-full object-cover" src={`${API_BASE}/api/${videoKey}`}
+          loop muted playsInline controls aria-label={narrative} />
+      )}
+    </div>
+  );
 }
 
 export default function DreamArchive() {
@@ -88,10 +118,7 @@ export default function DreamArchive() {
           <li key={d.id} id={d.rite_date} className="flex flex-col items-center text-center gap-3 scroll-mt-10">
             <figure className="dream-plate w-full max-w-[52ch]">
               {d.video_key ? (
-                <div className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
-                  <video className="w-full h-full object-cover" src={`${API_BASE}/api/${d.video_key}`}
-                    loop muted playsInline controls aria-label={d.narrative} />
-                </div>
+                <PlateVideo videoKey={d.video_key} narrative={d.narrative} />
               ) : (
                 <div className="dream-plate__media aspect-video overflow-hidden flex items-center">
                   <p className="font-liturgy italic text-rubric-body text-lg leading-relaxed">{d.narrative}</p>
