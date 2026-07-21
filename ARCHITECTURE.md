@@ -184,7 +184,7 @@ sequenceDiagram
     EYE->>API: transcript EYE/verse; status=perceived
     Note over Rite: daily rite (opens 00:50 UTC)
     Rite->>Rite: scheduled: snapshot perceived count
-    Rite->>KEEP: deliberation: runKeep (≤12 kept/day)
+    Rite->>KEEP: deliberation: runKeep (every perceived, deadline-bounded)
     KEEP->>API: transcript KEEP/verdict; relic row (if kept); status=kept|mourned
     Rite->>Rite: accretion: stamp relics.accreted_at
     Rite->>API: sermon: TONGUE composes closing sermon (+TTS)
