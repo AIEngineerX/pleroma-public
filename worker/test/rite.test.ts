@@ -236,8 +236,19 @@ describe("sermon-audio backfill (tick-side heal for a preached-but-silent sermon
     expect(await notes(date)).toBe(1);
   });
 
+  it("waits out a non-terminal rite instead of racing its sermon phase", async () => {
+    const date = "2026-06-29";
+    const at = Date.now() + 90_000; // latest sermon overall, rite still mid-flight
+    await openRite(env.DB, date, Date.parse(date + "T00:50:00Z")); // phase "scheduled": non-terminal
+    await addTranscript(env.DB, { id: ulid(), organ: "TONGUE", register: "sermon",
+      text: "A psalm whose rite is still under way.", offering_id: null, rite_id: date, created_at: at });
+    const { backfillSermonAudio } = await import("../src/rite");
+    await backfillSermonAudio(env);
+    expect(await notes(date)).toBe(0); // the rite side owns this sermon until it lands terminal
+  });
+
   it("leaves a sermon whose rite already carries an audio note untouched", async () => {
-    const date = "2026-07-18";
+    const date = "2026-06-30";
     const at = Date.now() + 120_000; // latest sermon overall, already noted
     await addTranscript(env.DB, { id: ulid(), organ: "TONGUE", register: "sermon",
       text: "An already-voiced psalm.", offering_id: null, rite_id: date, created_at: at });

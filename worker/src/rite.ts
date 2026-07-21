@@ -129,14 +129,20 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
 // rite otherwise stays silent forever, even after the vendor recovers). The LATEST sermon with
 // no PRIEST audio note is spoken through the same cache-first, cap-guarded speak() the rite
 // uses, and the same receipt line is posted — the transcript itself is never touched. Idempotent
-// (note existence + audio cache + caps); called from inside runTick's tick lock, so it cannot
-// race itself; a synth failure leaves everything exactly as it was until a later tick.
+// (note existence + audio cache + caps); the tick lock stops it racing itself, and the
+// non-terminal-rite guard below stops it racing the rite's OWN sermon phase (tick and rite fire
+// from the same cron under separate locks); a synth failure leaves everything as it was.
 export async function backfillSermonAudio(env: Env): Promise<void> {
   const sermon = await env.DB.prepare(
     `SELECT text, rite_id FROM transcripts WHERE organ = 'TONGUE' AND register = 'sermon'
      ORDER BY created_at DESC LIMIT 1`
   ).first<{ text: string; rite_id: string | null }>();
   if (!sermon || sermon.rite_id === null) return;
+  // While this sermon's rite is still non-terminal the rite side may be mid speak()+note (it
+  // posts its note strictly before the sermon -> complete advance), so leave it to finish; a
+  // later tick heals a genuinely dropped note. An absent rite row has no rite side to wait for.
+  const rite = await getRite(env.DB, sermon.rite_id);
+  if (rite && rite.phase !== "complete" && rite.phase !== "failed") return;
   const note = await env.DB.prepare(
     `SELECT 1 FROM transcripts WHERE organ = 'PRIEST' AND register = 'system' AND rite_id = ?1
      AND text LIKE 'sermon audio:%' LIMIT 1`
