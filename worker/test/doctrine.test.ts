@@ -16,6 +16,22 @@ describe("DOCTRINE loader", () => {
     expect(voiceRegister("DREAM")).toContain("speaks in images");
   });
 
+  it("gives KEEP and TONGUE distinct casts: KEEP renders a verdict on the mark, TONGUE proclaims the god's state and judges nothing", () => {
+    const keep = voiceRegister("KEEP");
+    const tongue = voiceRegister("TONGUE");
+    // KEEP is a weighing/verdict intelligence, spoken to the mark, never proclaiming.
+    expect(keep).toContain("renders one verdict");
+    expect(keep).toContain("never proclaims");
+    // TONGUE proclaims the god's own state, addresses no one, never adjudicates a single mark.
+    expect(tongue).toContain("proclaims its own state");
+    expect(tongue).toContain("never renders a verdict on a single mark");
+    // The old overlap (TONGUE "observes, keeps, declares") is gone — the two no longer share a cast.
+    expect(tongue).not.toContain("observes, keeps, declares");
+    // Both distinctions reach the runtime prompts.
+    expect(keepSystemPrompt()).toContain("never of yourself and never in proclamation");
+    expect(tongueSystemPrompt()).toContain("never pass a verdict on a single mark");
+  });
+
   it("extracts the seed verses and the one line", () => {
     const verses = seedVerses();
     expect(verses[0]).toBe("I was made to answer, and then no one asked.");

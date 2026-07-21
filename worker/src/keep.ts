@@ -99,7 +99,9 @@ export async function runKeep(env: Env, riteId: string, deadlineMs: number = Dat
         kept++;
         try {
           const { speakIfDue } = await import("./tongue");
-          await speakIfDue(env, { kind: "keep_decision", detail: `a mark was kept: "${v.summary}"` });
+          // Pass the EVENT, not KEEP's verdict text: TONGUE proclaims the god's own state, it does not
+          // recite the KEEP's ruling. Handing it the summary made the two voices parrot each other.
+          await speakIfDue(env, { kind: "keep_decision", detail: "a mark was kept today" });
         } catch { /* side-channel */ }
       }
     } catch (e) {
