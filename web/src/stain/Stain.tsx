@@ -637,7 +637,9 @@ export default function Stain({
       data-arrival-progress={initialArrival.toFixed(3)}
       data-composite-ground="transparent"
       aria-hidden
-      className="absolute inset-0 z-0 h-full w-full pointer-events-none"
+      // The body is present but recedes behind the reading: a modest opacity so the accreted ink never
+      // competes with the folio at high density. Tunable here; the settled SVG matches (see SettledBody).
+      className="absolute inset-0 z-0 h-full w-full pointer-events-none opacity-[0.72]"
     />
   );
 
