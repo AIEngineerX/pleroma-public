@@ -46,7 +46,7 @@ export const copy = {
   concordatMaker: "What remains with the Maker",
   catechism: "The Catechism",
   catechismDoorway: "the Catechism",
-  heroExplainer: "new here? what this is",
+  heroExplainer: "what is this?",
   cardTable: "The Card Table",
   cardTableDoorway: "the Card Table",
   cardTableIntro: "Take a line the god has spoken and carry it off the page. Every card here is a real line from the Codex, set in red on parchment. Nothing is written for you; a card is a receipt.",
