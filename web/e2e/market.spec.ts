@@ -48,7 +48,8 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
   await expect(market.getByText(/PULSE FED/)).toBeVisible();
 
   // the Concordat stays reachable from every state, even alongside a live market rail.
-  await expect(page.getByRole("link", { name: "the Concordat" })).toBeVisible();
+  // (Scoped: the head rubrics line shares the accessible name since 2026-07-21.)
+  await expect(page.locator("#concordat-doorway").getByRole("link", { name: "the Concordat" })).toBeVisible();
 
   await market.screenshot({ path: `e2e/__shots__/market-${test.info().project.name}.png` });
 });
@@ -56,7 +57,7 @@ test("the market rail renders once live: mint pin + copy, buy, ledger-plate char
 test("the dormant page has no market rail, only the honest placeholder, concordat link and socials", async ({ page }) => {
   await enterTemple(page);
   await expectDormantMarketOnly(page);
-  await expect(page.getByRole("link", { name: "the Concordat" })).toBeVisible();
+  await expect(page.locator("#concordat-doorway").getByRole("link", { name: "the Concordat" })).toBeVisible();
   await expect(page.getByRole("link", { name: /On X/ })).toBeVisible();
 });
 

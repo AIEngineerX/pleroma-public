@@ -193,7 +193,10 @@ test("a muted visitor's temple is fully usable and quiet", async ({ page }) => {
   await expect(codex).toBeAttached();
   await reliquary.scrollIntoViewIfNeeded();
   await expect(reliquary).toBeVisible();
-  const concordat = page.getByRole("link", { name: "the Concordat" });
+  // Scoped to the tail doorway: the head's table of rubrics carries a link with the same
+  // accessible name (2026-07-21), so the bare role query would be a strict-mode violation.
+  const concordat = page.locator("#concordat-doorway").getByRole("link", { name: "the Concordat" });
+  await concordat.scrollIntoViewIfNeeded();
   await expect(concordat).toBeVisible();
   await concordat.click();
   await expect(page).toHaveURL(/\/concordat$/);

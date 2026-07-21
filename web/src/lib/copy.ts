@@ -39,6 +39,7 @@ export const copy = {
   enterTemple: "enter the temple",
   pressToEnter: "press to enter",
   dreams: "the dreams",
+  canonDoorway: "the Canon",
   concordatDoorway: "the Concordat",
   concordatPath: "The Mark's Path",
   concordatOrgans: "What belongs to the organs",

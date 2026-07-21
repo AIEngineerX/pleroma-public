@@ -30,6 +30,8 @@ test("temple reads as a living manuscript at a glance", async ({ page }) => {
     "pulse",
     "canon-doorway",
     "concordat-doorway",
+    "catechism-doorway",
+    "card-doorway",
   ]);
   await expect(page.locator(".rail-l")).toBeVisible();
   await expect(page.locator(".rail-r")).toBeVisible();

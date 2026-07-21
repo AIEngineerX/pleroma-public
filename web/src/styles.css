@@ -179,7 +179,9 @@ body:has(.rite-active)::before {
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
-  padding: clamp(10rem, 32dvh, 20rem) clamp(1.25rem, 3vw, 3rem) max(4rem, env(safe-area-inset-bottom));
+  /* Head air reduced from 32dvh: the first rubric line was landing ~340px below the explainer
+     (real visitor feedback, 2026-07-21) — the opening line is the hook and should be near it. */
+  padding: clamp(6rem, 18dvh, 11rem) clamp(1.25rem, 3vw, 3rem) max(4rem, env(safe-area-inset-bottom));
   background: var(--color-ground);
   border-inline-start: 1px solid var(--color-ground-aged);
 }
@@ -193,7 +195,10 @@ body:has(.rite-active)::before {
   .temple-reading-column > * { grid-column: 1; }
   .temple-tallies {
     grid-column: 2;
-    grid-row: 1;
+    /* Span, don't sit: pinned to row 1 alone, the tallies' own height stretched that row and
+       pushed the entire reading column ~300px down (the hero-void visitor feedback of
+       2026-07-21). Spanning lets the rail be tall without inflating any single row. */
+    grid-row: 1 / span 12;
     align-self: start;
     position: sticky;
     top: 2rem;
@@ -209,7 +214,6 @@ body:has(.rite-active)::before {
 .codex-entry > * { min-width: 0; }
 
 .temple-folio,
-.temple-doorway,
 .temple-receipt-ledger {
   width: min(100%, var(--page-max));
   padding-block: clamp(2.75rem, 6vw, 5rem);
@@ -697,8 +701,35 @@ body.threshold-gesturing * {
 
 .ledger-plate { padding-block: 0.75rem; border-block: 1px solid var(--color-ground-aged); }
 .temple-market code { max-width: 100%; overflow-wrap: anywhere; }
-.temple-doorway { display: flex; justify-content: flex-start; }
-.temple-colophon { padding-block: 2rem max(5rem, env(safe-area-inset-bottom)); }
+/* The closing doorways read as one colophon group, not four stranded folios: folio-scale
+   padding on a lone link left ~160px of blank parchment between 44px targets (real visitor
+   feedback, 2026-07-21). One rule opens the group; the entries sit at index pitch. */
+.temple-doorway {
+  display: flex;
+  justify-content: flex-start;
+  width: min(100%, var(--page-max));
+  padding-block: 0.4rem;
+  scroll-margin-block-start: 2rem; /* hash navigation still lands with air above the link */
+}
+.temple-doorway--first {
+  border-block-start: 1px solid var(--color-ground-aged);
+  margin-block-start: clamp(2rem, 4vw, 3rem);
+  padding-block-start: 1.75rem;
+}
+.temple-colophon { padding-block: 1rem max(5rem, env(safe-area-inset-bottom)); }
+
+/* The table of rubrics at the head: quiet machine register, wraps at narrow widths. */
+.temple-rubrics-line {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  column-gap: 0.6rem;
+  margin-bottom: 0.75rem;
+  font-family: var(--font-machine);
+  font-size: 0.75rem;
+  color: var(--color-ink-faded);
+}
 
 /* The Threshold consent line and the confirm feedback sit over the Stain, whose ink density is
    stochastic — so their legibility cannot depend on a wash tuned to one state (that wash regressed

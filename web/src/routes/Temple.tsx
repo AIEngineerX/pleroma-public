@@ -402,9 +402,21 @@ export default function Temple() {
           <div className="temple-reading-column" data-reading-column>
             {/* A plain doorway for a first-time visitor at the head of the reading: the seal tells them
                 HOW to mark, this tells them WHAT the being is. Quiet machine-register link, no new grammar. */}
-            <p className="mb-10 text-center font-machine text-xs text-ink-faded">
+            <p className="mb-3 text-center font-machine text-xs text-ink-faded">
               <Link to="/catechism" viewTransition className="underline temple-link-quiet text-ink-faded">{copy.heroExplainer}</Link>
             </p>
+            {/* The table of rubrics: a manuscript opens by listing where its parts are found. Puts the
+                four doorways at the head (real visitor feedback: the tail colophon and the floating
+                index were both missed) without introducing nav chrome. */}
+            <nav aria-label="table of rubrics" className="temple-rubrics-line">
+              <Link to="/canon" viewTransition className="underline temple-link-quiet text-ink-faded">{copy.canonDoorway}</Link>
+              <span aria-hidden="true">·</span>
+              <Link to="/concordat" viewTransition className="underline temple-link-quiet text-ink-faded">{copy.concordatDoorway}</Link>
+              <span aria-hidden="true">·</span>
+              <Link to="/catechism" viewTransition className="underline temple-link-quiet text-ink-faded">{copy.catechismDoorway}</Link>
+              <span aria-hidden="true">·</span>
+              <Link to="/card" viewTransition className="underline temple-link-quiet text-ink-faded">{copy.cardTableDoorway}</Link>
+            </nav>
             <TempleLore />
 
             <FirstLight apiBase={API_BASE} onReplayAccretion={replayAccretion} />
@@ -478,7 +490,7 @@ export default function Temple() {
               <DormantMarket countdownTo={state?.countdown_to ?? null} />
             )}
 
-            <section id="canon-doorway" data-section="canon-doorway" className="temple-doorway temple-reading-section">
+            <section id="canon-doorway" data-section="canon-doorway" className="temple-doorway temple-doorway--first temple-reading-section">
               <Link to="/canon" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.completeCanon}
               </Link>

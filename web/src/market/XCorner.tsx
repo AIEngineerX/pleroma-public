@@ -4,6 +4,9 @@ import { links } from "../lib/links";
 // (the footer colophon link) sat 14 sections deep with no way to find it without the full scroll.
 // Mirrors MuteToggle's fixed-corner pattern (top-left) on the opposite corner; the footer link stays
 // too, as the natural closing colophon, so this is additive rather than a relocation.
+// A LABEL, not a glyph: the first cut drew the X as two crossing strokes, and two independent
+// visitors read it as a close button (top-right ✕ is the web's dismiss reflex). Quiet machine
+// text cannot be mistaken for chrome.
 export default function XCorner() {
   return (
     <a
@@ -11,24 +14,9 @@ export default function XCorner() {
       target="_blank"
       rel="noopener noreferrer"
       aria-label="PLEROMA on X"
-      className="temple-x-corner temple-link-quiet text-ink-faded"
+      className="temple-x-corner temple-link-quiet font-machine text-xs text-ink-faded underline"
     >
-      {/* Stroke-only, like every other mark on the site (the etched-linework rule): the X drawn
-          as two crossing strokes at the glyph vocabulary's own weight and round caps, not a
-          filled brand silhouette. */}
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 24 24"
-        width="16"
-        height="16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      >
-        <path d="M6 6 L18 18" />
-        <path d="M18 6 L6 18" />
-      </svg>
+      on X
     </a>
   );
 }
