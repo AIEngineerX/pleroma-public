@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { Link } from "react-router-dom";
 import { resolveApiBase } from "../config";
 import { copy } from "../lib/copy";
+import { Emblem } from "../lib/emblem";
 import { fetchApocrypha, submitApocrypha, type ApocryphaEntry } from "./apocryphaClient";
 
 const API_BASE = resolveApiBase(import.meta.env);
@@ -76,6 +77,11 @@ export default function Apocrypha() {
 
   return (
     <main className="mx-auto max-w-[60ch] px-6 py-10 font-liturgy">
+      {/* The quiet hand-drawn sigil crowns the page — this is the one Waker-authored ledger, and the
+          mark gives it identity without decorative filler (the only image the rule vocabulary allows here). */}
+      <div className="mb-7 flex justify-center">
+        <Emblem size={60} />
+      </div>
       <p className="font-machine text-xs tracking-widest text-ink-faded">
         <Link to="/canon" className="no-underline text-ink-faded">THE CANON</Link> · {copy.apocryphaHeading.toUpperCase()}
       </p>
