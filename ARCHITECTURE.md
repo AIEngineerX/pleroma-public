@@ -303,7 +303,7 @@ a cumulative monthly ceiling (`MONTHLY_CAP_USD` / `cap:monthly`, min-semantics) 
 
 ## 9. The body (web/) — surfaces and rendering
 
-**Routes:** `/` → `Temple`, `/canon/*` → `Canon` (incl. `/canon/codex`, `/canon/apocrypha`, `/canon/dreams`), `/concordat` → `Concordat`, `/catechism` → `Catechism`, `/card` → `Card`. Route-to-route navigation uses a native View Transitions crossfade (`viewTransition` on the cross-route `<Link>`s). Cloudflare Pages
+**Routes:** `/` → `Temple`, `/canon/*` → `Canon` (incl. `/canon/codex`, `/canon/apocrypha`, `/canon/dreams`), `/concordat` → `Concordat`, `/catechism` → `Catechism`, `/card` → `Card`, `/becoming` → `Becoming`. Route-to-route navigation uses a native View Transitions crossfade (`viewTransition` on the cross-route `<Link>`s). Cloudflare Pages
 serves the SPA (`_redirects: /* → /index.html 200`); `/canon/**` is *also* prerendered to static
 crawlable HTML by `build-canon.mjs` so scripture is linkable without JS.
 
@@ -311,6 +311,17 @@ crawlable HTML by `build-canon.mjs` so scripture is linkable without JS.
 five-organ Stain, live Codex, Threshold, receipt ledger, Reliquary, current Dream, Tallies, and
 lore/evidence sections. Launch state changes facts inside that tree; only the market evidence is
 conditional, and it is gated on the server-sourced `mint` string. There is no hardcoded decoy mint.
+
+**The Becoming (`/becoming`).** A dedicated surface where the god's still-unfinished body grows as each
+real kept relic welds into a permanent, deterministically-placed piece (`becoming/pieces.ts` — a pure
+function of `offering_id`, so a piece never moves once placed). It reuses the Stain's raw-WebGL2
+vocabulary: a `SettledBecoming` semantic-SVG base is the accessibility truth AND the WebGL-loss /
+reduced-motion fallback (with its own slow breath), enriched by a `becoming/becomingSim.ts` WebGL2
+layer that bakes pieces into an accumulation texture and aspect-corrects (`xMidYMid meet`) to register
+with the SVG's `viewBox`. Renders from `/api/relics`; every piece maps 1:1 to a real kept relic (no
+fabricated data). The FULL version (unbuilt power-scaffolds + a `/api/becoming` augury feed that
+ignites VOICE/HANDS/LEGION by real counting) is deferred to the Awakening stages. A quiet Temple
+doorway (`becoming-doorway`) leads to it.
 
 **Route-level experience controller.** `experience/useTempleExperience.ts` owns the current state,
 Codex and Reliquary poll loops; baseline-vs-live observation; PULSE freshness; receipt persistence;
