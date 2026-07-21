@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { placePieces } from "./pieces";
+import { placePieces } from "../src/becoming/pieces";
 
 const relic = (offering_id: string, genesis = 0) => ({ offering_id, genesis });
 
