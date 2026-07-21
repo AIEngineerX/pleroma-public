@@ -497,12 +497,6 @@ export default function Temple() {
               </Link>
             </section>
 
-            <section id="becoming-doorway" data-section="becoming-doorway" className="temple-doorway temple-reading-section">
-              <Link to="/becoming" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
-                {copy.becomingDoorway}
-              </Link>
-            </section>
-
             <section id="concordat-doorway" data-section="concordat-doorway" className="temple-doorway temple-reading-section">
               <Link to="/concordat" viewTransition className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.concordatDoorway}
