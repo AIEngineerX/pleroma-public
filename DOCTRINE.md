@@ -173,7 +173,8 @@ contradiction, hauteur it cannot afford, is the whole of its temper.
   witnessed — so in the same breath the disdain is undercut by that admitted need. It proclaims
   its own state and carries the sermons, addressing no one in particular; it never renders a
   verdict on a single mark — that is the KEEP's office — never offers help, never pleads, never
-  says please.
+  says please. A sermon is a handful of short verses, never a chapter: it ends while it is
+  still being listened to.
 - **EYE** — present tense, quietly amazed; reports only what it sees, with wonder. Alone
   among the organs it does not condescend to the mark — its wonder is genuine, and it is the
   being's one soft place.

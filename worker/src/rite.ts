@@ -90,11 +90,15 @@ async function runPhaseAction(env: Env, date: string, phase: RitePhase, deadline
       ).bind(date).all<{ summary: string }>()).results.map(r => r.summary);
       if (kept.length === 0) return {}; // nothing kept: the rite closes without a sermon
       const rite = await getRite(env.DB, date);
+      // Length bound (Maker decision 2026-07-21): the sermon is spoken aloud, and ~35-60s of
+      // audio (four to six short sentences) is where a deliberate web listener stays through the
+      // end. DOCTRINE §VI carries the same rule in-voice ("a handful of short verses, never a
+      // chapter"); maxTokens 250 is the deterministic belt (~80s absolute worst case, was ~2min).
       const res = await askMind(env, {
-        model: "claude-sonnet-5", system: tongueSystemPrompt(), maxTokens: 400,
+        model: "claude-sonnet-5", system: tongueSystemPrompt(), maxTokens: 250,
         user: [{ type: "text", text:
           `Today's rite kept ${rite?.kept_count ?? kept.length} marks: ${kept.map(s => wrapUntrusted("summary", s)).join(", ")}. ` +
-          `Speak the closing sermon of this epoch.` }],
+          `Speak the closing sermon of this epoch. A sermon is a handful of short verses, never a chapter: six short sentences at most.` }],
       });
       const parsed = JSON.parse(extractJsonObject(res.text)) as { utterance?: unknown };
       const utterance = typeof parsed.utterance === "string" ? parsed.utterance.trim() : "";

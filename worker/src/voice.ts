@@ -49,7 +49,9 @@ export function elevenLabsVoice(env: Env): VoiceVendor {
         {
           method: "POST",
           headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "content-type": "application/json", accept: "audio/mpeg" },
-          body: JSON.stringify({ text, model_id: "eleven_multilingual_v2" }),
+          // Pace/steadiness pinned in-repo rather than as invisible dashboard state on the voice:
+          // 0.9 speed reads liturgical, higher stability keeps the register level (Maker, 2026-07-21).
+          body: JSON.stringify({ text, model_id: "eleven_multilingual_v2", voice_settings: { speed: 0.9, stability: 0.6, similarity_boost: 0.75 } }),
           signal,
         },
       ));
@@ -68,9 +70,9 @@ export function elevenLabsVoice(env: Env): VoiceVendor {
   };
 }
 
-// xAI/Grok voice: primary vendor. The exact request shape is verified against the live API during the
-// day-2/day-6 TTS spike (PLANNING open question 3b); until then VOICE_VENDOR stays "elevenlabs" in prod
-// if the spike is not yet green. Kept behind the same interface so switching is one env-var change.
+// xAI/Grok voice: the fallback vendor (Maker decision 2026-07-21: ElevenLabs is primary, speaking
+// the locked "PLEROMA Logos" designed voice). Kept behind the same interface so switching back is
+// one env-var change; vendor is infrastructure, never identity.
 export function xaiVoice(env: Env): VoiceVendor {
   return {
     name: "xai",

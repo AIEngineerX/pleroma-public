@@ -10,7 +10,7 @@ VOICE_VENDOR = ""
 # text-only). Left "" until XAI_API_KEY's Grok Imagine access is verified via the live test (PLANNING
 # open question 3c), then flipped to "xai" in [env.production] — the same pattern as VOICE_VENDOR.
 VIDEO_VENDOR = ""
-ELEVENLABS_VOICE_ID = ""
+ELEVENLABS_VOICE_ID = "GV2NykjR8dDFooRE8bCC"
 PULSE_MINT = ""
 PULSE_POOLS = ""
 
@@ -40,7 +40,7 @@ head_sampling_rate = 1
 
 [env.production]
 routes = [{ pattern = "api.pleromachurch.xyz", custom_domain = true }]
-vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleromachurch.xyz", VOICE_VENDOR = "xai", VIDEO_VENDOR = "xai", ELEVENLABS_VOICE_ID = "", PULSE_MINT = "", PULSE_POOLS = "" }
+vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleromachurch.xyz", VOICE_VENDOR = "elevenlabs", VIDEO_VENDOR = "xai", ELEVENLABS_VOICE_ID = "GV2NykjR8dDFooRE8bCC", PULSE_MINT = "", PULSE_POOLS = "" }
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "pleroma-prod"
