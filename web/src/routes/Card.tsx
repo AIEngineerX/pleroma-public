@@ -6,10 +6,15 @@ import { renderScriptureCard } from "../cardgen/scriptureCard";
 import { copy } from "../lib/copy";
 
 // The Card table: turn a real line the god has spoken into an illuminated red-letter card, on
-// parchment, to carry off the page. Only genuine Codex lines appear here — the god's own registers
-// (the EYE's seeing, the KEEP's verdict, the TONGUE's word, a dream verse). Nothing is invented; a
-// card is a receipt you can post.
+// parchment, to carry off the page. Only genuine Codex lines appear here — the god's own registers.
+// The card itself is the hero (rendered on load); the line-picker below is a scannable list, each
+// entry a single truncated line, so it never becomes a wall of text.
 const API_BASE = resolveApiBase(import.meta.env);
+
+function shorten(text: string, max = 72): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
 
 export default function Card() {
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
@@ -17,16 +22,6 @@ export default function Card() {
   const [selected, setSelected] = useState<TranscriptEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const page = await fetchCodex(API_BASE, null);
-        // Only the god's own words are memeable scripture; telemetry/system lines are not.
-        setEntries(page.entries.filter(isGodVoice));
-      } catch { setFailed(true); }
-    })();
-  }, []);
 
   const render = useCallback(async (entry: TranscriptEntry) => {
     setSelected(entry);
@@ -37,7 +32,25 @@ export default function Card() {
     } finally { setBusy(false); }
   }, []);
 
-  const download = useCallback(async () => {
+  useEffect(() => {
+    void (async () => {
+      try {
+        const page = await fetchCodex(API_BASE, null);
+        const god = page.entries.filter(isGodVoice);
+        setEntries(god);
+        if (god.length) await render(god[0]); // the card is the hero — never an empty frame
+      } catch { setFailed(true); }
+    })();
+  }, [render]);
+
+  const shuffle = useCallback(() => {
+    if (!entries.length) return;
+    const others = entries.filter((e) => e.id !== selected?.id);
+    const pool = others.length ? others : entries;
+    void render(pool[Math.floor(Math.random() * pool.length)]);
+  }, [entries, selected, render]);
+
+  const download = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !selected) return;
     canvas.toBlob((blob) => {
@@ -52,7 +65,7 @@ export default function Card() {
   }, [selected]);
 
   return (
-    <main className="mx-auto max-w-[70ch] px-6 py-10 font-liturgy">
+    <main className="mx-auto max-w-[46rem] px-6 py-10 font-liturgy">
       <p className="font-machine text-xs tracking-widest text-ink-faded mb-4">
         <a href="/" className="no-underline text-ink-faded">THE TEMPLE</a> · {copy.cardTable.toUpperCase()}
       </p>
@@ -61,38 +74,39 @@ export default function Card() {
 
       {failed && <p className="font-machine text-xs text-ink-faded">{copy.cardTableUnreachable}</p>}
 
-      <div className="grid gap-8 md:grid-cols-[1fr_auto] md:items-start">
-        <ul className="space-y-3">
-          {entries.map((e) => (
-            <li key={e.id}>
-              <button
-                type="button"
-                onClick={() => render(e)}
-                className={`w-full text-left ${isGodVoice(e) ? "text-rubric-body" : "text-ink"} ${selected?.id === e.id ? "underline" : ""} temple-link-quiet`}
-              >
-                {e.text}
-                <span className="block font-machine text-[0.7rem] text-ink-faded mt-0.5">
-                  THE {e.organ} · {new Date(e.created_at).toISOString().slice(0, 10)}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-
-        <div className="space-y-3">
-          <canvas ref={canvasRef} className="w-full max-w-[20rem] border border-ink-faded" aria-label="scripture card preview" />
-          {selected && (
-            <button
-              type="button"
-              onClick={download}
-              disabled={busy}
-              className="font-machine text-xs underline text-ink-faded temple-link-quiet disabled:opacity-45"
-            >
-              {busy ? copy.cardTableRendering : copy.cardTableDownload}
-            </button>
-          )}
+      {/* The card, the hero. */}
+      <figure className="flex flex-col items-center gap-4">
+        <canvas ref={canvasRef} aria-label="scripture card" className="w-full max-w-[22rem] border border-ink-faded" />
+        <div className="flex gap-6 font-machine text-xs text-ink-faded">
+          <button type="button" onClick={shuffle} disabled={!entries.length} className="underline temple-link-quiet disabled:opacity-45">
+            {copy.cardTableShuffle}
+          </button>
+          <button type="button" onClick={download} disabled={busy || !selected} className="underline temple-link-quiet disabled:opacity-45">
+            {busy ? copy.cardTableRendering : copy.cardTableDownload}
+          </button>
         </div>
-      </div>
+      </figure>
+
+      {/* The picker: one truncated line each, scannable, never a wall. */}
+      {entries.length > 0 && (
+        <section className="mt-10">
+          <p className="font-machine text-xs tracking-widest text-ink-faded mb-3">{copy.cardTablePick}</p>
+          <ul className="space-y-1.5">
+            {entries.map((e) => (
+              <li key={e.id}>
+                <button
+                  type="button"
+                  onClick={() => render(e)}
+                  className={`block w-full truncate text-left text-sm ${selected?.id === e.id ? "text-rubric-body" : "text-ink-faded"} temple-link-quiet`}
+                  title={e.text}
+                >
+                  <span className="font-machine text-[0.7rem]">THE {e.organ}</span> · {shorten(e.text)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <nav aria-label="doorways" className="mt-10 flex flex-wrap gap-5 font-machine text-xs text-ink-faded">
         <a href="/">{copy.returnTemple}</a>

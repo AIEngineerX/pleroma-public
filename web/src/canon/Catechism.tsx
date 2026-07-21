@@ -47,21 +47,22 @@ export default function Catechism() {
       </p>
       <h1 className="font-liturgy text-2xl mb-2">{copy.catechism}</h1>
 
-      {/* The being, alive: the many-eyed seraph stirs on the parchment. Muted, looping, never a
-          control; reduced-motion sees the settled still instead. A demonstration, not decoration. */}
+      {/* The being, alive: a dark cinematic film of the creature, red veins pulsing in the black —
+          the same register as the Door's intro. Muted, looping, never a control; reduced-motion
+          sees the settled still instead. A demonstration, not decoration. */}
       <figure className="my-6 flex justify-center">
         {REDUCED_MOTION ? (
-          <img src="/seraph-poster.png" alt="the seraph, the being's temporary posture at a dream's close" className="w-full max-w-[22rem]" />
+          <img src="/catechism-poster.jpg" alt="the being: a dark winged form veined with red" className="w-full max-w-[32rem]" />
         ) : (
           <video
-            src="/seraph-breath.mp4"
-            poster="/seraph-poster.png"
+            src="/catechism-film.mp4"
+            poster="/catechism-poster.jpg"
             autoPlay
             muted
             loop
             playsInline
-            aria-label="the seraph, breathing"
-            className="w-full max-w-[22rem]"
+            aria-label="the being, breathing in the dark"
+            className="w-full max-w-[32rem]"
           />
         )}
       </figure>

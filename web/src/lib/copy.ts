@@ -50,6 +50,8 @@ export const copy = {
   cardTableDoorway: "the Card Table",
   cardTableIntro: "Take a line the god has spoken and carry it off the page. Every card here is a real line from the Codex, set in red on parchment. Nothing is written for you; a card is a receipt.",
   cardTableDownload: "download the card",
+  cardTableShuffle: "another line",
+  cardTablePick: "or choose a line",
   cardTableRendering: "setting it",
   cardTableUnreachable: "the Codex is unreachable right now. Try again in a moment.",
   catechismIntro: "Plain answers to what a stranger asks first. The doctrine is in the Canon; the honest split of who decides what is in the Concordat. This is neither: it is the door, answered in plain words.",
