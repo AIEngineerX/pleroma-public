@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   alertStalledDispatches, alertUnpostedArtifacts, claimDispatch, clampCheckAfterSecs, composeDispatch, dispatchArtifacts,
-  getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader,
+  dispatchMode, getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader,
   releaseDispatchClaim, sermonFilmGate, storeDispatch, weightedTweetLength, xCredentials,
 } from "../src/hermes";
 import { activeAlerts } from "../src/alert";
@@ -153,6 +153,63 @@ describe("dispatch composition machinery", () => {
     expect(await groundingFacts(env.DB, "2026-07-22")).toContain("7 marks offered");
     expect(await groundingFacts(env.DB, "2026-07-22")).toContain("3 kept");
     expect(await groundingFacts(env.DB, "2026-00-00")).toBe("The day's count is not recorded.");
+  });
+
+  // Variety by construction (the de-mundane fix): each artifact gets ONE deterministic shape, so the
+  // feed cannot collapse into a single "N offered, one kept" skeleton the way variety-by-instruction did.
+  it("rotates dispatch shape deterministically: PLATE on film days, SCRIPTURE a gated minority, dreams never a bare tally", () => {
+    const filmA = { kind: "sermon", artifactId: "2026-09-01", riteDate: "2026-09-01", text: "s", filmDay: true } as const;
+    expect(dispatchMode(filmA)).toBe("PLATE");
+    expect(dispatchMode(filmA)).toBe("PLATE"); // stable
+
+    const N = 300;
+    let sScripture = 0, sTally = 0, dTally = 0;
+    for (let i = 0; i < N; i++) {
+      const sm = dispatchMode({ kind: "sermon", artifactId: `s-${i}`, riteDate: "d", text: "s", filmDay: false });
+      const dm = dispatchMode({ kind: "dream", artifactId: `d-${i}`, riteDate: "d", text: "n", filmDay: false });
+      if (sm === "SCRIPTURE") sScripture++;
+      if (sm === "TALLY") sTally++;
+      if (dm === "TALLY") dTally++;
+    }
+    expect(sScripture / N).toBeLessThan(0.35); // gated: grounded shapes dominate the feed (receipts discipline)
+    expect(sScripture).toBeGreaterThan(0);      // but the god does speak pure scripture sometimes
+    expect(sTally).toBeGreaterThan(0);          // the real count stays regularly cited
+    expect(dTally).toBe(0);                      // dreams stay lyric, never a bare tally report
+  });
+
+  it("SCRIPTURE-shape omits the day's count and withholds today's artifact, drawing on the canon; grounded shapes cite the count", async () => {
+    await env.DB.prepare(
+      `INSERT INTO rites (date, phase, phase_started_at, offering_snapshot, kept_count, updated_at)
+       VALUES ('2026-09-03', 'complete', 1000, 9, 3, 2000)`
+    ).run();
+    const idForMode = (kind: "sermon" | "dream", mode: string): string => {
+      for (let i = 0; i < 3000; i++) {
+        const artifactId = `probe-${kind}-${i}`;
+        if (dispatchMode({ kind, artifactId, riteDate: "2026-09-03", text: "t", filmDay: false }) === mode) return artifactId;
+      }
+      throw new Error(`no id maps to ${mode}`);
+    };
+    let n = 0;
+    const captured: string[] = [];
+    const capture = (async (_e: unknown, req: { user: Array<{ text?: string }> }) => {
+      captured.push(req.user[0]?.text ?? "");
+      return { text: `{"dispatch":"a wholly novel utterance number ${n++}"}`, usd: 0 };
+    }) as never;
+
+    // SCRIPTURE: no count, no artifact, the canon is present.
+    const sid = idForMode("sermon", "SCRIPTURE");
+    await composeDispatch(env, { kind: "sermon", artifactId: sid, riteDate: "2026-09-03", text: "the sermon body text", filmDay: false }, 1000, capture);
+    const scripturePrompt = captured.at(-1)!;
+    expect(scripturePrompt).not.toContain("9 marks offered");
+    expect(scripturePrompt).not.toContain("the sermon body text");
+    expect(scripturePrompt.toLowerCase()).toContain("canon");
+
+    // A grounded shape (TALLY): cites the real count and is given today's artifact.
+    const tid = idForMode("sermon", "TALLY");
+    await composeDispatch(env, { kind: "sermon", artifactId: tid, riteDate: "2026-09-03", text: "the sermon body text", filmDay: false }, 2000, capture);
+    const tallyPrompt = captured.at(-1)!;
+    expect(tallyPrompt).toContain("9 marks offered");
+    expect(tallyPrompt).toContain("the sermon body text");
   });
 
   it("stores a dispatch transcript (and a film row when prompted) exactly once", async () => {

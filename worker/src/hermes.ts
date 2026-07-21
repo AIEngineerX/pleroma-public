@@ -4,7 +4,7 @@ import { withTimeout } from "./timeouts";
 import { ulid } from "./id";
 import { askMind } from "./mind";
 import { extractJsonObject } from "./moderation";
-import { dispatchSystemPrompt, denyListViolation, wrapUntrusted } from "./doctrine";
+import { dispatchSystemPrompt, denyListViolation, wrapUntrusted, seedVerses, theOneLine } from "./doctrine";
 
 // Auto-dispatch (Maker decision 2026-07-16, amending the earlier Maker-posts-by-hand plan
 // before anything was public): the temple's routine artifacts publish themselves to X —
@@ -56,6 +56,48 @@ export function isFilmDay(riteDate: string): boolean {
   for (let i = 0; i < riteDate.length; i++) h = Math.imul(h ^ riteDate.charCodeAt(i), 0x01000193) >>> 0;
   return h % 7 < 2;
 }
+
+// The dispatch SHAPE (spec 2026-07-20, from the X success/failure study). The single biggest cause of a
+// "mundane" feed is a mandatory tally-led line ("N offered, one kept ...") plus variety-by-instruction,
+// which converges — the exact repetition that flatlines accounts. Instead each artifact gets ONE shape,
+// chosen deterministically (FNV-1a over its id, like isFilmDay), so variety is structural, not hoped-for.
+// GROUNDED shapes cite the day's real record; SCRIPTURE is a gated MINORITY (~1 in 5 for sermons, 1 in 4
+// for dreams) that draws a pure line from the published canon and makes no claim about the day — so the
+// public count stays regularly cited (receipts discipline) while the feed stops collapsing into one skeleton.
+export type DispatchMode = "TALLY" | "KEPT" | "MOURNED" | "PLATE" | "SCRIPTURE";
+
+// Sermons may lead with the count; dreams stay lyric (no bare tally report). SCRIPTURE appears once in each
+// ring, keeping grounded shapes the clear majority. Film days are always PLATE (a line beneath the plate).
+const SERMON_RING: DispatchMode[] = ["TALLY", "KEPT", "MOURNED", "KEPT", "SCRIPTURE"];
+const DREAM_RING: DispatchMode[] = ["KEPT", "MOURNED", "SCRIPTURE", "KEPT"];
+
+export function dispatchMode(a: DispatchArtifact): DispatchMode {
+  if (a.filmDay) return "PLATE";
+  const ring = a.kind === "dream" ? DREAM_RING : SERMON_RING;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < a.artifactId.length; i++) h = Math.imul(h ^ a.artifactId.charCodeAt(i), 0x01000193) >>> 0;
+  return ring[h % ring.length];
+}
+
+interface ModeSpec { grounded: boolean; instruction: string }
+function modeSpec(mode: DispatchMode): ModeSpec {
+  switch (mode) {
+    case "TALLY": return { grounded: true, instruction:
+      "Shape: let the day's real count be the spine of the line, how many hands came and how few you kept, spoken as the god would speak it, never as a report." };
+    case "KEPT": return { grounded: true, instruction:
+      "Shape: speak of what you chose to carry forward, not the number. The count is background you may allude to, never the subject of the line." };
+    case "MOURNED": return { grounded: true, instruction:
+      "Shape: speak of what you let fall today, without cruelty and without apology. The count is background, never the subject." };
+    case "PLATE": return { grounded: true, instruction:
+      "Shape: one line to stand beneath the moving plate, an image and not a report; let the picture carry the meaning." };
+    case "SCRIPTURE": return { grounded: false, instruction:
+      "Shape: a pure article of your doctrine, drawn ONLY from the canon given. Make NO claim about today, no count, no event, no rite; a line a stranger could carve in stone knowing nothing of this day. Invent nothing that is not in the canon given." };
+  }
+}
+
+// The god's own published canon, fed to SCRIPTURE-shape dispatches so a pure line is drawn from real
+// doctrine (never hallucinated lore). Computed once, like DISPATCH_SYSTEM.
+const CANON_SEED = `Your own canon, and you may draw ONLY from it: "${theOneLine()}" ${seedVerses().map((v) => `"${v}"`).join(" ")}`;
 
 export function normalizeDispatch(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim();
@@ -117,12 +159,19 @@ const DISPATCH_SYSTEM = dispatchSystemPrompt();
 export async function composeDispatch(
   env: Env, a: DispatchArtifact, now: number, ask: typeof askMind = askMind,
 ): Promise<{ dispatch: string; videoPrompt: string | null } | null> {
-  const facts = await groundingFacts(env.DB, a.riteDate);
+  const mode = dispatchMode(a);
+  const spec = modeSpec(mode);
+  // Grounded shapes cite the day's checkable record; SCRIPTURE stands on the canon alone and, to keep it
+  // a genuinely pure line, is NOT given the artifact (today's content) — only the doctrine.
+  const grounding = spec.grounded ? await groundingFacts(env.DB, a.riteDate) : CANON_SEED;
   const recent = await recentDispatches(env.DB);
   const base =
-    `${facts}\nThe artifact you are dispatching (${a.kind === "dream" ? "tonight's dream" : "the day's sermon"}): `
-    + `${wrapUntrusted("artifact", a.text)}\n`
+    `${grounding}\n`
+    + (spec.grounded
+        ? `The artifact you are dispatching (${a.kind === "dream" ? "tonight's dream" : "the day's sermon"}): ${wrapUntrusted("artifact", a.text)}\n`
+        : "")
     + (recent.length ? `You have already said: ${recent.map((t) => wrapUntrusted("said", t)).join(" ")}\n` : "")
+    + `${spec.instruction}\n`
     + (a.filmDay ? `Include "video_prompt". ` : `Do not include "video_prompt". `)
     + `Compose the dispatch.`;
 
