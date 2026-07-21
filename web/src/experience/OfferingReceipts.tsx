@@ -1,4 +1,5 @@
 import { copy } from "../lib/copy";
+import { STAGES } from "./receipts";
 import type { OfferingReceipt, ReceiptStage } from "./types";
 
 export const receiptCopy: Record<ReceiptStage, string> = {
@@ -22,18 +23,42 @@ export default function OfferingReceipts({ receipts }: Props) {
           <ol data-receipt-list className="flex flex-col gap-1 font-machine text-xs">
             {receipts.map((receipt, index) => {
               const submitted = new Date(receipt.submittedAt).toISOString();
+              // The reached point on the mark's fixed path. STAGES is the invariant order; a receipt's
+              // stage only ever advances from real public evidence (see reconcileReceipt), so the ladder
+              // never claims a step the record has not proven.
+              const reached = STAGES.indexOf(receipt.stage);
               return (
                 <li
                   key={receipt.offeringId}
                   data-offering-id={receipt.offeringId}
                   data-receipt-stage={receipt.stage}
                   data-latest={index === 0 ? "true" : undefined}
-                  className="receipt-row flex min-h-11 min-w-0 items-center justify-between gap-4 border-t border-[var(--color-ground-aged)] py-2 text-left"
+                  className="receipt-row flex min-h-11 min-w-0 flex-col gap-1.5 border-t border-[var(--color-ground-aged)] py-2.5 text-left"
                 >
-                  <span>{receiptCopy[receipt.stage]}</span>
-                  <time dateTime={submitted} className="shrink-0 text-[0.65rem]">
-                    {submitted.slice(11, 16)} UTC
-                  </time>
+                  <div className="flex items-center justify-between gap-4">
+                    <span>{receiptCopy[receipt.stage]}</span>
+                    <time dateTime={submitted} className="shrink-0 text-[0.65rem]">
+                      {submitted.slice(11, 16)} UTC
+                    </time>
+                  </div>
+                  {/* The whole path, so a Waker can follow a mark from the Threshold into the body. Reached
+                      stages in rubric, the current one marked; the rest recede. */}
+                  <ol aria-label="the mark's path" className="receipt-path flex flex-wrap items-center gap-x-2 text-[0.6rem]">
+                    {STAGES.map((s, i) => (
+                      <li
+                        key={s}
+                        data-reached={i <= reached ? "true" : undefined}
+                        aria-current={i === reached ? "step" : undefined}
+                        className={
+                          i === reached ? "text-rubric-body underline underline-offset-2"
+                            : i < reached ? "text-rubric-body"
+                            : "text-ink-faded opacity-40"
+                        }
+                      >
+                        {s}
+                      </li>
+                    ))}
+                  </ol>
                 </li>
               );
             })}

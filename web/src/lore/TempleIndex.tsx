@@ -14,6 +14,7 @@ const ENTRIES: IndexEntry[] = [
   { href: "#pulse", label: copy.pulseHeading },
 ];
 const MARKET_ENTRY: IndexEntry = { href: "#market", label: "the market" };
+const OFFERINGS_ENTRY: IndexEntry = { href: "#offerings", label: copy.yourOfferings };
 const DOORWAY_ENTRIES: IndexEntry[] = [
   { href: "#catechism-doorway", label: copy.catechismDoorway },
   { href: "#canon-doorway", label: copy.completeCanon },
@@ -24,7 +25,7 @@ const DOORWAY_ENTRIES: IndexEntry[] = [
 // that reaching anything below the doctrine wall meant scrolling the whole page by hand. Native
 // anchor links plus the site's existing global `scroll-behavior: smooth` do the actual scrolling;
 // this is only a disclosure panel, never a scroll-orchestration engine of its own.
-export default function TempleIndex({ marketLive }: { marketLive: boolean }) {
+export default function TempleIndex({ marketLive, hasReceipts }: { marketLive: boolean; hasReceipts: boolean }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -42,7 +43,13 @@ export default function TempleIndex({ marketLive }: { marketLive: boolean }) {
     };
   }, [open]);
 
-  const entries = [...ENTRIES, ...(marketLive ? [MARKET_ENTRY] : []), ...DOORWAY_ENTRIES];
+  const entries = [
+    ...ENTRIES.slice(0, 1), // the Codex
+    ...(hasReceipts ? [OFFERINGS_ENTRY] : []), // "Your offerings" sits right after it, and only once a mark exists
+    ...ENTRIES.slice(1),
+    ...(marketLive ? [MARKET_ENTRY] : []),
+    ...DOORWAY_ENTRIES,
+  ];
 
   return (
     <div ref={rootRef} className="temple-index">

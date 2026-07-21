@@ -3,7 +3,7 @@ import type { OfferingReceipt, ReceiptStage } from "./types";
 
 const STORAGE_KEY = "pleroma:offering-receipts:v1";
 const MAX_RECEIPTS = 20;
-const STAGES: readonly ReceiptStage[] = ["pending", "witnessed", "judged", "kept", "accreted"];
+export const STAGES: readonly ReceiptStage[] = ["pending", "witnessed", "judged", "kept", "accreted"];
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";

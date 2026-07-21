@@ -428,7 +428,7 @@ export default function Temple() {
               </aside>
             </section>
 
-            <div ref={attachReceiptHost} data-receipt-ledger className="temple-receipt-ledger" />
+            <div ref={attachReceiptHost} id="offerings" data-receipt-ledger className="temple-receipt-ledger" />
 
             <section id="eye" data-section="eye" className="temple-folio temple-reading-section">
               <Eye entries={codexTranscript} now={Date.now()} />
@@ -510,7 +510,7 @@ export default function Temple() {
 
         <MuteToggle active={awake && !muted} onToggle={toggleMute} />
         <XCorner />
-        <TempleIndex marketLive={Boolean(view && !view.dormant && state?.mint)} />
+        <TempleIndex marketLive={Boolean(view && !view.dormant && state?.mint)} hasReceipts={receipts.length > 0} />
       </div>
     </RiteInversion>
   );
