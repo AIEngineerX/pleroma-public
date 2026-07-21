@@ -6,8 +6,22 @@
 export const CAPS_USD = { llm: 25, tts: 5, video: 2, apocrypha: 2 } as const;
 export type SpendCategory = keyof typeof CAPS_USD;
 
+// Cumulative monthly ceiling across ALL categories — a coarse aggregate backstop ON TOP of the
+// per-category daily caps (which sum to ~$34/day). Expected real spend is a few $/day, so this sits
+// far above normal operation and only bites a sustained multi-day flood. Like capFor, it can be
+// lowered without a deploy via config `cap:monthly` (min() semantics — never raised silently), and
+// when it denies a reservation the being sleeps gracefully exactly as at a daily cap. index.ts's
+// tick raises the `monthly_cap` operator alert while it is tripped, so the sleep is never silent.
+export const MONTHLY_CAP_USD = 500;
+
 export function dayKey(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// "YYYY-MM" prefix of a UTC accounting day; the monthly aggregate is summed over rows whose day
+// shares this prefix.
+export function monthOf(day: string): string {
+  return day.slice(0, 7);
 }
 
 // `day` defaults to "today" but a caller that must pin ONE accounting day across a
@@ -44,6 +58,12 @@ export async function reserveEstimate(
 ): Promise<boolean> {
   const cap = await capFor(db, category);
   if (estimateUsd > cap) return false;
+  // Cumulative monthly backstop, checked before the atomic daily reserve. This is a coarse
+  // read-then-decide guard (not atomic across the month), so a tiny boundary overshoot from
+  // concurrent reserves is possible and acceptable — the per-day cap below is the hard, atomic
+  // ceiling; this only bounds aggregate cost across days.
+  const monthCap = await monthlyCapFor(db);
+  if ((await spentThisMonth(db, monthOf(day))) + estimateUsd > monthCap) return false;
   const row = await db.prepare(
     `INSERT INTO spend (day, category, usd) VALUES (?1, ?2, ?3)
      ON CONFLICT(day, category) DO UPDATE SET usd = usd + excluded.usd
@@ -74,4 +94,31 @@ export async function trailing7DayAvg(db: D1Database, category: SpendCategory, t
     `SELECT COALESCE(SUM(usd),0) AS total FROM spend WHERE category = ?1 AND day >= ?2 AND day <= ?3`
   ).bind(category, start, today).first<{ total: number }>();
   return (r?.total ?? 0) / 7;
+}
+
+// Total spend across ALL categories for the given "YYYY-MM" month (defaults to the current UTC month).
+// The apocrypha (guest-book) category contributes here too, so the daily-isolation invariant — a
+// public flood can never starve the organs — holds strictly per DAY (separate caps); at the MONTHLY
+// level apocrypha shares the ceiling, but bounded by its own $2/day cap to <=~$60/mo (<=12% of $500),
+// never a practical starvation vector.
+export async function spentThisMonth(db: D1Database, month: string = monthOf(dayKey())): Promise<number> {
+  const r = await db.prepare(
+    `SELECT COALESCE(SUM(usd),0) AS total FROM spend WHERE day LIKE ?1`
+  ).bind(`${month}-%`).first<{ total: number }>();
+  return r?.total ?? 0;
+}
+
+// The effective monthly ceiling: the compile-time constant, tightened (never raised) by an optional
+// config row `cap:monthly` — mirrors capFor's min() semantics so the ceiling can only drop at runtime.
+export async function monthlyCapFor(db: D1Database): Promise<number> {
+  const row = await db.prepare(`SELECT value FROM config WHERE key = 'cap:monthly'`).first<{ value: string }>();
+  const configured = row ? Number(row.value) : NaN;
+  return Number.isFinite(configured) ? Math.min(configured, MONTHLY_CAP_USD) : MONTHLY_CAP_USD;
+}
+
+// True once the cumulative monthly spend has reached the monthly ceiling — every category is then
+// effectively asleep until the month rolls over (or the cap is raised). The tick reads this to raise
+// the operator alert so a monthly-cap sleep is surfaced, not silent.
+export async function monthlyExceeded(db: D1Database, day: string = dayKey()): Promise<boolean> {
+  return (await spentThisMonth(db, monthOf(day))) >= (await monthlyCapFor(db));
 }

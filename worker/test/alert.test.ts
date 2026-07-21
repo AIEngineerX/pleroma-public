@@ -21,4 +21,20 @@ describe("operator alerting", () => {
     await clearAlert(env, "rite_failed");
     expect(await activeAlerts(env.DB)).not.toContain("rite_failed");
   });
+
+  // The webhook (alert.ts notify) fires only on the config TRANSITION — a fresh raise, or a clear of
+  // an existing flag — so a persistent condition cannot spam the Maker every tick. With no
+  // ALERT_WEBHOOK_URL set (the default here and in current prod) delivery is a guarded no-op, so this
+  // asserts the observable contract the webhook keys off: idempotent raise, existence-gated clear.
+  it("raise is idempotent (updates detail, no error) and clear only removes an existing flag", async () => {
+    await raiseAlert(env, "eye_batch_failed", "first");
+    await raiseAlert(env, "eye_batch_failed", "second"); // repeat raise: no throw, detail updated
+    expect(await activeAlerts(env.DB)).toContain("eye_batch_failed");
+    const row = await env.DB.prepare(`SELECT value FROM config WHERE key = 'alert:eye_batch_failed'`).first<{ value: string }>();
+    expect(JSON.parse(row!.value).detail).toBe("second");
+
+    await clearAlert(env, "eye_batch_failed");
+    await clearAlert(env, "eye_batch_failed"); // clearing an already-absent flag: no throw, still absent
+    expect(await activeAlerts(env.DB)).not.toContain("eye_batch_failed");
+  });
 });

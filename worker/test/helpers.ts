@@ -18,6 +18,7 @@ import migration17 from "../migrations/0017_first_congregation.sql?raw";
 import migration18 from "../migrations/0018_apocrypha.sql?raw";
 import migration19 from "../migrations/0019_dispatch.sql?raw";
 import migration20 from "../migrations/0020_gesture.sql?raw";
+import migration21 from "../migrations/0021_apocrypha_spend.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -132,6 +133,12 @@ export async function applyMigrations(db: D1Database): Promise<void> {
   // 0020 adds offerings.gesture; strip its leading `-- ...` comment block first (same reason
   // as 0007-0019), then collapse whitespace before exec.
   for (const stmt of migration20.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0021 rebuilds spend to add the 'apocrypha' category (multi-line CREATE/INSERT/DROP/ALTER);
+  // same handling as 0015's video swap.
+  for (const stmt of migration21.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }

@@ -22,4 +22,11 @@ export interface Env {
   // Maker-only on-demand trigger for the scheduled jobs (index.ts /api/admin/run). Optional: the
   // endpoint 404s when unset, so the trigger simply does not exist until this secret is provisioned.
   ADMIN_SECRET: string;
+  // Optional private operator channel (a Discord/Slack-style incoming webhook URL). When set,
+  // raiseAlert POSTs a one-line notice on a FRESH alert and clearAlert on recovery (alert.ts),
+  // best-effort and timeout-bounded — a delivery failure never affects the tick. Unset = no
+  // outbound alert delivery (the config `alert:<code>` row + aggregate `degraded` remain the record).
+  // This complements, and does not replace, the external uptime monitor on /api/health, which is the
+  // ONLY thing that can catch a fully-dead loop (a dead loop cannot POST its own alert).
+  ALERT_WEBHOOK_URL: string;
 }

@@ -16,7 +16,13 @@ import { getApocrypha, handleApocryphaSubmit } from "./apocrypha";
 
 const app = new Hono<{ Bindings: Env }>();
 app.use("/api/*", (c, next) => cors({ origin: c.env.CORS_ORIGIN })(c, next));
-app.get("/api/health", (c) => c.json({ ok: true, env: c.env.ENVIRONMENT }));
+// Health reflects the HEARTBEAT, not just process liveness: fresh/never-run -> 200; a tick that has
+// stopped stamping for TICK_STALE_MS -> 503. An external uptime monitor points here to catch a
+// silently-dead loop (the one failure a worker cannot self-report).
+app.get("/api/health", async (c) => {
+  const stale = await tickStale(c.env, Date.now());
+  return c.json(stale ? { ok: false, env: c.env.ENVIRONMENT, stale: true } : { ok: true, env: c.env.ENVIRONMENT }, stale ? 503 : 200);
+});
 app.get("/api/nonce", async (c) => c.json(await issueNonce(c.env.DB)));
 app.post("/api/offerings", async (c) => {
   const clHeader = c.req.header("content-length");
@@ -76,8 +82,35 @@ app.post("/api/admin/run", async (c) => {
 
 const TICK_LEASE_MS = 10 * 60_000;
 const RITE_OPEN_MINUTE_OF_DAY = 50; // 00:50 UTC (minute-of-day 50) = T-10m before the 01:00 rite hour
+const TICK_STALE_MS = 45 * 60_000;  // 3 missed 15-min ticks — /api/health flips to 503 past this so an
+                                    // external uptime monitor catches a fully-dead loop. The 3-tick
+                                    // window also absorbs a single failed heartbeat write without a
+                                    // spurious alert (the next tick re-stamps 15 min later).
 
 function utcDate(now: number): string { return new Date(now).toISOString().slice(0, 10); }
+
+// Heartbeat: a completed scheduled job stamps `now` into config so /api/health can detect a
+// fully-stopped loop from OUTSIDE the worker (a dead loop raises no alert of its own — every alert
+// path lives inside the very loop that has stopped, so an external monitor reading this is the only
+// signal that survives a silent stop).
+async function stampHeartbeat(env: Env, key: string, now: number): Promise<void> {
+  await env.DB.prepare(`INSERT INTO config (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2`)
+    .bind(key, String(now)).run();
+}
+
+// A never-yet-run worker (fresh deploy, no stamp) reports healthy so a monitor does not false-alarm
+// before the first cron fires; once a tick has ever stamped, a value older than TICK_STALE_MS is stale.
+// A read FAILURE reports stale (unhealthy), never healthy: a worker that cannot read its own heartbeat
+// store IS degraded, and reporting 200 there would hide a real D1 outage from the external monitor.
+async function tickStale(env: Env, now: number): Promise<boolean> {
+  let row: { value: string } | null;
+  try {
+    row = await env.DB.prepare(`SELECT value FROM config WHERE key = 'tick_ok'`).first<{ value: string }>();
+  } catch { return true; }
+  if (!row) return false;
+  const at = Number(row.value);
+  return !Number.isFinite(at) || now - at > TICK_STALE_MS;
+}
 
 // EYE tick: moderation + perception + housekeeping sweeps, under the `tick` lock. A second concurrent
 // invocation finds the lease held and returns immediately (single-flight). Each stage passes a deadline
@@ -88,7 +121,16 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
   if (!(await acquireLock(env.DB, "tick", holder, TICK_LEASE_MS))) return;
   const started = now;
   try {
-    await runEyeBatch(env, started + 8 * 60_000);
+    // Guarded like the sweeps below it: a transient perception error (a D1 blip, a malformed batch)
+    // must NOT skip the housekeeping that follows in this same tick — the quarantine sweep, dream/film
+    // render, and X dispatch all sit below this call. Surface the failure as an alert instead.
+    try {
+      await runEyeBatch(env, started + 8 * 60_000);
+      await (await import("./alert")).clearAlert(env, "eye_batch_failed");
+    } catch (e) {
+      try { await (await import("./alert")).raiseAlert(env, "eye_batch_failed", String(e)); }
+      catch { /* best-effort; never fail the tick */ }
+    }
     // Sweep uses the remaining lease (until ~9.5 min in, before the 10-min lease ends / next 15-min tick),
     // bounded so a large quarantine backlog can't overrun the lock and overlap the next tick. A repeated
     // silent sweep failure would let quarantine/ grow unbounded in R2, so it raises an operator alert.
@@ -126,6 +168,20 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
     // tick). The deadline bounds the dispatch inside this lock's lease.
     try { const { dispatchArtifacts } = await import("./hermes"); await dispatchArtifacts(env, Date.now(), started + 9.5 * 60_000); }
     catch { /* best-effort; the dispatch retries next tick */ }
+    // Monthly cost backstop: surface a tripped cumulative-monthly ceiling as an operator alert, so the
+    // graceful sleep it causes (organs stop spending until the month rolls over) is never mistaken for
+    // a dead loop; clear it once spend is back under the ceiling (a new month).
+    try {
+      const { monthlyExceeded } = await import("./budget");
+      const alert = await import("./alert");
+      if (await monthlyExceeded(env.DB)) await alert.raiseAlert(env, "monthly_cap", "cumulative monthly spend ceiling reached");
+      else await alert.clearAlert(env, "monthly_cap");
+    } catch { /* best-effort */ }
+    // Tick heartbeat, stamped LAST: reaching here means the tick ran its body to completion (every
+    // sub-job above is individually guarded and raises its own alert on failure, so a single failed
+    // organ does not suppress the heartbeat). /api/health reads this to detect a fully-stopped loop.
+    try { await stampHeartbeat(env, "tick_ok", Date.now()); }
+    catch { /* best-effort; the 45-min staleness window absorbs a single missed stamp */ }
   } finally { await releaseLock(env.DB, "tick", holder); }
 }
 
@@ -157,6 +213,17 @@ export async function advanceRiteLocked(
       if (Date.now() > deadlineMs) break;
       await advanceRite(env, rite.date, now, deadlineMs);
     }
+    // A rite normally reaches `complete` within its own UTC day. One still non-terminal from a PRIOR
+    // day is genuinely stuck (e.g. budget-asleep at the sermon phase across a day boundary) — a stall
+    // that is otherwise silent, since rite_failed fires only on a terminal FAIL. Re-read AFTER the
+    // drain so a rite just carried to completion this pass does not alert.
+    try {
+      const alert = await import("./alert");
+      const today = utcDate(now);
+      const stalled = (await nonTerminalRites(env.DB)).some(r => r.date < today);
+      if (stalled) await alert.raiseAlert(env, "rite_stalled", `a rite dated before ${today} is still non-terminal`);
+      else await alert.clearAlert(env, "rite_stalled");
+    } catch { /* best-effort */ }
   } finally { await releaseLock(env.DB, "rite", holder); }
 }
 
@@ -183,7 +250,17 @@ export async function runBackupLocked(env: Env, now: number = Date.now()): Promi
   if (!(await acquireLock(env.DB, "backup", holder, 10 * 60_000))) return;
   try {
     const { exportBackup, sweepBackups } = await import("./backup");
-    await exportBackup(env, new Date(now).toISOString().slice(0, 10));
+    const alert = await import("./alert");
+    try {
+      await exportBackup(env, new Date(now).toISOString().slice(0, 10));
+      await alert.clearAlert(env, "backup_failed");
+      // A success marker: the nightly export is the one unattended job with no natural downstream
+      // signal, so record that it ran for an operator to spot-check alongside the failure alert.
+      await stampHeartbeat(env, "backup_ok", Date.now());
+    } catch (e) {
+      // A silent backup failure is invisible until a restore is needed and the newest export is stale.
+      try { await alert.raiseAlert(env, "backup_failed", String(e)); } catch { /* best-effort */ }
+    }
     try { await sweepBackups(env, now); } catch { /* best-effort retention */ }
   } finally { await releaseLock(env.DB, "backup", holder); }
 }
