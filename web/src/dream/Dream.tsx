@@ -4,6 +4,7 @@ import type { DreamView } from "../state/types";
 import type { BodyCommand } from "../experience/types";
 import { copy } from "../lib/copy";
 import { Glyph } from "../codex/glyphs";
+import { useMediaDucking } from "../lib/useMediaDucking";
 
 const shortWallet = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -72,6 +73,8 @@ export default function Dream({
 }) {
   const reduced = reducedMotion();
   const videoRef = useRef<HTMLVideoElement>(null);
+  // The plate ships muted; if a Waker unmutes it via the controls, the room quiets around it.
+  useMediaDucking(videoRef, dream?.video_key ?? null);
   useEffect(() => {
     const video = videoRef.current;
     if (video === null) return;

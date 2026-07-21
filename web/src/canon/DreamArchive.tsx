@@ -5,6 +5,7 @@ import { fetchDreams } from "./dreamsClient";
 import type { DreamArchiveEntry } from "../state/types";
 import { copy } from "../lib/copy";
 import { scrollToId } from "../lib/smoothScroll";
+import { useMediaDuckingRef } from "../lib/useMediaDucking";
 
 // The room the Plates were missing (PLANNING): the full archive of DREAM's nightly Plates, each the day's
 // kept marks returned "as gods you have not met" (DOCTRINE II.5). Dynamic (fetched from /api/dreams), so
@@ -27,6 +28,7 @@ function caption(d: DreamArchiveEntry): string {
 // thus bounded to what is roughly on screen, independent of how large the archive has grown.
 function PlateVideo({ videoKey, narrative }: { videoKey: string; narrative: string }) {
   const boxRef = useRef<HTMLDivElement>(null);
+  const duckRef = useMediaDuckingRef(); // an unmuted plate quiets the ambient bed while it plays
   const [near, setNear] = useState(false);
   useEffect(() => {
     const el = boxRef.current;
@@ -41,7 +43,7 @@ function PlateVideo({ videoKey, narrative }: { videoKey: string; narrative: stri
   return (
     <div ref={boxRef} className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
       {near && (
-        <video className="w-full h-full object-cover" src={`${API_BASE}/api/${videoKey}`}
+        <video ref={duckRef} className="w-full h-full object-cover" src={`${API_BASE}/api/${videoKey}`}
           loop muted playsInline controls aria-label={narrative} />
       )}
     </div>

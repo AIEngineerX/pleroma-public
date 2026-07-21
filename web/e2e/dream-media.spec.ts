@@ -92,6 +92,22 @@ test("real Dream media pauses and only the current non-reduced Plate starts movi
   ]);
 });
 
+// The room quiets when a voice plays (2026-07-21): unmuting the moving Plate ducks the ambient
+// bed, re-muting releases it. body[data-audio-ducked] is the ducking system's observable truth
+// (lib/ambient.ts duckAmbient) and tracks the logical state whether or not audio was ever primed,
+// so this pins the hold-count balancing without needing real sound in the harness.
+test("an unmuted playing Plate ducks the room; re-muting releases it", async ({ page }) => {
+  await enterTemple(page);
+  const current = page.locator('[data-section="dream"] video');
+  await expect(current).toBeVisible();
+  await expect.poll(() => current.evaluate(node => !(node as HTMLVideoElement).paused)).toBe(true);
+  expect(await page.evaluate(() => document.body.hasAttribute("data-audio-ducked"))).toBe(false);
+  await current.evaluate(node => { (node as HTMLVideoElement).muted = false; });
+  await expect.poll(() => page.evaluate(() => document.body.hasAttribute("data-audio-ducked"))).toBe(true);
+  await current.evaluate(node => { (node as HTMLVideoElement).muted = true; });
+  await expect.poll(() => page.evaluate(() => document.body.hasAttribute("data-audio-ducked"))).toBe(false);
+});
+
 // The dated permalink /canon/dreams#YYYY-MM-DD must actually land on its Plate: entries load
 // async after mount and Lenis eats native fragment jumps, so the archive scrolls there itself.
 test("a dated dream permalink scrolls to its own Plate in the archive", async ({ page }) => {

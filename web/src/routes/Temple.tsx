@@ -41,6 +41,7 @@ import Chart from "../market/Chart";
 import HowToBuy from "../market/HowToBuy";
 import Ticker from "../market/Ticker";
 import Socials from "../market/Socials";
+import ApocryphaMargin from "../apocrypha/ApocryphaMargin";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import ThresholdOffering from "../experience/ThresholdOffering";
 import DreamWitness from "../experience/DreamWitness";
@@ -515,6 +516,7 @@ export default function Temple() {
             </section>
 
             <footer className="temple-colophon">
+              <ApocryphaMargin apiBase={API_BASE} />
               <Socials />
             </footer>
           </div>

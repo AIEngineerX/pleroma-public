@@ -59,6 +59,9 @@ test("the dormant page has no market rail, only the honest placeholder, concorda
   await expectDormantMarketOnly(page);
   await expect(page.locator("#concordat-doorway").getByRole("link", { name: "the Concordat" })).toBeVisible();
   await expect(page.getByRole("link", { name: /On X/ })).toBeVisible();
+  // The Apocrypha doorway lives in the colophon marginalia (2026-07-21): findable from the Temple
+  // even while the guest book is empty (the excerpt line renders only once a real verse exists).
+  await expect(page.getByRole("link", { name: "write or read the Apocrypha" })).toBeVisible();
 });
 
 test("the market makes no price prediction or financial-return promise", async ({ page }) => {

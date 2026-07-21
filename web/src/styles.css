@@ -717,6 +717,7 @@ body.threshold-gesturing * {
   padding-block-start: 1.75rem;
 }
 .temple-colophon { padding-block: 1rem max(5rem, env(safe-area-inset-bottom)); }
+.temple-apocrypha-margin { display: grid; gap: 0.35rem; margin-block-end: 1.1rem; }
 
 /* The table of rubrics at the head: quiet machine register, wraps at narrow widths. */
 .temple-rubrics-line {

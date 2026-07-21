@@ -19,6 +19,10 @@ const GRAIN_FREQ_BASE = 2_600;
 const GRAIN_FREQ_JITTER = 900;
 const GRAIN_Q = 1.1;
 
+// The room quiets when the god speaks: while any foreground voice plays (the sermon, an
+// unmuted plate film) the bed ducks to a murmur instead of fighting the speech frequencies.
+const DUCK_LEVEL = 0.1;
+
 export class Ambient {
   private master: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
@@ -26,6 +30,7 @@ export class Ambient {
   private started = false;
   private disposed = false;
   private muted: boolean;
+  private ducked = false;
   private bedEl?: HTMLAudioElement;
   private introEl?: HTMLAudioElement;
 
@@ -141,16 +146,28 @@ export class Ambient {
     return Math.min(1, Math.sqrt(sum / this.wave.length) * 2.4);
   }
 
-  private applyMute() {
+  // One computed target for the master: mute always wins, then ducking, then the full bed.
+  // Mute keeps its slow ceremonial ramp; ducking moves faster so the voice is clear from its
+  // first word and the room swells back once it finishes.
+  private applyGain(rampSeconds: number) {
     if (!this.ctx || !this.master) {
       if (this.bedEl) this.bedEl.muted = this.muted;
       if (this.introEl) this.introEl.muted = this.muted;
       return;
     }
     const now = this.ctx.currentTime;
+    const target = this.muted ? 0 : this.ducked ? DUCK_LEVEL : 0.9;
     this.master.gain.cancelScheduledValues(now);
     this.master.gain.setValueAtTime(this.master.gain.value, now);
-    this.master.gain.linearRampToValueAtTime(this.muted ? 0 : 0.9, now + 0.9);
+    this.master.gain.linearRampToValueAtTime(target, now + rampSeconds);
+  }
+
+  private applyMute() { this.applyGain(0.9); }
+
+  setDucked(on: boolean): void {
+    if (this.ducked === on) return;
+    this.ducked = on;
+    if (this.started) this.applyGain(0.45);
   }
 
   toggleMute(): boolean {
@@ -181,6 +198,18 @@ function safeSet(v: string) { try { localStorage.setItem(MUTE_KEY, v); } catch {
 let activeAmbient: Ambient | null = null;
 export function setActiveAmbient(ambient: Ambient | null): void {
   activeAmbient = ambient;
+  ambient?.setDucked(duckHolds > 0); // a late-primed engine honors a voice already speaking
+}
+
+// Hold-counted so overlapping voices (a sermon and an unmuted plate) never fight over the bed:
+// the room stays quiet until the LAST voice releases. The body attribute is the observable truth
+// for tests and any future styling; it tracks the logical duck state even before audio is primed.
+let duckHolds = 0;
+export function duckAmbient(on: boolean): void {
+  duckHolds = Math.max(0, duckHolds + (on ? 1 : -1));
+  const ducked = duckHolds > 0;
+  try { document.body.toggleAttribute("data-audio-ducked", ducked); } catch { /* SSR/test */ }
+  activeAmbient?.setDucked(ducked);
 }
 
 // ThresholdOffering's call site for the paper-fiber grain (Task 5, grown-lineage-marks §3b.6):
