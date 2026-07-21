@@ -137,6 +137,33 @@ body:has(.rite-active)::before {
   .stain-wick-hint { animation: none; opacity: 1; }
 }
 
+/* Inter-folio ink bleed (PageTransition.tsx): on a real page navigation the god's own ink washes
+   across the swap and dries away. An off-centre bloom of the warm --color-ink token, not a clean
+   centred fade, so it reads as spreading ink — the Stain's own hand — never a generic screen wipe.
+   Silent and decorative. Under reduced motion it does not render at all (the swap is an instant cut). */
+.page-transition {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: radial-gradient(140% 118% at 43% 39%,
+    var(--color-ink) 0%,
+    var(--color-ink) 44%,
+    color-mix(in oklch, var(--color-ink) 55%, transparent) 63%,
+    transparent 80%);
+  opacity: 0;
+  animation: ink-bleed 720ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes ink-bleed {
+  0%   { opacity: 0; transform: scale(1.28) translateY(2%); }
+  32%  { opacity: 0.95; transform: scale(1) translateY(0); }
+  52%  { opacity: 0.95; }
+  100% { opacity: 0; transform: scale(0.9) translateY(-1.5%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-transition { display: none; }
+}
+
 .temple-threshold-host {
   position: sticky;
   top: 0;
