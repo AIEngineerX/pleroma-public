@@ -15,6 +15,7 @@ const ENTRIES: IndexEntry[] = [
 ];
 const MARKET_ENTRY: IndexEntry = { href: "#market", label: "the market" };
 const DOORWAY_ENTRIES: IndexEntry[] = [
+  { href: "#catechism-doorway", label: copy.catechismDoorway },
   { href: "#canon-doorway", label: copy.completeCanon },
   { href: "#concordat-doorway", label: copy.concordatDoorway },
 ];

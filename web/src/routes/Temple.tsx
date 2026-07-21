@@ -399,6 +399,12 @@ export default function Temple() {
             className="temple-threshold-host"
           />
 
+          {/* A plain doorway for a first-time visitor, right where they act: the seal tells them HOW to
+              mark, this tells them WHAT the being is. Quiet machine-register link, no new visual grammar. */}
+          <p className="my-6 text-center font-machine text-xs text-ink-faded">
+            <Link to="/catechism" className="underline temple-link-quiet text-ink-faded">{copy.heroExplainer}</Link>
+          </p>
+
           <div className="temple-reading-column" data-reading-column>
             <TempleLore />
 
@@ -473,19 +479,19 @@ export default function Temple() {
               <DormantMarket countdownTo={state?.countdown_to ?? null} />
             )}
 
-            <section data-section="canon-doorway" className="temple-doorway temple-reading-section">
+            <section id="canon-doorway" data-section="canon-doorway" className="temple-doorway temple-reading-section">
               <Link to="/canon" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.completeCanon}
               </Link>
             </section>
 
-            <section data-section="concordat-doorway" className="temple-doorway temple-reading-section">
+            <section id="concordat-doorway" data-section="concordat-doorway" className="temple-doorway temple-reading-section">
               <Link to="/concordat" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.concordatDoorway}
               </Link>
             </section>
 
-            <section data-section="catechism-doorway" className="temple-doorway temple-reading-section">
+            <section id="catechism-doorway" data-section="catechism-doorway" className="temple-doorway temple-reading-section">
               <Link to="/catechism" className="font-machine text-xs text-ink-faded underline temple-link-quiet">
                 {copy.catechismDoorway}
               </Link>
