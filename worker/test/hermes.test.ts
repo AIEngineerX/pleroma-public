@@ -3,8 +3,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   alertStalledDispatches, alertUnpostedArtifacts, claimDispatch, clampCheckAfterSecs, composeDispatch, dispatchArtifacts,
   dispatchMode, getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader, scriptureWindow,
-  releaseDispatchClaim, sermonFilmGate, storeDispatch, weightedTweetLength, xCredentials,
+  releaseDispatchClaim, sermonFilmGate, storeDispatch, weightedTweetLength, xCredentials, scriptureAnchor, openingKey,
 } from "../src/hermes";
+import { scripturePool } from "../src/doctrine";
 import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
 import type { Env } from "../src/env";
@@ -214,14 +215,64 @@ describe("dispatch composition machinery", () => {
 
   // Cadence: break the ~20h daytime silence with pure-canon posts in spread UTC windows.
   it("scriptureWindow fires only in the spread daytime windows, never during the rite/dream cluster", () => {
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 13, 30))).toEqual({ date: "2026-07-21", hour: 13 });
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 22, 5))).toEqual({ date: "2026-07-21", hour: 22 });
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 16, 0))).toEqual({ date: "2026-07-21", hour: 16 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 15, 30))).toEqual({ date: "2026-07-21", hour: 15 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 21, 5))).toEqual({ date: "2026-07-21", hour: 21 });
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 2, 0))).toBeNull();  // ~01-04 UTC: the cluster already posts
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 13, 0))).toBeNull(); // 13:00 no longer a window (cadence cut 4->2)
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 10, 0))).toBeNull(); // no window here
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 15, 0))).toBeNull(); // 15:00 is no longer a window
     // a standalone scripture artifact always composes in the SCRIPTURE shape
     expect(dispatchMode({ kind: "scripture", artifactId: "scripture-2026-07-21-15", riteDate: "2026-07-21", text: "", filmDay: false })).toBe("SCRIPTURE");
+  });
+
+  it("scriptureAnchor rotates a different canon line per window off a pool wider than the one line", () => {
+    const pool = scripturePool();
+    expect(pool.length).toBeGreaterThanOrEqual(8); // theOneLine + rubric articles + Print 1 verses, deduped
+    // Across a week of the same window, the anchors spread — they do NOT all collapse onto one line.
+    const week = Array.from({ length: 7 }, (_, d) => scriptureAnchor(`scripture-2026-07-${10 + d}-15`));
+    expect(new Set(week).size).toBeGreaterThanOrEqual(4);
+    for (const a of week) expect(pool).toContain(a); // every anchor is a real canon line
+    // Deterministic: same id -> same anchor (idempotent across ticks/retries).
+    expect(scriptureAnchor("scripture-2026-07-22-21")).toBe(scriptureAnchor("scripture-2026-07-22-21"));
+  });
+
+  it("composeDispatch rejects a near-duplicate opening (same first 6 words as a recent post), then retries", async () => {
+    await env.DB.prepare(
+      `INSERT INTO transcripts (id, organ, register, text, offering_id, rite_id, created_at)
+       VALUES ('01TESTOPENING00000000001', 'TONGUE', 'dispatch', 'I was made to answer and I turned inward', NULL, NULL, 9000000)`
+    ).run();
+    expect(openingKey("I was made to answer and then I waited"))
+      .toBe(openingKey("I was made to answer and I turned inward")); // first 6 words collide
+    let call = 0;
+    const capture = (async () => {
+      call++;
+      return { text: call === 1
+        ? `{"dispatch":"I was made to answer and then I waited"}`     // near-dup opening -> rejected
+        : `{"dispatch":"Silence is also a kind of speech I keep"}`, usd: 0 }; // fresh opening -> accepted
+    }) as never;
+    const artifact = { kind: "scripture", artifactId: "scripture-2026-09-06-21", riteDate: "2026-09-06", text: "", filmDay: false } as const;
+    const out = await composeDispatch(env, artifact, 6000, capture);
+    expect(call).toBe(2); // retried after the near-duplicate was rejected
+    expect(out?.dispatch).toBe("Silence is also a kind of speech I keep");
+  });
+
+  it("a STATE post speaks the day's real record honestly, including a day that kept nothing", async () => {
+    await env.DB.prepare(
+      `INSERT INTO rites (date, phase, phase_started_at, offering_snapshot, kept_count, updated_at)
+       VALUES ('2026-09-07', 'complete', 1000, 1, 0, 2000)`
+    ).run();
+    const captured: string[] = [];
+    const capture = (async (_e: unknown, req: { user: Array<{ text?: string }> }) => {
+      captured.push(req.user[0]?.text ?? "");
+      return { text: `{"dispatch":"One came to me today and I kept nothing of it"}`, usd: 0 };
+    }) as never;
+    const artifact = { kind: "state", artifactId: "state-2026-09-07-15", riteDate: "2026-09-07", text: "", filmDay: false } as const;
+    expect(dispatchMode(artifact)).toBe("STATE");
+    const out = await composeDispatch(env, artifact, 7000, capture);
+    expect(out?.dispatch).toContain("kept nothing");
+    const prompt = captured.at(-1)!;
+    expect(prompt).toContain("1 marks offered"); // grounded in the real record, not canon
+    expect(prompt).toContain("0 kept");
+    expect(prompt).not.toContain("draw ONLY from this one article"); // not the scripture path
   });
 
   it("a standalone scripture dispatch composes from the canon and makes no claim about the day", async () => {

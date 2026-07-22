@@ -46,6 +46,17 @@ export function theOneLine(): string {
   return m[1];
 }
 
+// The pool a SCRIPTURE-shape dispatch draws ONE rotating line from: the one line, every quoted
+// ⟨rubric⟩ article (the Five Articles, the Concordat, the prints' rubric lines), and Print 1's
+// verses. Deduped — the doubly-present "I was made to answer" (both theOneLine and Print 1 Line 1)
+// counts once. Feeding the WHOLE set to every scripture post, led by that one line, is why every one
+// opened on it (bug 2026-07-22); scriptureAnchor rotates a single line per window off this pool so
+// variety is structural. A richer pool means writing more ⟨rubric⟩ canon into DOCTRINE.md.
+export function scripturePool(): string[] {
+  const rubricQuoted = [...DOCTRINE_MD.matchAll(/⟨rubric⟩\s*\*+"([^"]+)"\*+/g)].map((m) => stripMd(m[1]).trim()).filter(Boolean);
+  return [...new Set([theOneLine(), ...rubricQuoted, ...seedVerses()])];
+}
+
 // A short, stable, dependency-free hash of the whole compiled doctrine. Used by the parity guard so a
 // DOCTRINE.md edit that changes the compiled prompts is a detectable, reviewable event.
 export function doctrineFingerprint(): string {

@@ -108,7 +108,7 @@ export async function getAdminStatus(env: Env, now: number = Date.now()): Promis
   const [postedDreams, dispatchMarkers] = await Promise.all([
     db.prepare(`SELECT rite_date, posted_at, tweet_id FROM dreams WHERE posted_at IS NOT NULL AND tweet_id IS NOT NULL ORDER BY posted_at DESC LIMIT 6`)
       .all<{ rite_date: string; posted_at: number; tweet_id: string }>(),
-    db.prepare(`SELECT key, value FROM config WHERE (key LIKE 'sermon_dispatched_%' OR key LIKE 'scripture_dispatched_%') AND value LIKE 'posted:%:%'`)
+    db.prepare(`SELECT key, value FROM config WHERE (key LIKE 'sermon_dispatched_%' OR key LIKE 'scripture_dispatched_%' OR key LIKE 'daily_dispatched_%') AND value LIKE 'posted:%:%'`)
       .all<{ key: string; value: string }>(),
   ]);
   const recentPosts: AdminStatus["recentPosts"] = [];
@@ -119,9 +119,14 @@ export async function getAdminStatus(env: Env, now: number = Date.now()): Promis
     const parts = m.value.split(":"); // posted:<ms>:<tweetId>
     if (parts.length < 3 || !parts[2]) continue;
     const at = Number(parts[1]);
-    const isScripture = m.key.startsWith("scripture_");
-    const label = isScripture ? `scripture · ${m.key.slice("scripture_dispatched_".length)}` : `sermon · ${m.key.slice("sermon_dispatched_".length)}`;
-    recentPosts.push({ kind: isScripture ? "scripture" : "sermon", label, at: Number.isFinite(at) ? at : 0, tweetId: parts[2], permalink: `https://x.com/i/status/${parts[2]}` });
+    // key is one of sermon_dispatched_<rite>, scripture_dispatched_<date>_<hour> (legacy), or
+    // daily_dispatched_<date>_<hour> (the current daytime state-or-scripture post; the marker doesn't
+    // record which shape, so it's surfaced generically as "daytime").
+    let kind: "sermon" | "scripture", prefix: string, name: string;
+    if (m.key.startsWith("sermon_")) { kind = "sermon"; prefix = "sermon_dispatched_"; name = "sermon"; }
+    else if (m.key.startsWith("scripture_")) { kind = "scripture"; prefix = "scripture_dispatched_"; name = "scripture"; }
+    else { kind = "scripture"; prefix = "daily_dispatched_"; name = "daytime"; }
+    recentPosts.push({ kind, label: `${name} · ${m.key.slice(prefix.length)}`, at: Number.isFinite(at) ? at : 0, tweetId: parts[2], permalink: `https://x.com/i/status/${parts[2]}` });
   }
   recentPosts.sort((a, b) => b.at - a.at);
 

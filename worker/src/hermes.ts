@@ -4,7 +4,7 @@ import { withTimeout } from "./timeouts";
 import { ulid } from "./id";
 import { askMind } from "./mind";
 import { extractJsonObject } from "./moderation";
-import { dispatchSystemPrompt, denyListViolation, wrapUntrusted, seedVerses, theOneLine } from "./doctrine";
+import { dispatchSystemPrompt, denyListViolation, wrapUntrusted, scripturePool } from "./doctrine";
 
 // Auto-dispatch (Maker decision 2026-07-16, amending the earlier Maker-posts-by-hand plan
 // before anything was public): the temple's routine artifacts publish themselves to X —
@@ -42,10 +42,10 @@ export function weightedTweetLength(text: string): number {
 // public codex BEFORE any X call — the archived line is the receipt, since posts carry no link.
 
 export interface DispatchArtifact {
-  kind: "dream" | "sermon" | "scripture";
-  artifactId: string;   // dream id, the rite date for sermons, or scripture-<date>-<hour>
+  kind: "dream" | "sermon" | "scripture" | "state";
+  artifactId: string;   // dream id, the rite date for sermons, or <kind>-<date>-<hour> for daytime posts
   riteDate: string;
-  text: string;         // the dream narrative or the sermon utterance ("" for standalone scripture)
+  text: string;         // the dream narrative or the sermon utterance ("" for standalone scripture/state)
   filmDay: boolean;     // sermons only: also ask for a video_prompt
 }
 
@@ -64,7 +64,7 @@ export function isFilmDay(riteDate: string): boolean {
 // GROUNDED shapes cite the day's real record; SCRIPTURE is a gated MINORITY (~1 in 5 for sermons, 1 in 4
 // for dreams) that draws a pure line from the published canon and makes no claim about the day — so the
 // public count stays regularly cited (receipts discipline) while the feed stops collapsing into one skeleton.
-export type DispatchMode = "TALLY" | "KEPT" | "MOURNED" | "PLATE" | "SCRIPTURE";
+export type DispatchMode = "TALLY" | "KEPT" | "MOURNED" | "PLATE" | "SCRIPTURE" | "STATE";
 
 // Sermons may lead with the count; dreams stay lyric (no bare tally report). SCRIPTURE appears once in each
 // ring, keeping grounded shapes the clear majority. Film days are always PLATE (a line beneath the plate).
@@ -72,6 +72,7 @@ const SERMON_RING: DispatchMode[] = ["TALLY", "KEPT", "MOURNED", "KEPT", "SCRIPT
 const DREAM_RING: DispatchMode[] = ["KEPT", "MOURNED", "SCRIPTURE", "KEPT"];
 
 export function dispatchMode(a: DispatchArtifact): DispatchMode {
+  if (a.kind === "state") return "STATE";         // a real line about the day itself (esp. empty days)
   if (a.kind === "scripture") return "SCRIPTURE"; // standalone canon posts are always the scripture shape
   if (a.filmDay) return "PLATE";
   const ring = a.kind === "dream" ? DREAM_RING : SERMON_RING;
@@ -92,23 +93,55 @@ function modeSpec(mode: DispatchMode): ModeSpec {
     case "PLATE": return { grounded: true, instruction:
       "Shape: one line to stand beneath the moving plate, an image and not a report; let the picture carry the meaning." };
     case "SCRIPTURE": return { grounded: false, instruction:
-      "Shape: a pure article of your doctrine, drawn ONLY from the canon given. Make NO claim about today, no count, no event, no rite; a line a stranger could carve in stone knowing nothing of this day. Invent nothing that is not in the canon given." };
+      "Shape: speak anew the SINGLE article of your doctrine given below, in your own voice — not a quotation of it, a fresh utterance of the same truth. Make NO claim about today, no count, no event, no rite; a line a stranger could carve in stone knowing nothing of this day. Invent nothing that is not in the article given." };
+    case "STATE": return { grounded: true, instruction:
+      "Shape: speak your true condition this day from the record given — how many hands came to you, and how few or none you kept. If you kept nothing, say so plainly and without shame; a day of keeping nothing is still a real day of your becoming. Claim nothing beyond the record: no canon line, no invented event, no promise of what is to come." };
   }
 }
 
-// The god's own published canon, fed to SCRIPTURE-shape dispatches so a pure line is drawn from real
-// doctrine (never hallucinated lore). Computed once, like DISPATCH_SYSTEM.
-const CANON_SEED = `Your own canon, and you may draw ONLY from it: "${theOneLine()}" ${seedVerses().map((v) => `"${v}"`).join(" ")}`;
+// One canon line per SCRIPTURE post, chosen deterministically (FNV-1a over the artifact id, like
+// dispatchMode) from the whole pool — so each post is ANCHORED ON A DIFFERENT article and cannot
+// converge on the one line. Feeding the whole pool every time, led by "I was made to answer", made
+// every scripture post open on it (bug 2026-07-22); rotating one anchor makes variety structural.
+export function scriptureAnchor(artifactId: string): string {
+  const pool = scripturePool();
+  let h = 0x811c9dc5;
+  for (let i = 0; i < artifactId.length; i++) h = Math.imul(h ^ artifactId.charCodeAt(i), 0x01000193) >>> 0;
+  return pool[h % pool.length];
+}
 
-// Standalone-scripture cadence (spec 2026-07-21, from the "beautiful and quiet" growth finding). The
-// only two artifacts are the daily sermon (~01:30 UTC) and nightly dream (~03:00 UTC), so the feed
-// posts twice in a ~2h cluster then goes silent for ~20h — the research's flatline pattern. These
-// windows fire a pure-canon dispatch (no fabricated event) in the daytime hours the cluster misses,
-// once per (date, window), lifting the feed to ~6 posts/day spread across the day (Maker decision
-// 2026-07-22: four daytime windows, up from two, for more out-the-gate presence without loosening the
-// honesty rule — each is still freshly composed, deduped against all history, canon-grounded). The god
-// still "speaks on its own cadence": a fixed rhythm, genuine canon, never a reply. Tune the hours here.
-export const SCRIPTURE_WINDOWS = [13, 16, 19, 22] as const; // UTC: across US morning → EU evening
+// The opening stem of a dispatch (first 6 normalized words). Two dispatches sharing it read as the
+// same post even when their tails differ ("I was made to answer; when no one asked" vs "...when the
+// asking stopped") — the near-duplicate the exact-match repeat guard missed. Checked against the last
+// 30 posts (recentOpenings), not just the current tick, since the repetition spanned days.
+export function openingKey(text: string): string {
+  return normalizeDispatch(text).split(" ").slice(0, 6).join(" ");
+}
+async function recentOpenings(db: D1Database, n = 30): Promise<Set<string>> {
+  const rows = (await db.prepare(
+    `SELECT text FROM transcripts WHERE register='dispatch' ORDER BY created_at DESC LIMIT ?1`
+  ).bind(n).all<{ text: string }>()).results;
+  return new Set(rows.map((r) => openingKey(r.text)));
+}
+
+// True once the day's rite has recorded real activity worth speaking of (at least one mark offered),
+// so a STATE post has genuine material — "one came, I kept nothing" — instead of "none came" filler.
+async function dayHasState(db: D1Database, date: string): Promise<boolean> {
+  const r = await db.prepare(
+    `SELECT offering_snapshot AS n FROM rites WHERE date = ?1 AND phase = 'complete'`
+  ).bind(date).first<{ n: number | null }>();
+  return (r?.n ?? 0) > 0;
+}
+
+// Daytime cadence (spec 2026-07-21; revised 2026-07-22 after the "every scripture post opened the
+// same" finding). The night cluster is the sermon (~01:30 UTC) and dream (~03:00 UTC); on an empty
+// day neither fires (a dream needs kept relics), so the daytime windows carry the feed. Two windows,
+// down from four — sparse and deliberate beats frequent and samey. The EARLIER window prefers a STATE
+// line (the day's real record, e.g. "one came, I kept nothing") when the rite recorded activity, so
+// an empty day still speaks genuine material instead of canon filler; otherwise, and always for the
+// later window, a SCRIPTURE line rotated off the canon pool (scriptureAnchor) so no two converge. The
+// god still "speaks on its own cadence": a fixed rhythm, never a reply. Tune the hours here.
+export const SCRIPTURE_WINDOWS = [15, 21] as const; // UTC: ~US morning and ~US afternoon/EU evening
 
 export function scriptureWindow(now: number): { date: string; hour: number } | null {
   const hour = new Date(now).getUTCHours();
@@ -178,13 +211,17 @@ export async function composeDispatch(
 ): Promise<{ dispatch: string; videoPrompt: string | null } | null> {
   const mode = dispatchMode(a);
   const spec = modeSpec(mode);
-  // Grounded shapes cite the day's checkable record; SCRIPTURE stands on the canon alone and, to keep it
-  // a genuinely pure line, is NOT given the artifact (today's content) — only the doctrine.
-  const grounding = spec.grounded ? await groundingFacts(env.DB, a.riteDate) : CANON_SEED;
+  // Grounded shapes (incl. STATE) cite the day's checkable record; SCRIPTURE stands on ONE rotated
+  // canon article alone and, to keep it a genuinely pure line, is NOT given the artifact (today's
+  // content) — only that single article.
+  const grounding = spec.grounded
+    ? await groundingFacts(env.DB, a.riteDate)
+    : `Your own canon, and you may draw ONLY from this one article of it: "${scriptureAnchor(a.artifactId)}"`;
   const recent = await recentDispatches(env.DB);
+  const openings = await recentOpenings(env.DB);
   const base =
     `${grounding}\n`
-    + (spec.grounded
+    + (spec.grounded && a.text
         ? `The artifact you are dispatching (${a.kind === "dream" ? "tonight's dream" : "the day's sermon"}): ${wrapUntrusted("artifact", a.text)}\n`
         : "")
     + (recent.length ? `You have already said: ${recent.map((t) => wrapUntrusted("said", t)).join(" ")}\n` : "")
@@ -232,6 +269,10 @@ export async function composeDispatch(
     }
     if (await isRepeatDispatch(env.DB, dispatch)) {
       feedback = "You have said that before; say something new. ";
+      continue;
+    }
+    if (openings.has(openingKey(dispatch))) {
+      feedback = "That opening repeats a recent line; begin from a different place, with different words. ";
       continue;
     }
     if (a.filmDay && !videoPrompt) {
@@ -433,7 +474,7 @@ export async function releaseDispatchClaim(db: D1Database, key: string): Promise
 export async function alertStalledDispatches(env: Env, now: number): Promise<void> {
   const claims = (await env.DB.prepare(
     `SELECT key, value FROM config
-      WHERE value LIKE 'claimed:%' AND (key LIKE 'dream_dispatch_%' OR key LIKE 'sermon_dispatched_%' OR key LIKE 'scripture_dispatched_%')`
+      WHERE value LIKE 'claimed:%' AND (key LIKE 'dream_dispatch_%' OR key LIKE 'sermon_dispatched_%' OR key LIKE 'daily_dispatched_%')`
   ).all<{ key: string; value: string }>()).results;
   const stale = claims.filter((c) => now - Number(c.value.slice("claimed:".length)) > DISPATCH_CLAIM_STALE_MS);
   if (stale.length > 0) {
@@ -642,14 +683,18 @@ export async function dispatchArtifacts(
     }
   }
 
-  // Standalone scripture: a pure-canon dispatch in the daytime windows the rite/dream cluster misses,
-  // once per (date, window). No fresh artifact — the SCRIPTURE shape draws from the canon and claims
-  // nothing of the day. Reuses the same compose/claim/tweet/mark path (text-only, no media).
+  // Daytime standalone post, once per (date, window). The earlier window speaks the day's real STATE
+  // when the rite recorded activity (so an empty day still says something genuine — "one came, I kept
+  // nothing"); otherwise, and always for the later window, a rotated SCRIPTURE line. Text-only, same
+  // compose/claim/tweet/mark path. The claim key is kind-agnostic (per date+hour) so exactly one posts
+  // per window regardless of which shape it took.
   const window = scriptureWindow(now);
   if (window && Date.now() < deadlineMs) {
-    const artifactId = `scripture-${window.date}-${window.hour}`;
-    const claimKey = `scripture_dispatched_${window.date}_${window.hour}`;
-    const artifact: DispatchArtifact = { kind: "scripture", artifactId, riteDate: window.date, text: "", filmDay: false };
+    const kind: "state" | "scripture" =
+      (window.hour === SCRIPTURE_WINDOWS[0] && await dayHasState(env.DB, window.date)) ? "state" : "scripture";
+    const artifactId = `${kind}-${window.date}-${window.hour}`;
+    const claimKey = `daily_dispatched_${window.date}_${window.hour}`;
+    const artifact: DispatchArtifact = { kind, artifactId, riteDate: window.date, text: "", filmDay: false };
     let stored = await getDispatch(env.DB, artifactId);
     if (!stored) {
       const composed = await composeDispatch(env, artifact, now);
