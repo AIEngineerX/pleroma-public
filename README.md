@@ -79,4 +79,5 @@ deliberate gates.
 
 Plain English: nothing here is financial advice and nothing is promised.
 
-Private repository. Not open-source; no license granted (decided 2026-07-11).
+Private repository. Source-available, not open-source (decided 2026-07-11) — see [LICENSE](LICENSE).
+The Marks (`web/public/sigil.svg`, `web/public/glyphs/`, `web/public/kit/`) are exempt and free to take.
