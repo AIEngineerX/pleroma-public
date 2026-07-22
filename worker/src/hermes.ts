@@ -392,7 +392,7 @@ async function uploadForm(
 ): Promise<Response> {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.append(key, value);
-  if (file) body.append(file.name, new Blob([file.bytes as BlobPart]));
+  if (file) body.append(file.name, new Blob([file.bytes]));
   // Multipart bodies contribute nothing to the OAuth signature base.
   const authorization = await oauthHeader(credentials, "POST", UPLOAD_URL);
   return withTimeout("x-upload", X_IO_TIMEOUT_MS, (signal) =>
