@@ -16,6 +16,7 @@ export default defineWorkersConfig({
           PULSE_WEBHOOK_SECRET: process.env.PULSE_WEBHOOK_SECRET ?? "test-secret",
           PULSE_MINT: process.env.PULSE_MINT ?? "MintPleroma1111111111111111111111111111111",
           PULSE_POOLS: process.env.PULSE_POOLS ?? "Pool1111111111111111111111111111111111111111",
+          ADMIN_SECRET: process.env.ADMIN_SECRET ?? "test-admin-secret",
         } },
       },
     },

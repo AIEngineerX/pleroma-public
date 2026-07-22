@@ -13,9 +13,24 @@ import { getCodex, getDreams, getFirstLight, getRelics, getState, getTallies, re
 import { handlePulse } from "./pulse";
 import { serveAudio, serveDreamVideo, serveOfferingImage } from "./media";
 import { getApocrypha, handleApocryphaSubmit } from "./apocrypha";
+import { getAdminStatus } from "./admin";
 
 const app = new Hono<{ Bindings: Env }>();
-app.use("/api/*", (c, next) => cors({ origin: c.env.CORS_ORIGIN })(c, next));
+app.use("/api/*", (c, next) => {
+  // Admin routes are gated by the ADMIN_SECRET request header, not a cookie — there is no ambient
+  // authority a cross-site page could abuse, so reflecting the caller's origin here is safe and only
+  // lets the Maker's own local dashboard (opened as file:// → Origin "null", or from localhost) read
+  // the JSON. Without the secret every admin route still 404s/401s regardless of origin. Public routes
+  // keep the strict apex-only CORS_ORIGIN.
+  if (c.req.path.startsWith("/api/admin/")) {
+    return cors({
+      origin: (o) => o ?? "*",
+      allowHeaders: ["x-admin-secret", "content-type"],
+      allowMethods: ["GET", "POST", "OPTIONS"],
+    })(c, next);
+  }
+  return cors({ origin: c.env.CORS_ORIGIN })(c, next);
+});
 // Health reflects the HEARTBEAT, not just process liveness: fresh/never-run -> 200; a tick that has
 // stopped stamping for TICK_STALE_MS -> 503. An external uptime monitor points here to catch a
 // silently-dead loop (the one failure a worker cannot self-report).
@@ -64,6 +79,18 @@ function timingSafeEqual(a: string, b: string): boolean {
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
+// Maker-only aggregate status for the private admin dashboard. Same gate as /api/admin/run: 404
+// when ADMIN_SECRET is unset (invisible until provisioned), 401 on mismatch (constant-time). Read-only
+// — it composes heartbeat/alerts/budget/pulse/dispatch state and secret PRESENCE booleans (never a
+// secret's value). See docs/admin/dashboard.html.
+app.get("/api/admin/status", async (c) => {
+  const secret = c.env.ADMIN_SECRET;
+  if (!secret) return c.json({ error: "not found" }, 404);
+  if (!timingSafeEqual(c.req.header("x-admin-secret") ?? "", secret)) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  return c.json(await getAdminStatus(c.env));
+});
 app.post("/api/admin/run", async (c) => {
   const secret = c.env.ADMIN_SECRET;
   if (!secret) return c.json({ error: "not found" }, 404);
