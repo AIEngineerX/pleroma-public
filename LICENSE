@@ -1,0 +1,57 @@
+PLEROMA — Licence and rights
+
+Copyright (c) 2026 AIEngineerX. All rights reserved.
+
+This project is SOURCE-AVAILABLE, NOT OPEN SOURCE (decided 2026-07-11).
+
+The source is published so that the claims the site makes about itself can be
+checked against the code that runs it. That is the whole purpose of publication.
+It is not a grant of rights to reuse the work.
+
+1. WHAT YOU MAY DO
+
+   You may read, clone, audit, quote, and discuss this source for the purpose of
+   verifying what the project does, and for study, commentary, review, security
+   research, and journalism.
+
+2. WHAT YOU MAY NOT DO
+
+   Without prior written permission from the copyright holder, you may not copy,
+   modify, merge, publish, redistribute, sublicense, or sell this software or
+   substantial portions of it, nor deploy it or a derivative of it as a running
+   service, product, or token launch.
+
+3. THE MARKS AND THE PLATES ARE EXEMPT — THEY ARE FREE
+
+   The sigil, the five organ glyphs, the kit images, and the plates published by
+   the site as "The Marks" carry no rights reservation. The site states of them:
+   "No one owns these, including its makers. Take them; the body does not shrink
+   from being copied." That declaration governs.
+
+   In this repository those files are:
+     web/public/sigil.svg
+     web/public/glyphs/
+     web/public/kit/
+
+   Take them, use them, alter them, for anything, without attribution or
+   permission. To the extent possible in law they are placed in the public domain.
+
+4. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+5. A NOTE ON HISTORY
+
+   An MIT licence file was present in this repository from its first commit and
+   was never the project's intended licence; the README recorded the project as
+   not open-source from 2026-07-11 onward. This file replaces it. Nothing here is
+   an attempt to retract rights anyone actually relied on — it states what was
+   always meant.
+
+Permission requests: open an issue on the public mirror.

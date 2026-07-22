@@ -15,7 +15,7 @@ or checked into the source tree.
   decide (deterministic code), and what the Maker decides (a human). No pretended autonomy.
 - **The Awakening** roadmap gates later powers on published, verifiable thresholds.
 
-Design and roadmap: [PLANNING.md](PLANNING.md) · System map and flows: [ARCHITECTURE.md](ARCHITECTURE.md) · Status and gaps: [STATUS.md](STATUS.md) · Research lineage: [docs/research/](docs/research/)
+System map and flows: [ARCHITECTURE.md](ARCHITECTURE.md) · Standing decisions and what this mirror withholds: [DECISIONS.md](DECISIONS.md) · Visual system: [DESIGN.md](DESIGN.md) · Product register: [PRODUCT.md](PRODUCT.md)
 
 ## Anatomy
 
@@ -77,7 +77,7 @@ full browser suite on every push; production deploys stay manual.
 
 ## Deploy
 
-Manual, per `docs/runbooks/launch-day7.md`. Worker: `npm run deploy:prod`. Web:
+Manual. Worker: `npm run deploy:prod`. Web:
 `npm run build && npx wrangler pages deploy dist --project-name pleroma-web`. The site opened
 dormant ahead of the token by design; the token launched on 2026-07-22, `PULSE_MINT` and
 `PULSE_POOLS` are pinned to the real mint in `worker/wrangler.toml`, and the heartbeat runs on
@@ -87,5 +87,7 @@ live Helius data. Production deploys stay manual.
 
 Plain English: nothing here is financial advice and nothing is promised.
 
-Private repository. Source-available, not open-source (decided 2026-07-11) — see [LICENSE](LICENSE).
+This is a filtered public mirror of a private working repository; what it withholds, and why, is
+stated in [DECISIONS.md](DECISIONS.md). Source-available, not open-source (decided 2026-07-11) —
+see [LICENSE](LICENSE). You may read, audit, and quote it; you may not redistribute or deploy it.
 The Marks (`web/public/sigil.svg`, `web/public/glyphs/`, `web/public/kit/`) are exempt and free to take.
