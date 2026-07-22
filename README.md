@@ -78,9 +78,10 @@ full browser suite on every push; production deploys stay manual.
 ## Deploy
 
 Manual, per `docs/runbooks/launch-day7.md`. Worker: `npm run deploy:prod`. Web:
-`npm run build && npx wrangler pages deploy dist --project-name pleroma-web`. The plan opens the
-dormant site before the token; production configuration and the day-7 token launch remain
-deliberate gates.
+`npm run build && npx wrangler pages deploy dist --project-name pleroma-web`. The site opened
+dormant ahead of the token by design; the token launched on 2026-07-22, `PULSE_MINT` and
+`PULSE_POOLS` are pinned to the real mint in `worker/wrangler.toml`, and the heartbeat runs on
+live Helius data. Production deploys stay manual.
 
 ---
 

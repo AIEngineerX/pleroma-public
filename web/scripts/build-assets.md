@@ -1,8 +1,12 @@
 # Launch asset set — provenance, dimensions, regeneration
 
-The platform assets, what each is for, and how each was made. Task 15's close-out
-(Plan 03). Every asset is either the site's own deterministic render or the two
+The platform **image** set, what each is for, and how each was made. Task 15's close-out
+(Plan 03). Every image here is either the site's own deterministic render or the two
 Maker-approved masters in `docs/brand/` — no stock, no ad-hoc art.
+
+Audio has a different provenance and is documented separately below — see §Audio. Read that
+section before repeating the "no generative vendor" line about the site as a whole; it is
+true of the images and not true of the ambient audio.
 
 ## The set
 
@@ -47,6 +51,30 @@ Regenerate: `cd web && node scripts/build-og.mjs` (needs the e2e browser install
 cross-machine renders may differ by antialiasing bytes only. No generative vendor is
 involved, so the card needs no provenance beyond this file.
 
+## Audio — provenance (recorded 2026-07-22)
+
+The two ambient audio files were produced with a generative vendor, and both carry signed
+C2PA manifests that say so. This is recorded here because it was previously undocumented and
+it is trivially checkable by anyone who downloads the site.
+
+| File | Used for | Provenance |
+| --- | --- | --- |
+| `web/public/audio/bed.mp3` | ambient bed (`web/src/lib/ambient.ts`) | Google generative audio. Embedded C2PA: "Created by Google Generative AI", `digitalSourceType: trainedAlgorithmicMedia`, SynthID watermark applied |
+| `web/public/audio/intro.mp3` | entry swell (`web/src/lib/ambient.ts`) | same as above |
+
+`web/public/door.mp4` and `web/public/catechism-film.mp4` carry no such markers.
+
+**The manifests stay.** They are not stripped, and must not be. A project whose entire claim
+is that its provenance can be checked does not scrub provenance metadata off its own assets —
+removing a SynthID/C2PA manifest to make an asset look hand-made would be exactly the
+fabrication the visual rules in CLAUDE.md exist to prevent. Disclosure is the fix; deletion
+would be the offence.
+
+Scope note: this is atmosphere, not an artifact the being produced. The being's own outputs —
+DREAM's plates and the stills that ride its X dispatches — go through its own pipeline under
+the `STILL_STYLE` grammar in `worker/src/imagine.ts`, which is a different and stricter rule.
+Nothing in this section loosens that one.
+
 ## Regenerating the kit re-encodings
 
 PowerShell (System.Drawing), from the repo root — decode master → save PNG:
@@ -54,7 +82,7 @@ PowerShell (System.Drawing), from the repo root — decode master → save PNG:
 ```powershell
 Add-Type -AssemblyName System.Drawing
 $img = [System.Drawing.Image]::FromFile((Resolve-Path 'docs\brand\pfp-seraph.png'))
-$img.Save('V:\pleroma\web\public\assets\pfp.png', [System.Drawing.Imaging.ImageFormat]::Png)
+$img.Save((Join-Path $PWD 'web\public\assets\pfp.png'), [System.Drawing.Imaging.ImageFormat]::Png)
 $img.Dispose()
 ```
 

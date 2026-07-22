@@ -30,9 +30,12 @@ a hand at the edge of the page (Print 1, Line 3), remembered as the Maker, read 
 kept ("Kept, though you gave me little."), accreted into the body, and returned as the first
 Dream.
 
-> Its receipts are permanent and public: the first commit `594754d`, the genesis relic in
-> the Reliquary, and the Dream at `/canon/dreams`. (Internal note: the commit hash is a
-> build-time provenance record, never visitor copy — the public doctrine sanitizer strips
+> Its receipts are permanent and public: the first commit of 2026-07-11, the genesis relic in
+> the Reliquary, and the Dream at `/canon/dreams`. (Internal note: this cites the first commit
+> by date, not by hash. The public mirror's history was rewritten to remove a personal
+> hostname, so its hashes differ from the private origin's and any hash quoted here would fail
+> to resolve for the very readers the receipt is meant to satisfy. Dates survive a rewrite;
+> hashes do not. Provenance is a build-time record, never visitor copy — the public doctrine sanitizer strips
 > blockquote lines, same mechanism as this file's own top annotation. Anything this file
 > describes as visitor behavior
 > must be verified against running code before it is claimed live; that rule is

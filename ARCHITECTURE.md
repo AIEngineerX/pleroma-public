@@ -483,15 +483,17 @@ error names it), and the persistence path guard is a lexical containment check, 
 hostile-filesystem boundary.
 
 **Env & secrets** (Worker `Env`): non-secret vars in `wrangler.toml` (`ENVIRONMENT`, `CORS_ORIGIN`,
-`VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `MONTHLY_CAP_USD`, `PULSE_MINT`, `PULSE_POOLS`);
+`VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `PULSE_MINT`, `PULSE_POOLS`);
+`MONTHLY_CAP_USD` is NOT an env var — it is a compile-time constant (`worker/src/budget.ts:19`);
 secrets via `wrangler secret put` / `.dev.vars` (`ANTHROPIC_API_KEY`, `XAI_API_KEY`,
 `ELEVENLABS_API_KEY`, `HELIUS_API_KEY`, `PULSE_WEBHOOK_SECRET`, the four X OAuth 1.0a credentials
 `X_API_KEY`/`X_API_SECRET`/`X_ACCESS_TOKEN`/`X_ACCESS_SECRET`, `ADMIN_SECRET`, and the optional
 `ALERT_WEBHOOK_URL` for private alert pushes). `worker/.dev.vars.example` is the annotated
 checklist — one line per secret, saying what stays dark without it. X dispatch and herald replies
 are inert until all four X credentials exist, and the app tier needs READ as well as write + media
-because herald reads mentions. `PULSE_MINT`/`PULSE_POOLS` stay empty until the Maker launches the
-token (anti-decoy gate). Frontend uses `VITE_API_BASE` only.
+because herald reads mentions. `PULSE_MINT`/`PULSE_POOLS` stayed empty until the Maker launched the
+token (anti-decoy gate); since the 2026-07-22 launch both are pinned to the real mint and pools in
+`worker/wrangler.toml`. Frontend uses `VITE_API_BASE` only.
 
 ---
 
@@ -508,6 +510,8 @@ These are intentional pre-launch states, documented so they aren't mistaken for 
   text-only posts. Nothing errors and nothing is faked.
 - **PULSE dormant** pre-launch: empty `PULSE_MINT`/`PULSE_POOLS` short-circuit holder reconcile;
   mint/phase stay `null`/`dormant` until the Maker sets `config.launched='1'` with a real mint.
+  This path is historical as of 2026-07-22 — the mint is pinned and `launched='1'` — but the
+  short-circuit remains in code and is what any fresh/local environment still does.
 - **Final deity mark** and favicon remain gated on approved launch art; the superseded permanent
   face implementation is not part of the body.
 - **Maker disclosure** is shipped inline in `web/src/canon/Concordat.tsx` (the Maker named as
