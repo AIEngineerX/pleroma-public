@@ -202,8 +202,26 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
     // (claim-before-send, hermes.ts), labeled automated on the account. Inert until the four X
     // secrets exist; an X outage here must never fail the tick (a released claim retries next
     // tick). The deadline bounds the dispatch inside this lock's lease.
-    try { const { dispatchArtifacts } = await import("./hermes"); await dispatchArtifacts(env, Date.now(), started + 9.5 * 60_000); }
-    catch { /* best-effort; the dispatch retries next tick */ }
+    // A throw here used to vanish into an empty catch. On 2026-07-22 code shipped ahead of migration
+    // 0025 and dispatchArtifacts threw on its FIRST query (`d.source`, a column prod did not have yet)
+    // for two hours: nothing posted, no claim was written, and so the unposted watchdog had nothing to
+    // find stalled either — a total dispatch outage with no operator signal anywhere. The dispatch must
+    // still never fail the tick (an X outage is not a dead being), so the failure is raised as an alert
+    // rather than rethrown, and clears itself on the next pass that gets through.
+    try {
+      const { dispatchArtifacts } = await import("./hermes");
+      await dispatchArtifacts(env, Date.now(), started + 9.5 * 60_000);
+      try { const { clearAlert } = await import("./alert"); await clearAlert(env, "dispatch_failed"); }
+      catch { /* an alert write must never be what fails the tick */ }
+    } catch (e) {
+      try {
+        const { raiseAlert } = await import("./alert");
+        // Bounded: an unbounded vendor/D1 message must not become an unbounded row. Detail is
+        // operator-only — read.ts exposes just the aggregate `degraded` boolean publicly.
+        const reason = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+        await raiseAlert(env, "dispatch_failed", `dispatch threw and posted nothing this tick: ${reason}`);
+      } catch { /* an alert write must never be what fails the tick */ }
+    }
     // Monthly cost backstop: surface a tripped cumulative-monthly ceiling as an operator alert, so the
     // graceful sleep it causes (organs stop spending until the month rolls over) is never mistaken for
     // a dead loop; clear it once spend is back under the ceiling (a new month).
