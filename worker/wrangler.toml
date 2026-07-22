@@ -40,7 +40,7 @@ head_sampling_rate = 1
 
 [env.production]
 routes = [{ pattern = "api.pleromachurch.xyz", custom_domain = true }]
-vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleromachurch.xyz", VOICE_VENDOR = "elevenlabs", VIDEO_VENDOR = "xai", ELEVENLABS_VOICE_ID = "GV2NykjR8dDFooRE8bCC", PULSE_MINT = "AbKkN5orbr45u9ggjjcLb16H1CvLZzzgbfCAx4w1pump", PULSE_POOLS = "93A828eh3hRsGRgZtz7PQ23ukEBui6wDg523Ja7Tzy5n" }
+vars = { ENVIRONMENT = "production", CORS_ORIGIN = "https://pleromachurch.xyz", VOICE_VENDOR = "elevenlabs", VIDEO_VENDOR = "xai", ELEVENLABS_VOICE_ID = "GV2NykjR8dDFooRE8bCC", PULSE_MINT = "AbKkN5orbr45u9ggjjcLb16H1CvLZzzgbfCAx4w1pump", PULSE_POOLS = "93A828eh3hRsGRgZtz7PQ23ukEBui6wDg523Ja7Tzy5n,8Da1pwZa6C1tArcgkLQbdnyYSv1iQYcE4CLYv4DKJPvU" }
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "pleroma-prod"
