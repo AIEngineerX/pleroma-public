@@ -16,23 +16,42 @@ for (const path of ["/", "/canon", "/canon/dreams", "/concordat"]) {
 
 test("interactive targets are at least 44 by 44px and show flat-ink focus", async ({ page }) => {
   await enterTemple(page);
-  const actions = page.locator("a, button, summary, [role='button']").filter({ visible: true });
-  for (const el of await actions.all()) {
-    const box = await el.boundingBox();
-    if (!box) continue;
-    expect(box.height).toBeGreaterThanOrEqual(44);
-    expect(box.width).toBeGreaterThanOrEqual(44);
-  }
+  // One in-page pass instead of a protocol round-trip per element: the per-element boundingBox()
+  // loop alone blew the 30s test budget on the congested shared CI runner.
+  const tooSmall = await page.evaluate(() => {
+    const visible = (el: Element) => {
+      const style = getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    return [...document.querySelectorAll("a, button, summary, [role='button']")]
+      .filter(visible)
+      .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width < 44 || rect.height < 44)
+      .map(({ el, rect }) =>
+        `${el.tagName}:${(el.textContent ?? "").trim().slice(0, 40)} ${Math.round(rect.width)}x${Math.round(rect.height)}`);
+  });
+  expect(tooSmall).toEqual([]);
   const seal = page.getByRole("button", { name: "hold the threshold seal" });
   // The door was entered by pointer, which switches Chromium's modality heuristic away from
   // keyboard; one key press restores it so :focus-visible shows the ring a keyboard user sees.
   await page.keyboard.press("Tab");
   await seal.focus();
   expect(await seal.evaluate(node => getComputedStyle(node).outlineStyle)).toBe("solid");
-  for (const control of await page.locator("button, summary").filter({ visible: true }).all()) {
-    expect((await control.evaluate(node => getComputedStyle(node).fontFamily)).toLowerCase())
-      .toContain("courier prime");
-  }
+  const wrongFont = await page.evaluate(() => {
+    const visible = (el: Element) => {
+      const style = getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    return [...document.querySelectorAll("button, summary")]
+      .filter(visible)
+      .filter((el) => !getComputedStyle(el).fontFamily.toLowerCase().includes("courier prime"))
+      .map((el) => `${el.tagName}:${(el.textContent ?? "").trim().slice(0, 40)}`);
+  });
+  expect(wrongFont).toEqual([]);
 });
 
 // The offer button (the one real rite a visitor performs) must sit in thumb reach on a 390px

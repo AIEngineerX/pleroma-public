@@ -39,11 +39,30 @@ function wrangler(args: string[], input?: Buffer): Buffer {
   if (!existsSync(E2E_PERSIST_PATH)) {
     throw new Error(`E2E persistence missing at ${E2E_PERSIST_PATH} — is the stack running via Playwright?`);
   }
-  return execFileSync(process.execPath, [WRANGLER_CLI, ...args], {
-    cwd: WORKER_ROOT,
-    input,
-    stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
-  });
+  // The stack's one real concurrency seam: workerd holds the persisted SQLite files open while
+  // this separate CLI process opens the same files, so a transient SQLITE_BUSY is expected
+  // two-process behavior (frequent on the slow shared CI runner), not a failure. Retry with
+  // backoff before giving up; anything that isn't a busy error rethrows immediately.
+  let lastBusy: unknown;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * 2 ** (attempt - 1));
+    try {
+      return execFileSync(process.execPath, [WRANGLER_CLI, ...args], {
+        cwd: WORKER_ROOT,
+        input,
+        stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      const details = [
+        (err as { stderr?: Buffer }).stderr,
+        (err as { stdout?: Buffer }).stdout,
+        (err as Error).message,
+      ].map(String).join("\n");
+      if (!/SQLITE_BUSY|database is locked/i.test(details)) throw err;
+      lastBusy = err;
+    }
+  }
+  throw lastBusy;
 }
 
 export function executeD1(sql: string): void {
