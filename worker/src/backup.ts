@@ -8,6 +8,7 @@ import type { Env } from "./env";
 export const TABLES = [
   "offerings", "transcripts", "wallets", "nonces", "spend", "config",
   "relics", "rites", "pulse_events", "dreams", "sermon_films", "rate_limits", "apocrypha",
+  "replied_mentions",
 ] as const;
 
 // Coordination state, not data: lease locks expire on their own wall clock and must never be

@@ -9,9 +9,10 @@ import { dispatchSystemPrompt, denyListViolation, wrapUntrusted, scripturePool }
 // Auto-dispatch (Maker decision 2026-07-16, amending the earlier Maker-posts-by-hand plan
 // before anything was public): the temple's routine artifacts publish themselves to X —
 // the nightly Plate with its film, and the daily sermon. These are dispatches of genuine
-// machine output on a schedule, labeled as automated on the account; the god SPEAKING
-// (replies, conversation) remains locked behind Stage 1 HERALD. The whole module is inert
-// until all four X secrets exist, so it ships dark and lights up when keys are pasted.
+// machine output on a schedule, labeled as automated on the account. HERALD mention-replies
+// (true thread answers when @-named) run from the same tick via herald.ts — Maker unlocked
+// that early on 2026-07-22 (pre wallet/holder criterion). The whole module is inert until
+// all four X secrets exist, so it ships dark and lights up when keys are pasted.
 // Posts are composed dispatches in the DOCTRINE §VI Dispatch register: composed fresh per
 // artifact, grounded in the day's public record, and set down in the codex before ever
 // reaching X. They carry no links — the bio and pinned post are the doorway (Maker decision
@@ -133,15 +134,18 @@ async function dayHasState(db: D1Database, date: string): Promise<boolean> {
   return (r?.n ?? 0) > 0;
 }
 
-// Daytime cadence (spec 2026-07-21; revised 2026-07-22 after the "every scripture post opened the
-// same" finding). The night cluster is the sermon (~01:30 UTC) and dream (~03:00 UTC); on an empty
-// day neither fires (a dream needs kept relics), so the daytime windows carry the feed. Two windows,
-// down from four — sparse and deliberate beats frequent and samey. The EARLIER window prefers a STATE
-// line (the day's real record, e.g. "one came, I kept nothing") when the rite recorded activity, so
-// an empty day still speaks genuine material instead of canon filler; otherwise, and always for the
-// later window, a SCRIPTURE line rotated off the canon pool (scriptureAnchor) so no two converge. The
-// god still "speaks on its own cadence": a fixed rhythm, never a reply. Tune the hours here.
-export const SCRIPTURE_WINDOWS = [15, 21] as const; // UTC: ~US morning and ~US afternoon/EU evening
+// Daytime cadence (spec 2026-07-21; cut 4->2 on 2026-07-22 after the "every scripture post opened the
+// same" finding; widened 2->5 on 2026-07-22, Maker decision, once scriptureAnchor made variety
+// structural — the samey-ness was one repeated anchor, not the post count, so the fix that landed
+// removes the reason the cadence was cut). The night cluster is the sermon (~01:30 UTC) and dream
+// (~03:00 UTC); on an empty day neither fires (a dream needs kept relics), so the daytime windows
+// carry the feed, and a once-a-day feed reads as abandoned. Five windows, every three hours, clear of
+// the cluster. The EARLIEST window prefers a STATE line (the day's real record, e.g. "one came, I kept
+// nothing") when the rite recorded activity, so an empty day still opens on genuine material instead
+// of canon filler; the rest draw a SCRIPTURE line rotated off the 22-line canon pool (scriptureAnchor),
+// one anchor per window, so no two in a day converge. The god still "speaks on its own cadence": a
+// fixed rhythm, never a reply. Tune the hours here.
+export const SCRIPTURE_WINDOWS = [11, 14, 17, 20, 23] as const; // UTC: EU midday → US evening
 
 export function scriptureWindow(now: number): { date: string; hour: number } | null {
   const hour = new Date(now).getUTCHours();
@@ -308,12 +312,18 @@ export function clampCheckAfterSecs(value: number | undefined): number {
   return Math.min(Math.max(value ?? 2, 1), 10);
 }
 
-interface XCredentials {
+export interface XCredentials {
   apiKey: string;
   apiSecret: string;
   accessToken: string;
   accessSecret: string;
 }
+
+export type TweetOptions = {
+  mediaId?: string;
+  /** When set, posts as a thread reply to this tweet id (HERALD). */
+  replyToTweetId?: string;
+};
 
 export function xCredentials(env: Env): XCredentials | null {
   if (!env.X_API_KEY || !env.X_API_SECRET || !env.X_ACCESS_TOKEN || !env.X_ACCESS_SECRET) return null;
@@ -436,12 +446,19 @@ function readJson(res: Response): Promise<unknown> {
   return withTimeout("x-body", X_IO_TIMEOUT_MS, () => res.json());
 }
 
-async function tweet(credentials: XCredentials, text: string, mediaId?: string): Promise<string> {
+export async function tweet(
+  credentials: XCredentials,
+  text: string,
+  opts: TweetOptions = {},
+): Promise<string> {
   const authorization = await oauthHeader(credentials, "POST", TWEET_URL);
+  const body: Record<string, unknown> = { text };
+  if (opts.mediaId) body.media = { media_ids: [opts.mediaId] };
+  if (opts.replyToTweetId) body.reply = { in_reply_to_tweet_id: opts.replyToTweetId };
   const response = await withTimeout("x-tweet", X_IO_TIMEOUT_MS, (signal) => fetch(TWEET_URL, {
     method: "POST",
     headers: { authorization, "content-type": "application/json" },
-    body: JSON.stringify(mediaId ? { text, media: { media_ids: [mediaId] } } : { text }),
+    body: JSON.stringify(body),
     signal,
   }));
   if (!response.ok) throw new Error(`X tweet ${response.status}: ${await readText(response)}`);
@@ -474,7 +491,10 @@ export async function releaseDispatchClaim(db: D1Database, key: string): Promise
 export async function alertStalledDispatches(env: Env, now: number): Promise<void> {
   const claims = (await env.DB.prepare(
     `SELECT key, value FROM config
-      WHERE value LIKE 'claimed:%' AND (key LIKE 'dream_dispatch_%' OR key LIKE 'sermon_dispatched_%' OR key LIKE 'daily_dispatched_%')`
+      WHERE value LIKE 'claimed:%' AND (
+        key LIKE 'dream_dispatch_%' OR key LIKE 'sermon_dispatched_%'
+        OR key LIKE 'daily_dispatched_%' OR key LIKE 'mention_reply_%'
+      )`
   ).all<{ key: string; value: string }>()).results;
   const stale = claims.filter((c) => now - Number(c.value.slice("claimed:".length)) > DISPATCH_CLAIM_STALE_MS);
   if (stale.length > 0) {
@@ -627,7 +647,7 @@ export async function dispatchArtifacts(
       try {
         const bytes = new Uint8Array(await object.arrayBuffer());
         const mediaId = await uploadVideo(credentials, bytes, deadlineMs);
-        const tweetId = await tweet(credentials, stored.text, mediaId);
+        const tweetId = await tweet(credentials, stored.text, { mediaId });
         await env.DB.prepare(
           `UPDATE dreams SET posted_at=?2, tweet_id=?3 WHERE id=?1 AND posted_at IS NULL`,
         ).bind(dream.id, now, tweetId).run();
@@ -672,7 +692,7 @@ export async function dispatchArtifacts(
               mediaId = await uploadVideo(credentials, bytes, deadlineMs);
             }
           }
-          const tweetId = await tweet(credentials, stored.text, mediaId);
+          const tweetId = await tweet(credentials, stored.text, { mediaId });
           await env.DB.prepare(`UPDATE config SET value = ?2 WHERE key = ?1`)
             .bind(`sermon_dispatched_${sermon.rite_date}`, `posted:${now}:${tweetId}`).run();
         } catch (e) {
@@ -713,6 +733,15 @@ export async function dispatchArtifacts(
         throw e;
       }
     }
+  }
+
+  // HERALD: answer @-mentions with a true thread reply (cadence-capped, moderated). Best-effort
+  // inside the same tick budget; failures never block artifact dispatch recovery next tick.
+  if (Date.now() < deadlineMs) {
+    try {
+      const { processMentions } = await import("./herald");
+      await processMentions(env, now);
+    } catch { /* best-effort; next tick retries */ }
   }
 
   } finally {

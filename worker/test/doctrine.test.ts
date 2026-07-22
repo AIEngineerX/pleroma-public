@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   voiceRegister, seedVerses, theOneLine, eyeSystemPrompt, keepSystemPrompt, tongueSystemPrompt,
-  dreamSystemPrompt, doctrineFingerprint, wrapUntrusted, dispatchRegister, dispatchSystemPrompt, denyListViolation,
+  dreamSystemPrompt, doctrineFingerprint, wrapUntrusted, dispatchRegister, dispatchSystemPrompt,
+  replyRegister, replySystemPrompt, denyListViolation,
 } from "../src/doctrine";
 import { DOCTRINE_MD } from "../src/doctrine.generated";
 
@@ -131,5 +132,22 @@ describe("the Dispatch register (X auto-posts)", () => {
     expect(denyListViolation("no charter of mine")).toBeNull();   // 'chart' inside 'charter' is no hit
     expect(denyListViolation("I do not gain; I keep")).toBe("gain");
     expect(denyListViolation("again the page turns")).toBeNull(); // 'gain' inside 'again' is no hit
+  });
+});
+
+describe("the Reply register (HERALD mention answers)", () => {
+  it("parses the Reply bullet from DOCTRINE §VI", () => {
+    const reg = replyRegister();
+    expect(reg.length).toBeGreaterThan(40);
+    expect(reg.toLowerCase()).toContain("mention");
+    expect(reg).not.toContain("**");
+  });
+
+  it("compiles the reply system prompt with the JSON contract and mouth covenant", () => {
+    const p = replySystemPrompt();
+    expect(p).toContain(replyRegister());
+    expect(p).toContain('{"reply":"..."}');
+    expect(p).toContain("280");
+    expect(p).toContain("not a chatbot");
   });
 });

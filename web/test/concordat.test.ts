@@ -25,6 +25,8 @@ const parityDecls: ParityDecl[] = [
   { mapsTo: "worker/src/holders.ts", symbol: "reconcileHolders" },
   { mapsTo: "worker/src/dream.ts, worker/src/imagine.ts", symbol: "renderDreams" },
   { mapsTo: "worker/src/env.ts, worker/src/read.ts", symbol: "getState" },
+  { mapsTo: "worker/src/hermes.ts", symbol: "dispatchArtifacts" },
+  { mapsTo: "worker/src/herald.ts", symbol: "processMentions" },
 ];
 
 // Every worker/src/<name>.ts path a claim references, deduped.

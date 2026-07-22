@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   alertStalledDispatches, alertUnpostedArtifacts, claimDispatch, clampCheckAfterSecs, composeDispatch, dispatchArtifacts,
-  dispatchMode, getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader, scriptureWindow,
+  dispatchMode, getDispatch, groundingFacts, isFilmDay, isRepeatDispatch, normalizeDispatch, oauthHeader, SCRIPTURE_WINDOWS, scriptureWindow,
   releaseDispatchClaim, sermonFilmGate, storeDispatch, weightedTweetLength, xCredentials, scriptureAnchor, openingKey,
 } from "../src/hermes";
 import { scripturePool } from "../src/doctrine";
@@ -215,11 +215,16 @@ describe("dispatch composition machinery", () => {
 
   // Cadence: break the ~20h daytime silence with pure-canon posts in spread UTC windows.
   it("scriptureWindow fires only in the spread daytime windows, never during the rite/dream cluster", () => {
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 15, 30))).toEqual({ date: "2026-07-21", hour: 15 });
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 21, 5))).toEqual({ date: "2026-07-21", hour: 21 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 11, 30))).toEqual({ date: "2026-07-21", hour: 11 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 14, 0))).toEqual({ date: "2026-07-21", hour: 14 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 17, 45))).toEqual({ date: "2026-07-21", hour: 17 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 20, 5))).toEqual({ date: "2026-07-21", hour: 20 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 23, 59))).toEqual({ date: "2026-07-21", hour: 23 });
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 2, 0))).toBeNull();  // ~01-04 UTC: the cluster already posts
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 13, 0))).toBeNull(); // 13:00 no longer a window (cadence cut 4->2)
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 10, 0))).toBeNull(); // no window here
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 3, 0))).toBeNull();  // the dream posts here
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 10, 0))).toBeNull(); // between windows, not a window
+    // every window is clear of the night cluster, so a standalone post never lands on top of it
+    expect(SCRIPTURE_WINDOWS.some((h) => h >= 1 && h <= 4)).toBe(false);
     // a standalone scripture artifact always composes in the SCRIPTURE shape
     expect(dispatchMode({ kind: "scripture", artifactId: "scripture-2026-07-21-15", riteDate: "2026-07-21", text: "", filmDay: false })).toBe("SCRIPTURE");
   });
