@@ -348,6 +348,27 @@ export async function advanceRitePhase(
   return r.meta.changes === 1;
 }
 
+// Accumulate verdicts for a rite that is STAYING in deliberation across ticks. Deliberately does not
+// touch phase_started_at (unlike advanceRitePhase): that timestamp is deliberation's anchor, and both
+// the "which offerings belong to this rite" cutoff and the span cap in rite.ts read it. Re-stamping it
+// each pass would slide the cutoff forward and pull in marks perceived DURING the rite, which belong to
+// the next one. Additive because each pass reports only the verdicts it kept.
+export async function bumpRiteKept(db: D1Database, date: string, delta: number, now: number): Promise<void> {
+  await db.prepare(
+    `UPDATE rites SET kept_count = kept_count + ?2, updated_at = ?3 WHERE date = ?1 AND phase = 'deliberation'`
+  ).bind(date, delta, now).run();
+}
+
+// Offerings this rite is responsible for: perceived before deliberation began. A mark perceived while
+// the rite is deliberating is NOT its material — the offertory already closed — so it is excluded here
+// and judged by the next rite. This is what makes a multi-pass deliberation terminate.
+export async function pendingJudgmentBefore(db: D1Database, cutoff: number): Promise<number> {
+  const r = await db.prepare(
+    `SELECT COUNT(*) AS n FROM offerings WHERE status = 'perceived' AND perceived_at < ?1`
+  ).bind(cutoff).first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
 // The first strike (0 -> 1) also re-anchors phase_started_at, so PHASE_DEADLINE_MS measures time
 // spent ERRORING rather than time since phase entry: under the 15-minute tick cadence a phase's
 // first action attempt already runs ~15 minutes after entry, which would otherwise put every first

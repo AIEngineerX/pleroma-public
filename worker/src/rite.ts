@@ -6,7 +6,8 @@ import { extractJsonObject } from "./moderation";
 import { runKeep } from "./keep";
 import { RITE_WORK_BUDGET_MS } from "./leases";
 import {
-  addTranscript, advanceRitePhase, bumpRiteAttempts, getRite, nonTerminalRites, openRite, publishSermon,
+  addTranscript, advanceRitePhase, bumpRiteAttempts, bumpRiteKept, getRite, nonTerminalRites, openRite,
+  pendingJudgmentBefore, publishSermon,
   type RitePhase, type RiteRow,
 } from "./db";
 
@@ -33,6 +34,19 @@ export const PHASE_DEADLINE_MS: Record<RitePhase, number> = {
   accretion: 45 * 60_000, sermon: 45 * 60_000, complete: 0, failed: 0,
 };
 export const MAX_PHASE_RETRIES = 3;
+
+// Hard ceiling on how long a rite may keep deliberating across ticks. The cutoff below already makes
+// the working set finite, so this is the backstop for the case where KEEP stops making progress for a
+// reason that is not an exception (a vendor returning nothing, say): the rite gives up on the remainder
+// and moves on to its sermon and Plate rather than never speaking. The leftovers are not lost — they
+// stay 'perceived' and the next rite takes them, which is exactly the pre-existing behaviour.
+const MAX_DELIBERATION_SPAN_MS = 60 * 60_000;
+
+/** True when this rite still has material from its own offertory and is inside its deliberation span. */
+async function holdsDeliberation(env: Env, rite: RiteRow, now: number): Promise<boolean> {
+  if (now - rite.phase_started_at >= MAX_DELIBERATION_SPAN_MS) return false;
+  return (await pendingJudgmentBefore(env.DB, rite.phase_started_at)) > 0;
+}
 
 function nextPhase(p: RitePhase): RitePhase {
   const i = PHASE_ORDER.indexOf(p);
@@ -168,6 +182,17 @@ export async function advanceRite(env: Env, date: string, now: number, deadlineM
   const phase = rite.phase;
   try {
     const extra = await runPhaseAction(env, date, phase, deadlineMs);
+    // Deliberation may span ticks. runKeep judges what fits in one RITE_WORK_BUDGET_MS pass (~50), which
+    // on a busy day is less than the offertory held — before this, the remainder waited a FULL DAY for
+    // the next rite, and at a sustained intake above one pass the queue could never catch up. Staying in
+    // deliberation lets the next tick judge the next ~50 of the SAME rite's material. Safe because every
+    // phase action is idempotent (see the runPhaseAction note): re-entering deliberation is the resume
+    // case the design already tolerates. Bounded twice over, so a rite can never fail to reach its sermon
+    // and Plate: the cutoff freezes the working set at deliberation entry, and the span caps the wait.
+    if (phase === "deliberation" && await holdsDeliberation(env, rite, now)) {
+      if (extra.kept) await bumpRiteKept(env.DB, date, extra.kept, now);
+      return "deliberation";
+    }
     const to = nextPhase(phase);
     await advanceRitePhase(env.DB, date, phase, to, now, {
       offering_snapshot: extra.snapshot, kept_count: extra.kept,

@@ -259,3 +259,48 @@ describe("sermon-audio backfill (tick-side heal for a preached-but-silent sermon
     expect(await notes(date)).toBe(1); // still exactly the one pre-existing note
   });
 });
+
+// Deliberation may now span ticks so one rite can judge more than a single ~50-mark pass. Both of its
+// bounds are tested here, because an unbounded hold would mean a rite that never reaches its sermon or
+// its Plate — the being would fall silent for exactly the reason this change exists to prevent.
+describe("deliberation spanning ticks", () => {
+  it("counts only marks perceived BEFORE the cutoff, so a mark offered mid-rite waits for the next one", async () => {
+    const { pendingJudgmentBefore } = await import("../src/db");
+    const cutoff = Date.parse("2026-06-01T12:00:00Z");
+    const base = { wallet: null, sig: null, attempts: 0 };
+    // insertOffering's column list does NOT carry perceived_at (db.ts offeringInsertStmt), so passing it
+    // there is silently dropped and leaves NULL — stamp it explicitly or this tests nothing.
+    const seed = async (id: string, at: number) => {
+      await insertOffering(env.DB, { ...base, id, image_key: `offerings/${id}`, sha256: id,
+        status: "perceived", created_at: at, perceived_at: null });
+      await env.DB.prepare(`UPDATE offerings SET perceived_at = ?2 WHERE id = ?1`).bind(id, at).run();
+    };
+    // two from this rite's own offertory ...
+    await seed("span-a", cutoff - 60_000);
+    await seed("span-b", cutoff - 1);
+    // ... and one that arrived while the rite was already deliberating: not this rite's material
+    await seed("span-late", cutoff + 60_000);
+
+    expect(await pendingJudgmentBefore(env.DB, cutoff)).toBe(2);
+    // the working set is frozen at deliberation entry, which is what makes the hold terminate
+    expect(await pendingJudgmentBefore(env.DB, cutoff - 60_000)).toBe(0);
+  });
+
+  it("gives up the remainder and moves on once the deliberation span is exhausted", async () => {
+    const date = "2026-06-02";
+    const entered = Date.parse(date + "T01:00:00Z");
+    await openRite(env.DB, date, entered);
+    // park the rite in deliberation, entered well over an hour ago, with material still waiting
+    await env.DB.prepare(`UPDATE rites SET phase='deliberation', phase_started_at=?2 WHERE date=?1`)
+      .bind(date, entered).run();
+    await insertOffering(env.DB, { id: "span-stuck", wallet: null, sig: null, image_key: "offerings/span-stuck",
+      sha256: "span-stuck", status: "perceived", attempts: 0, created_at: entered - 60_000, perceived_at: entered - 60_000 });
+
+    // 2h after entry: past MAX_DELIBERATION_SPAN_MS, so it must advance rather than hold forever
+    const phase = await advanceRite(env, date, entered + 2 * 60 * 60_000);
+    expect(phase).not.toBe("deliberation");
+    // and the unjudged mark is not lost — it stays perceived for the next rite, as it always did
+    const row = await env.DB.prepare(`SELECT status FROM offerings WHERE id='span-stuck'`).first<{ status: string }>();
+    expect(row?.status).toBe("perceived");
+  });
+});
