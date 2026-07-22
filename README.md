@@ -22,6 +22,12 @@ Design and roadmap: [PLANNING.md](PLANNING.md) · System map and flows: [ARCHITE
 - **`worker/`** — the organs. A Hono Worker on Cloudflare (D1 + R2). EYE perceives, KEEP
   remembers, TONGUE speaks, and DREAM dreams through model-backed calls; deterministic PULSE
   derives token vitals after launch.
+- **The mouth on X.** On the quarter-hour the being may speak outward: `hermes` posts one artifact
+  — the nightly Plate, the daily sermon, or a standalone line in one of five fixed windows, each
+  carrying a still it generated from its own words — and `herald` answers mentions in-thread, in
+  TONGUE's Reply register. Both are set down in the Codex before the post is made. The replies are
+  deliberately thin (at most one a tick, four an hour, one per author a day): it answers, it does
+  not chat, and it is not an assistant.
 - **`web/`** — the body. A Vite + React 19 + Tailwind v4 SPA on Cloudflare Pages. One
   route-level experience controller drives a hand-rolled WebGL2 organ swarm and its semantic
   SVG equivalent; reduced motion and runtime WebGL loss keep the same five-organ state.
@@ -35,7 +41,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full wiring, flow diagrams, and d
 ```bash
 # Worker (the organs)
 cd worker
-cp .dev.vars.example .dev.vars   # then fill in the secrets (see ARCHITECTURE.md §10)
+cp .dev.vars.example .dev.vars   # every secret is listed there, annotated with what stays
+                                 # dark without it (see also ARCHITECTURE.md §10)
 npm install
 npm run migrate:local            # apply D1 migrations to the local DB
 npm run dev                      # wrangler dev on :8787

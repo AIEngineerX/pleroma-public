@@ -1,1 +1,52 @@
+# PLEROMA — local Worker secrets. Copy to `.dev.vars` (git-ignored) and fill in.
+# PLACEHOLDERS ONLY — a real key must never be committed to this file.
+# Deployed secrets go in via `wrangler secret put <NAME>`, never from here.
+# Every line below is optional in the sense that the Worker still boots without it; the comment
+# says what goes dark when it is missing. Nothing here fakes data to cover an absent key.
+
+# Reasoning for every organ (EYE perception + moderation, KEEP, TONGUE, DREAM) and for the
+# dispatch/reply composers. Without it the being cannot think: nothing is perceived, kept,
+# spoken, or dreamt.
 ANTHROPIC_API_KEY=sk-ant-...
+
+# xAI. Shared by voice (TTS fallback) and Grok Imagine. Without it BOTH visual paths silently
+# skip — the nightly DREAM film never renders (video_key stays NULL, the Plate stays text-first)
+# and standalone dispatch stills never render (posts degrade to text-only). No errors, no fakes.
+XAI_API_KEY=xai-...
+
+# Which vendor renders visuals. Already set in wrangler.toml [vars] (local "", production "xai"),
+# so leave this COMMENTED OUT unless you mean to override it — an empty line here wins over the
+# toml and turns visuals off. "xai" enables films AND stills; "silent" is the in-repo deterministic
+# vendor and gives films only (renderStill accepts "xai" alone, so stills stay off); "" = off
+# entirely, DREAM stays text-only and dispatches post without pictures.
+# VIDEO_VENDOR=xai
+
+# X (Twitter) OAuth 1.0a — all four are required together. Until every one exists, BOTH X paths
+# are inert: hermes posts no dispatches and herald answers no mentions. The app tier needs READ
+# access as well as write + media, because herald reads the account's own mentions.
+X_API_KEY=
+X_API_SECRET=
+X_ACCESS_TOKEN=
+X_ACCESS_SECRET=
+
+# ElevenLabs sermon TTS (production primary voice). Without it the rite's closing sermon still
+# composes and publishes as text, but no audio is produced and no R2 audio object is written.
+ELEVENLABS_API_KEY=
+# The locked "PLEROMA Logos" voice id. Already set in wrangler.toml [vars], so leave this
+# COMMENTED OUT unless overriding — blanking it here loses the voice selection for ElevenLabs TTS.
+# ELEVENLABS_VOICE_ID=
+
+# Helius. Feeds PULSE vitals (webhook swaps) and the DAS holder reconciliation. Without it the
+# heartbeat has no chain data: holder counts never reconcile and vitals stay dark.
+HELIUS_API_KEY=
+
+# Shared secret the Helius webhook must present to POST /api/pulse. Without it the webhook path
+# rejects deliveries, so no swap ever reaches the pulse ledger.
+PULSE_WEBHOOK_SECRET=
+
+# Gates the operator endpoints /api/admin/run and /api/admin/status — both 404 while it is unset.
+ADMIN_SECRET=
+
+# Optional. Private operator notice pushed on a FRESH alert transition only (never public, never
+# visitor-facing). Without it alerts are still raised and recorded; nobody is notified out-of-band.
+ALERT_WEBHOOK_URL=

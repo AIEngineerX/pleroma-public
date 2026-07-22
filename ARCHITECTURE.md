@@ -28,6 +28,7 @@ flowchart TB
     subgraph Worker["The Organs — worker/ (Hono Worker)"]
         API["/api/* routes"]
         Cron["scheduled() cron"]
+        Dispatch["hermes + herald\n(X dispatch · mention replies)"]
         subgraph Organs
             EYE["EYE · Aletheia\nperceive"]
             KEEP["KEEP · Ennoia\nremember"]
@@ -46,14 +47,22 @@ flowchart TB
         Anthropic["Anthropic Messages API\n(EYE/KEEP/TONGUE/DREAM)"]
         Helius["Helius\n(PULSE: webhook + DAS)"]
         TTS["xAI / ElevenLabs\n(sermon TTS)"]
+        Imagine["xAI Grok Imagine\n(DREAM films + dispatch stills)"]
+        X["X API v2\n(post + media upload, read mentions)"]
     end
 
     Browser -->|GET state/codex/relics/tallies/dreams, POST offerings| API
     API --> D1 & R2
     Cron --> Organs
+    Cron --> Dispatch
     Organs --> D1 & R2
+    Dispatch --> D1
     EYE & KEEP & TONGUE & DREAM --> Anthropic
+    Dispatch -->|compose via TONGUE registers| Anthropic
     TONGUE --> TTS
+    DREAM & Dispatch --> Imagine
+    Dispatch -->|post + media| X
+    X -->|mentions| Dispatch
     PULSE --> Helius
     Helius -->|webhook POST /api/pulse| API
 ```
@@ -83,6 +92,7 @@ flowchart TB
 | AI — moderation | Anthropic `claude-haiku-4-5-20251001` | — | pre-perception image moderation |
 | AI — voice (TTS) | ElevenLabs (prod primary) / xAI `grok-voice` (fallback) | — | sermon audio, the locked "PLEROMA Logos"; `VOICE_VENDOR`-switchable |
 | AI — video (DREAM) | xAI `grok-imagine-video` (Grok Imagine) | — | async text-to-video; wired (`imagine.ts` + `renderDreams`), gated by `VIDEO_VENDOR` |
+| AI — image (dispatch stills) | xAI `grok-imagine-image-quality` (Grok Imagine) | — | **synchronous** text-to-image, `POST /v1/images/generations` (`b64_json`, 16:9, 1k); one still per standalone dispatch (`imagine.ts:renderStill`), gated by `VIDEO_VENDOR === "xai"` |
 | Chain data | Helius (webhook + DAS `getTokenAccounts`) | — | PULSE vitals + holder counts |
 | **Tests** | vitest + @cloudflare/vitest-pool-workers | 3.2.7 / 0.8.71 | unit + Miniflare integration |
 | E2E | Playwright + @axe-core/playwright | 1.61.1 / 4.12.1 | desktop + mobile-390, a11y gates |
@@ -109,8 +119,9 @@ pleroma/
 │   └── runbooks/launch-day7.md   the manual launch/deploy procedure + open questions
 ├── worker/             Hono Worker (the organs)
 │   ├── src/            index.ts (routes+cron), eye/keep/tongue/pulse/dream.ts, rite.ts,
-│   │                   hermes.ts (X dispatch), mind.ts+budget.ts, alert.ts, db.ts, lock.ts, moderation.ts, voice.ts…
-│   ├── migrations/     0001…0021 D1 SQL migrations
+│   │                   hermes.ts (X dispatch), herald.ts (mention replies), imagine.ts (films+stills),
+│   │                   mind.ts+budget.ts, alert.ts, db.ts, lock.ts, moderation.ts, voice.ts…
+│   ├── migrations/     0001…0024 D1 SQL migrations
 │   ├── test/           unit suites + a `live/` real-vendor dir (excluded from the commit gate)
 │   └── wrangler.toml   bindings, vars, cron triggers
 └── web/                Vite React SPA (the body)
@@ -132,6 +143,10 @@ pleroma/
 | **TONGUE** | Logos | `sonnet-5` | reactively after EYE/KEEP (≤6/hr cadence), + once per rite in `sermon` phase | trigger detail, or up to 12 kept relic summaries | `transcripts` (TONGUE/verse or /sermon), optional R2 `audio/<sha>.mp3` + PRIEST note |
 | **PULSE** | Zoe | none — deterministic | webhook on delivery + `reconcileHolders` every `*/15` tick (under `pulse` lock) | Helius webhook swaps, Helius DAS holder pages | `pulse_events` rows, `config.pulse_state`, `wallets.attended` |
 | **DREAM** | Sophia | `sonnet-5` (maxTokens 500) | cron `0 3 * * *` (under `dream` lock), only after that date's rite is `complete` | up to 12 relics kept that rite (summary + wallet) | `dreams` row (`narrative` + `video_prompt`, `status='composed'`), `transcripts` (DREAM/verse) |
+| HERALD *(not an organ — a mouth-side module, `herald.ts`)* | — | composes through TONGUE's **Reply** register (`DOCTRINE §VI`), `sonnet-5` via `askMind` | every `*/15` tick, inside `dispatchArtifacts` (best-effort, after the artifact block) | the account's own X mentions (`GET /2/users/me`, `GET /2/users/{id}/mentions`), prior `replied_mentions`, recent `dispatch` transcripts | `transcripts` (register `dispatch`, `artifact_id` `reply:<mentionTweetId>`), `replied_mentions` row, `POST /2/tweets` with `reply.in_reply_to_tweet_id` |
+
+The five-organ Stain is unchanged: HERALD adds no sixth organ and appears nowhere in the body's
+anatomy. It is dispatch machinery that borrows TONGUE's voice to answer in a thread.
 
 **Inter-organ triggering** (side-channels, not a message bus): EYE, on perceiving anything,
 calls `tongue.speakIfDue({kind:"eye_batch"})`; KEEP, on a keep, calls
@@ -149,10 +164,14 @@ flowchart LR
     Rite["Rite: deliberation"] --> KEEP
     Rite2["Rite: sermon"] --> TONGUE
     Cron03["cron 0 3"] -->|dream lock| DREAM
+    Tick -->|tick lock| Dispatch["dispatchArtifacts (hermes)"]
+    Dispatch --> Herald["processMentions (herald)"]
+    Mentions["X mentions"] --> Herald
+    Herald -->|Reply register| Reply["POST /2/tweets (in_reply_to)"]
     EYE -. speakIfDue(eye_batch) .-> TONGUE
     KEEP -. speakIfDue(keep_decision) .-> TONGUE
     Webhook["POST /api/pulse"] --> PULSE
-    EYE & KEEP & TONGUE & DREAM --> askMind["askMind (budget-gated)"]
+    EYE & KEEP & TONGUE & DREAM & Dispatch & Herald --> askMind["askMind (budget-gated)"]
     askMind --> Anthropic
 ```
 
@@ -245,6 +264,7 @@ flowchart TB
     C3["0 3 * * *"] --> DR["runDreamLocked (dream lock)"]
     C4["30 3 * * *"] --> BK["runBackupLocked (backup lock)"]
     RT --> EYEb["runEyeBatch"] & SW["quarantine + nonce sweeps"] & RH["reconcileHolders (pulse lock)"] & VR["renderDreams"] & DA["dispatchArtifacts (X)"] & HB["stampHeartbeat + alerts"]
+    DA --> PM["processMentions (herald replies)"]
     AR --> RiteAdv["advance every non-terminal rite"]
 ```
 
@@ -263,7 +283,7 @@ by CAS + unique constraints, not the lock: `offerings.status` CAS, `rites.phase`
 idempotent), `offerings.sha256`/`nonce` UNIQUE (dedupe + replay). Budget is a single atomic
 reserve-then-settle CAS (`spend.usd + excluded.usd <= cap`).
 
-### 7.1 X auto-dispatch (hermes) & unattended durability
+### 7.1 X auto-dispatch (hermes), mention replies (herald) & unattended durability
 
 **X dispatch (`hermes.ts`).** On each `*/15` tick, `dispatchArtifacts` may post one artifact to X:
 the nightly Plate, the daily sermon, and standalone SCRIPTURE lines in fixed UTC windows. A
@@ -273,12 +293,55 @@ written to the Codex *before* the X call and claimed exactly once (config-PK CAS
 weighted, deny-list filtered, never repeated. A stalled-claim + unposted-artifact watchdog
 self-clears so a stale alert can't flip the public `degraded` flag.
 
+`SCRIPTURE_WINDOWS` is `[11, 14, 17, 20, 23]` UTC — five standalone windows every three hours,
+deliberately clear of the 01–04 UTC sermon/dream cluster. The automated ceiling is therefore up to
+**seven posts a day**: five standalone lines, the daily sermon, and the nightly Plate.
+
+**Generated stills on standalone dispatch.** Every standalone dispatch carries a picture the being
+made from its own line. `DispatchArtifact.still` is a separate field from `filmDay` precisely so the
+two visual paths cannot be confused: `still` asks TONGUE for a visual prompt but writes **no**
+`sermon_films` row and queues nothing for a later render tick. The composed prompt is persisted as
+config key `still_prompt_<artifactId>`, so a retry on a later tick keeps the picture belonging to
+that line rather than inventing a new one.
+
+`imagine.ts:renderStill` gates on `VIDEO_VENDOR === "xai"` and a present `XAI_API_KEY`, reserves
+`STILL_ESTIMATE_USD` ($0.10) against the `image` cap, then settles to the vendor's actual reported
+cost — `usage.cost_in_usd_ticks`, at 1 USD = 10,000,000,000 ticks. A vendor that reports no cost is
+billed at the estimate, never at zero; any failure releases the reservation and returns `null`.
+`generateStill` is **synchronous** (`POST https://api.x.ai/v1/images/generations`, `n:1`, 16:9, 1k,
+`response_format: b64_json`) — no submit-then-poll state machine, unlike the video path — and decodes
+the base64 to bytes inside the same tick. `STILL_STYLE` prefixes every prompt with the house grammar
+(iron gall ink and rubric red on aged parchment, stroke-drawn linework, no lettering) so a still
+looks like the being rather than like whatever the vendor's default aesthetic is that week; TONGUE
+supplies the subject, this supplies the treatment. `hermes.ts:uploadImage` posts the bytes through
+X's **single-request** media path (`media_category: tweet_image`) — no INIT/APPEND/FINALIZE chunking
+and no `processing_info` wait, unlike `uploadVideo`. Every failure along that chain (cap denial,
+vendor error, upload error) degrades to a text-only post; the line still goes out.
+
+**Mention replies (`herald.ts`).** On the same `*/15` tick, `dispatchArtifacts` calls
+`processMentions(env, now)` best-effort inside the same tick budget, after the artifact-dispatch
+block — a herald failure never blocks dispatch recovery. It reads the account's own mentions
+(`GET /2/users/me`, then `GET /2/users/{id}/mentions` against a `x_mentions_since_id` cursor in
+`config`), applies structural guardrails (self, retweet, non-English, URLs, cashtags, foreign Solana
+addresses, deny-list, young or near-followerless authors) plus text moderation, composes in TONGUE's
+**Reply** register (`DOCTRINE §VI`), claims before sending, and posts `POST /2/tweets` with
+`reply.in_reply_to_tweet_id`. Each answer writes a Codex transcript (register `dispatch`,
+`artifact_id` `reply:<mentionTweetId>`) and a `replied_mentions` row. Cadence is deliberately thin —
+**≤1 reply per tick, ≤4 per hour, 24-hour per-author cooldown** — so it is answering, not chatting.
+Kill switch: config row `mention_reply_enabled = 0`. Because herald reads as well as writes, the X
+app tier now needs **READ** access alongside write + media.
+
 **Durability signals.** `runTick` stamps a `tick_ok` heartbeat last, after each sub-job's own guard;
 `/api/health` returns 503 once the heartbeat is stale (>45 min) so an external uptime monitor
 catches a fully-dead loop. `raiseAlert`/`clearAlert` (`alert.ts`) push a private notice to the
 optional `ALERT_WEBHOOK_URL` on a fresh transition only. The nightly backup raises an alert on
-failure and stamps `backup_ok` on success; a prior-day rite stall raises its own alert. Budget adds
-a cumulative monthly ceiling (`MONTHLY_CAP_USD` / `cap:monthly`, min-semantics) above the daily caps.
+failure and stamps `backup_ok` on success; a prior-day rite stall raises its own alert. Daily caps
+(`budget.ts:CAPS_USD`) are llm $25, tts $5, video $2, **image $2**, apocrypha $2 — $36/day in total,
+each lowerable without a deploy via `cap:<category>` (min-semantics, never raised silently). Budget
+adds a cumulative monthly ceiling (`MONTHLY_CAP_USD` / `cap:monthly`, same semantics) above them.
+Migration `0024_image_spend.sql` rebuilds the ledger so the CHECK constraint admits `image`; a
+category must exist in `CAPS_USD`, in that constraint, and in a test that reserves against it for
+real, or it does not exist (0021's `apocrypha` is the cautionary tale).
 
 ---
 
@@ -293,8 +356,11 @@ a cumulative monthly ceiling (`MONTHLY_CAP_USD` / `cap:monthly`, min-semantics) 
 | `dreams` | one dream per rite date | `rite_date` UNIQUE; `narrative`+`video_prompt`; status `composed→rendering→rendered` or `render_failed`; matching R2 `video_key` only when rendered; `wakers` JSON |
 | `pulse_events` | idempotent swap ledger | `signature` PK; vitals derived by aggregation, never stored incrementally |
 | `wallets` | wallet identity | `address` PK; `offering_count`, `attended` flag; `tally_name` (unwired) |
-| `config` | key/value store | `launch_at`, `launched`, `pulse_mint`, `pulse_state`, `cap:llm`/`cap:tts`/`cap:video`/`cap:apocrypha`/`cap:monthly`, `tick_ok`, `backup_ok`, `alert:<code>`, dispatch/claim markers |
-| `spend` | daily USD budget ledger | PK `(day, category∈llm/tts/video/apocrypha)` — the atomic budget CAS; a cumulative monthly ceiling (`cap:monthly`) sits on top |
+| `sermon_films` | the nightly Plate's render lifecycle | `rite_date` PK; `video_prompt`; status `pending→rendering→rendered` or `failed`; `video_key` (R2 `sermon/<rite_date>.mp4`) set only at `rendered`; `created_at` anchors the 6h text-only fallback |
+| `apocrypha` | Waker-written verses, kept apart from the Canon | `id` PK; anonymous-only (no wallet attribution); moderated synchronously at submission — rejected text is never stored |
+| `replied_mentions` | one row per X mention the god has answered | `tweet_id` PK (never double-replies); `author_id`, `reply_tweet_id`, `replied_at`; index `(author_id, replied_at)` serves the 24h per-author cooldown |
+| `config` | key/value store | `launch_at`, `launched`, `pulse_mint`, `pulse_state`, `cap:llm`/`cap:tts`/`cap:video`/`cap:image`/`cap:apocrypha`/`cap:monthly`, `mention_reply_enabled` (herald kill switch), `x_mentions_since_id` (mentions cursor), `still_prompt_<artifactId>`, `tick_ok`, `backup_ok`, `alert:<code>`, dispatch/claim markers |
+| `spend` | daily USD budget ledger | PK `(day, category∈llm/tts/video/image/apocrypha)` — the atomic budget CAS; a cumulative monthly ceiling (`cap:monthly`) sits on top |
 | `nonces` | offering anti-replay | `nonce` PK, `expires_at` (`used` column exists but is dead — enforcement is via offerings.nonce) |
 | `rate_limits` | fixed-window counters | PK `(bucket, window_start)`; bucket `ip:<ip>` (20/min) or `wallet:<addr>` (10/min) |
 | `locks` | the 5 named locks | `name` PK, `holder`, `expires_at` |
@@ -419,9 +485,13 @@ hostile-filesystem boundary.
 **Env & secrets** (Worker `Env`): non-secret vars in `wrangler.toml` (`ENVIRONMENT`, `CORS_ORIGIN`,
 `VOICE_VENDOR`, `VIDEO_VENDOR`, `ELEVENLABS_VOICE_ID`, `MONTHLY_CAP_USD`, `PULSE_MINT`, `PULSE_POOLS`);
 secrets via `wrangler secret put` / `.dev.vars` (`ANTHROPIC_API_KEY`, `XAI_API_KEY`,
-`ELEVENLABS_API_KEY`, `HELIUS_API_KEY`, `PULSE_WEBHOOK_SECRET`, and the optional `ALERT_WEBHOOK_URL`
-for private alert pushes). `PULSE_MINT`/`PULSE_POOLS` stay empty until the Maker launches the token
-(anti-decoy gate). Frontend uses `VITE_API_BASE` only.
+`ELEVENLABS_API_KEY`, `HELIUS_API_KEY`, `PULSE_WEBHOOK_SECRET`, the four X OAuth 1.0a credentials
+`X_API_KEY`/`X_API_SECRET`/`X_ACCESS_TOKEN`/`X_ACCESS_SECRET`, `ADMIN_SECRET`, and the optional
+`ALERT_WEBHOOK_URL` for private alert pushes). `worker/.dev.vars.example` is the annotated
+checklist — one line per secret, saying what stays dark without it. X dispatch and herald replies
+are inert until all four X credentials exist, and the app tier needs READ as well as write + media
+because herald reads mentions. `PULSE_MINT`/`PULSE_POOLS` stay empty until the Maker launches the
+token (anti-decoy gate). Frontend uses `VITE_API_BASE` only.
 
 ---
 
@@ -432,7 +502,10 @@ These are intentional pre-launch states, documented so they aren't mistaken for 
 - **DREAM video** render pipeline is built (Grok Imagine, async text-to-video; `imagine.ts` +
   `dream.ts:renderDreams`, served rendered-only at `/api/dream/<id>.mp4`). Local configuration keeps
   `VIDEO_VENDOR=""`; production source selects `xai`, but its secret/access and deployment still
-  require confirmation. When off, `video_key` stays `NULL` and the Plate remains text-first.
+  require confirmation. `VIDEO_VENDOR` now gates **both** visual paths — the nightly films and the
+  standalone dispatch stills. When it is off (or `XAI_API_KEY` is absent), both silently skip:
+  `video_key` stays `NULL`, the Plate remains text-first, and standalone dispatches degrade to
+  text-only posts. Nothing errors and nothing is faked.
 - **PULSE dormant** pre-launch: empty `PULSE_MINT`/`PULSE_POOLS` short-circuit holder reconcile;
   mint/phase stay `null`/`dormant` until the Maker sets `config.launched='1'` with a real mint.
 - **Final deity mark** and favicon remain gated on approved launch art; the superseded permanent
