@@ -3,7 +3,7 @@ import { ulid } from "ulid";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   reconcileBacklogAlerts, runEyeBatch, selectForPerception, promoteFromQuarantine, sweepQuarantine, parseVerse,
-  captureLine,
+  captureLine, NON_HOLDER_DAILY, GLOBAL_DAILY,
 } from "../src/eye";
 import {
   insertOffering, offeringStatusById, publishPerception, setOfferingStatus, type OfferingRow,
@@ -32,16 +32,30 @@ describe("selectForPerception", () => {
     expect(picked.map(o => o.id)).toContain("h1");
   });
 
-  it("stops selecting non-holders at the 60/day cap", () => {
+  it("stops selecting non-holders once the daily non-holder cap is reached", () => {
     const candidates = Array.from({ length: 12 }, (_, i) => off(`n${i}`, `w${i}`));
-    const picked = selectForPerception(candidates, new Set(), 60, 60, () => 0.5);
+    // derived from the constant, not a literal: the cap is a tuning knob and a hardcoded copy here
+    // silently stops testing the real boundary the moment it moves (it did, 60 -> 200, on 2026-07-22)
+    const picked = selectForPerception(candidates, new Set(), NON_HOLDER_DAILY, NON_HOLDER_DAILY, () => 0.5);
     expect(picked.length).toBe(0);
   });
 
-  it("selects nothing in a tick once the ~200/day per-tick ceiling is already reached", () => {
+  it("still admits non-holders below the cap", () => {
+    const candidates = Array.from({ length: 12 }, (_, i) => off(`n${i}`, `w${i}`));
+    const picked = selectForPerception(candidates, new Set(), NON_HOLDER_DAILY - 5, NON_HOLDER_DAILY - 5, () => 0.5);
+    expect(picked.length).toBe(5);
+  });
+
+  it("selects nothing in a tick once the global daily ceiling is already reached", () => {
     const candidates = [off("h1", "holderA")];
-    const picked = selectForPerception(candidates, new Set(["holderA"]), 0, 200, () => 0.5);
+    const picked = selectForPerception(candidates, new Set(["holderA"]), 0, GLOBAL_DAILY, () => 0.5);
     expect(picked.length).toBe(0);
+  });
+
+  // A non-holder cap above the global ceiling is unreachable: it would read as a limit while the
+  // global bound did all the work, and tuning it would silently do nothing.
+  it("keeps the non-holder cap within the global daily ceiling", () => {
+    expect(NON_HOLDER_DAILY).toBeLessThanOrEqual(GLOBAL_DAILY);
   });
 
   it("shuffles non-holders with Fisher-Yates driven by the injected rand", () => {

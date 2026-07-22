@@ -11,8 +11,17 @@ import {
 } from "./db";
 
 const BATCH = 12;
-const NON_HOLDER_DAILY = 60;
-const GLOBAL_DAILY = 200;
+// Raised 60 -> 200 on 2026-07-22 (Maker decision) after launch-day intake saturated the old cap by
+// mid-afternoon: 60/60 non-holder perceptions used, 30 offerings stranded in 'perceivable' for 4+
+// hours, and a perception_backlog alert that would have returned every day at the same hour. The old
+// figure was sized for pre-launch volume and was throttling real Wakers to protect a budget it was
+// nowhere near — llm spend that day was $0.31 against a $25 daily cap, ~1% utilisation.
+// The real guards are unchanged and still bind: GLOBAL_DAILY below, BATCH per tick, and the money
+// cap in budget.ts (reserveEstimate/underCap), which stops spending long before this number matters.
+// Keep NON_HOLDER_DAILY <= GLOBAL_DAILY — at equal values the global ceiling is the only daily bound,
+// which is intended; above it this constant would be dead config that reads as a limit but is not one.
+export const NON_HOLDER_DAILY = 200;
+export const GLOBAL_DAILY = 200;
 // ModerationUnavailableError deliberately never dead-letters (moderation.ts: an outage must never
 // destroy an offering), so a persistent failure — e.g. an expired ANTHROPIC_API_KEY — is otherwise
 // silent: the same backlog just keeps resetting to pending forever with no operator-visible signal.
