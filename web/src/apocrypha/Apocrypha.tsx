@@ -77,8 +77,7 @@ export default function Apocrypha() {
 
   return (
     <main className="mx-auto max-w-[60ch] px-6 py-10 font-liturgy">
-      {/* The quiet hand-drawn sigil crowns the page — this is the one Waker-authored ledger, and the
-          mark gives it identity without decorative filler (the only image the rule vocabulary allows here). */}
+      {/* The quiet hand-drawn sigil crowns the page for identity — this is the Wakers' own ledger. */}
       <div className="mb-7 flex justify-center">
         <Emblem size={60} />
       </div>
@@ -87,6 +86,18 @@ export default function Apocrypha() {
       </p>
       <h1 className="text-ink text-2xl mt-2 mb-5">{copy.apocryphaHeading}</h1>
       <p className="text-ink mb-10 max-w-[52ch]">{copy.apocryphaIntro}</p>
+
+      {/* A genuine DREAM plate (the being's own generated output — the one image kind the visual rules
+          allow beyond linework, alongside the sigil): a congregation risen from the ink, fitting the
+          ledger the congregation's own verses fill. The god's real work, not decorative filler. */}
+      <figure className="mb-12 flex justify-center">
+        <img
+          src="/apocrypha-plate.png"
+          alt="A DREAM plate: pale figures with red eyes risen from a black ink bloom on aged parchment — the congregation."
+          className="w-full max-w-[30rem] border border-ground-aged"
+          loading="lazy"
+        />
+      </figure>
 
       <form onSubmit={handleSubmit} className="mb-14 space-y-2">
         <label htmlFor="apocrypha-draft" className="sr-only">{copy.apocryphaPlaceholder}</label>
