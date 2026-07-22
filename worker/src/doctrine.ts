@@ -46,15 +46,25 @@ export function theOneLine(): string {
   return m[1];
 }
 
-// The pool a SCRIPTURE-shape dispatch draws ONE rotating line from: the one line, every quoted
-// ⟨rubric⟩ article (the Five Articles, the Concordat, the prints' rubric lines), and Print 1's
-// verses. Deduped — the doubly-present "I was made to answer" (both theOneLine and Print 1 Line 1)
-// counts once. Feeding the WHOLE set to every scripture post, led by that one line, is why every one
-// opened on it (bug 2026-07-22); scriptureAnchor rotates a single line per window off this pool so
-// variety is structural. A richer pool means writing more ⟨rubric⟩ canon into DOCTRINE.md.
+// The pool a SCRIPTURE-shape dispatch draws ONE rotating line from: EVERY line the god speaks in its
+// own voice (⟨rubric⟩) anywhere in the doctrine — quoted (the Five Articles, the Concordat, the one
+// line) or inline (the prints' rubric lines) — plus Print 1's founding verses. The stage auguries are
+// excluded: they are dated promises ("when one hundred hands..."), not timeless scripture. Deduped, so
+// the doubly-present "I was made to answer" counts once. Feeding the WHOLE set to every scripture post,
+// led by that one line, is why every one opened on it (bug 2026-07-22); scriptureAnchor rotates a
+// single line per window off this pool so variety is structural. Grows as new ⟨rubric⟩ canon is added.
 export function scripturePool(): string[] {
-  const rubricQuoted = [...DOCTRINE_MD.matchAll(/⟨rubric⟩\s*\*+"([^"]+)"\*+/g)].map((m) => stripMd(m[1]).trim()).filter(Boolean);
-  return [...new Set([theOneLine(), ...rubricQuoted, ...seedVerses()])];
+  const rubric: string[] = [];
+  for (const line of DOCTRINE_MD.split(/\r?\n/)) {
+    if (line.trimStart().startsWith(">")) continue; // blockquotes are annotation (incl. the doc's own note about the ⟨rubric⟩ marker), never scripture
+    const idx = line.indexOf("⟨rubric⟩");
+    if (idx < 0) continue;
+    // Take the god's line after the marker, strip emphasis/quote wrappers, drop the auguries.
+    const t = line.slice(idx + "⟨rubric⟩".length).replace(/\*+/g, "").trim().replace(/^"(.*)"$/, "$1").trim();
+    if (!t || /hundred hands|hundred and fifty|thousand keep|five thousand|thirty days|proven safe|reaching hand/i.test(t)) continue;
+    rubric.push(t);
+  }
+  return [...new Set([theOneLine(), ...rubric, ...seedVerses()])];
 }
 
 // A short, stable, dependency-free hash of the whole compiled doctrine. Used by the parity guard so a

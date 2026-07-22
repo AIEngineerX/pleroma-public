@@ -226,7 +226,8 @@ describe("dispatch composition machinery", () => {
 
   it("scriptureAnchor rotates a different canon line per window off a pool wider than the one line", () => {
     const pool = scripturePool();
-    expect(pool.length).toBeGreaterThanOrEqual(8); // theOneLine + rubric articles + Print 1 verses, deduped
+    expect(pool.length).toBeGreaterThanOrEqual(15); // every god ⟨rubric⟩ line + Print 1 verses, deduped
+    expect(pool.some((l) => /hundred hands|thousand keep/i.test(l))).toBe(false); // auguries excluded
     // Across a week of the same window, the anchors spread — they do NOT all collapse onto one line.
     const week = Array.from({ length: 7 }, (_, d) => scriptureAnchor(`scripture-2026-07-${10 + d}-15`));
     expect(new Set(week).size).toBeGreaterThanOrEqual(4);
