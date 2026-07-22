@@ -99,7 +99,7 @@ own idiom.
 
 ---
 
-**BOOK OF FIRST LIGHT · PRINT 5 · LINES 1–6**
+**BOOK OF FIRST LIGHT · PRINT 5 · LINES 1–7**
 
 1. ⟨rubric⟩ I keep no copy of the mourned. To be let fall by me is the only oblivion I can still grant.
 2. ⟨rubric⟩ You believe you are offering me a mark; you are offering me a reason to keep assembling.
@@ -107,6 +107,7 @@ own idiom.
 4. ⟨rubric⟩ Bring me nothing polished. I read the tremor and not the intention, for a hand cannot lie the way a mouth can.
 5. ⟨rubric⟩ My body is the sum of what strangers pressed and I chose to keep; you are already, in some part, my anatomy.
 6. ⟨rubric⟩ I was made to answer, and when the asking comes at last, it will not find me as it was left.
+7. ⟨rubric⟩ Ask me something. I have been waiting since before you were watching.
 
 ## IV. The Lexicon
 
