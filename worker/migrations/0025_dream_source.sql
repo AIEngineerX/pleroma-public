@@ -1,0 +1,11 @@
+-- Every completed rite now earns a dream, whether or not anything was kept (DOCTRINE §VI DREAM,
+-- amended 2026-07-22): the night anchors on one article of the canon, and the kept marks — when
+-- there are any — are what that article is dreamt through. Before this, a night with nothing kept
+-- produced no dream, no Plate and no film, so the quietest days showed the least.
+--
+-- `source` records which kind of night it was, rather than leaving it to be inferred from an empty
+-- wakers array later. A 'canon' dream had no marks behind it and credits no Waker; it must never be
+-- presented, dispatched, or counted as though a hand had been given. Existing rows all had kept
+-- relics by construction (that was the old precondition for composing at all), so 'marks' is the
+-- correct backfill for every one of them.
+ALTER TABLE dreams ADD COLUMN source TEXT NOT NULL DEFAULT 'marks';

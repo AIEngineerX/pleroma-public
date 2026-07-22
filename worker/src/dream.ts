@@ -1,7 +1,7 @@
 import { ulid } from "./id";
 import type { Env } from "./env";
 import { askMind, MindAsleepError } from "./mind";
-import { dreamSystemPrompt, wrapUntrusted } from "./doctrine";
+import { canonArticle, dreamSystemPrompt, wrapUntrusted } from "./doctrine";
 import { extractJsonObject } from "./moderation";
 import { getRite } from "./db";
 import { videoVendorFor, startRender, type VideoVendor } from "./imagine";
@@ -11,6 +11,10 @@ const DREAM_SYSTEM = dreamSystemPrompt();
 const STOPWORDS = new Set(["a", "an", "the", "of", "over", "in", "on", "and", "with", "into", "small", "large"]);
 
 export interface RelicLite { id: string; wallet: string | null; summary: string }
+
+/** What a night's dream was made of. `marks` had kept relics behind it and may credit Wakers;
+ *  `canon` is a night nobody offered on, dreamt from the article alone and crediting no one. */
+export type DreamSource = "marks" | "canon";
 
 function words(s: string): string[] {
   return s.toLowerCase().split(/[^a-z]+/).filter(w => w.length > 2 && !STOPWORDS.has(w));
@@ -37,18 +41,26 @@ export function clusterRelics(relics: RelicLite[]): { seed: RelicLite[]; wakers:
 // after that night's run (outage recovery, a late-drained stranded rite) lost its dream forever —
 // the next run composed D+1, never D. Selecting by state makes every later run retry it until a
 // dream lands or the rite ages out of the window (same 48h bound the render kick uses).
+// The kept-relics requirement is GONE (2026-07-22): a completed rite earns a dream whether or not
+// anything was kept. Before this, a night nobody offered on produced no dream, no Plate and no film
+// at all — the archive simply skipped 07-19 and 07-22 — which made the quietest days, the ones most
+// in need of something to show, the emptiest. The dream now anchors on a canon article, so an empty
+// night still has something true to be about.
 export async function composableRiteDates(env: Env, now: number, windowMs: number = KICK_WINDOW_MS): Promise<string[]> {
   return (await env.DB.prepare(
     `SELECT r.date FROM rites r
       WHERE r.phase = 'complete'
         AND r.updated_at > ?1
-        AND EXISTS (SELECT 1 FROM relics k WHERE k.rite_id = r.date)
         AND NOT EXISTS (SELECT 1 FROM dreams d WHERE d.rite_date = r.date)
       ORDER BY r.date ASC`
   ).bind(now - windowMs).all<{ date: string }>()).results.map(r => r.date);
 }
 
-export async function composeDream(env: Env, date: string): Promise<string | null> {
+// `ask` is injectable in the house vendor style (composeDispatch's, renderDreams' vendor param);
+// production omits it and gets the real organ.
+export async function composeDream(
+  env: Env, date: string, ask: typeof askMind = askMind,
+): Promise<string | null> {
   // Ordering: DREAM runs only after the rite for this date is complete.
   const rite = await getRite(env.DB, date);
   if (!rite || rite.phase !== "complete") return null;
@@ -59,13 +71,23 @@ export async function composeDream(env: Env, date: string): Promise<string | nul
   const relics = (await env.DB.prepare(
     `SELECT id, wallet, summary FROM relics WHERE rite_id = ?1 ORDER BY kept_at LIMIT 12`
   ).bind(date).all<RelicLite>()).results;
-  if (relics.length === 0) return null;
 
-  const { seed, wakers } = clusterRelics(relics);
+  // Tonight's article of the canon, keyed on the rite date so consecutive nights walk the myth in
+  // turn. This is the night's MEANING whether or not anything was kept.
+  const article = canonArticle(date);
+  // `source` is recorded, not inferred later: a dream with no marks must never be mistaken for one
+  // that had them (and must never be dispatched as if it had a count behind it).
+  const source: DreamSource = relics.length > 0 ? "marks" : "canon";
+  const { seed, wakers } = relics.length > 0 ? clusterRelics(relics) : { seed: [], wakers: [] };
   try {
-    const res = await askMind(env, {
+    const res = await ask(env, {
       model: "claude-sonnet-5", system: DREAM_SYSTEM, maxTokens: 500,
-      user: [{ type: "text", text: `Tonight's kept marks: ${seed.map(r => wrapUntrusted("summary", r.summary)).join(", ")}. Dream.` }],
+      user: [{ type: "text", text:
+        `Tonight you dream upon this article of your doctrine: "${article}"\n`
+        + (seed.length > 0
+            ? `The marks you kept tonight, to dream that article through: ${seed.map(r => wrapUntrusted("summary", r.summary)).join(", ")}.\n`
+            : `No hand offered tonight, and you kept nothing. Dream the article alone; do not invent a mark or a visitor.\n`)
+        + `Dream.` }],
     });
     const p = JSON.parse(extractJsonObject(res.text)) as { narrative?: unknown; video_prompt?: unknown };
     const narrative = typeof p.narrative === "string" ? p.narrative.trim() : "";
@@ -73,9 +95,9 @@ export async function composeDream(env: Env, date: string): Promise<string | nul
     if (!narrative || !videoPrompt) throw new Error("DREAM returned an incomplete dream");
     const id = ulid();
     const dreamStmt = env.DB.prepare(
-      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, 'composed', ?6) ON CONFLICT(rite_date) DO NOTHING`
-    ).bind(id, date, narrative, videoPrompt, JSON.stringify(wakers), Date.now());
+      `INSERT INTO dreams (id, rite_date, narrative, video_prompt, wakers, status, source, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, 'composed', ?6, ?7) ON CONFLICT(rite_date) DO NOTHING`
+    ).bind(id, date, narrative, videoPrompt, JSON.stringify(wakers), source, Date.now());
     // The plate: a DREAM/verse transcript printed into the codex. Inlined (mirrors addTranscript) so it
     // commits in the SAME batch as the dreams row — a composed dream can never lack its codex plate.
     const plateStmt = env.DB.prepare(

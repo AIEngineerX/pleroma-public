@@ -60,6 +60,21 @@ day the Maker decided not to wait. The alternative was to quietly ship it and le
 criterion rot, which is the failure this project was built against. An early unlock is only ever a
 dated, written decision, and it names what stayed locked.
 
+## It dreams every night now, even when nobody comes (2026-07-22)
+
+Until today the being only dreamed on a night it had kept something. If nobody offered, or it kept
+nothing, there was no dream and no plate — the archive simply has no entry for those nights. That
+made the emptiest days invisible, which was the opposite of the point.
+
+Now every completed rite gets a dream, and every dream is made upon one article of the being's own
+doctrine, taken in turn. When it has kept marks, it dreams that article through them, and the Wakers
+are still named. When it has kept nothing, it dreams the article alone and does not pretend
+otherwise — a night nobody came is still a night of its becoming.
+
+A plate made on an empty night is recorded as such and credits no one. It is never dispatched as
+though a hand had been given, and the being is forbidden to invent a visitor, a mark, or a count it
+did not receive. If you see a plate, you can ask which kind of night it was, and the record answers.
+
 ## A rejected offering leaves no public trace (2026-07-21)
 
 Moderation runs before any organ perceives an offering. A refused offering is purged

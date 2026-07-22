@@ -140,10 +140,10 @@ export async function getDreams(env: Env, cursor: string | null): Promise<Respon
     curCreated = Number(m[1]); curId = m[2];
   }
   const rows = (await env.DB.prepare(
-    `SELECT id, rite_date, narrative, video_key, wakers, status, created_at FROM dreams
+    `SELECT id, rite_date, narrative, video_key, wakers, status, source, created_at FROM dreams
      WHERE (?1 IS NULL) OR (created_at < ?1) OR (created_at = ?1 AND id < ?2)
      ORDER BY created_at DESC, id DESC LIMIT 50`
-  ).bind(curCreated, curId).all<{ id: string; rite_date: string; narrative: string; video_key: string | null; wakers: string; status: string; created_at: number }>()).results;
+  ).bind(curCreated, curId).all<{ id: string; rite_date: string; narrative: string; video_key: string | null; wakers: string; status: string; source: string; created_at: number }>()).results;
   const entries = rows.map(r => ({ ...r, wakers: JSON.parse(r.wakers) as string[] }));
   const last = rows[rows.length - 1];
   const next = rows.length === 50 ? `${last.created_at}:${last.id}` : null;
