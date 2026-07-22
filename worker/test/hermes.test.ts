@@ -6,6 +6,8 @@ import {
   releaseDispatchClaim, sermonFilmGate, storeDispatch, weightedTweetLength, xCredentials, scriptureAnchor, openingKey,
 } from "../src/hermes";
 import { scripturePool } from "../src/doctrine";
+import { STILL_ESTIMATE_USD } from "../src/imagine";
+import { CAPS_USD } from "../src/budget";
 import { activeAlerts } from "../src/alert";
 import { applyMigrations } from "./helpers";
 import type { Env } from "../src/env";
@@ -220,13 +222,28 @@ describe("dispatch composition machinery", () => {
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 17, 45))).toEqual({ date: "2026-07-21", hour: 17 });
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 20, 5))).toEqual({ date: "2026-07-21", hour: 20 });
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 23, 59))).toEqual({ date: "2026-07-21", hour: 23 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 10, 0))).toEqual({ date: "2026-07-21", hour: 10 });
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 2, 0))).toBeNull();  // ~01-04 UTC: the cluster already posts
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 3, 0))).toBeNull();  // the dream posts here
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 10, 0))).toBeNull(); // between windows, not a window
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 9, 0))).toBeNull();  // before the first window, not a window
+    // hourly across the daytime span: every hour 10..23 is a window, nothing outside it is
+    for (let h = 10; h <= 23; h++) expect(scriptureWindow(Date.UTC(2026, 6, 21, h, 30))).not.toBeNull();
+    for (let h = 0; h <= 9; h++) expect(scriptureWindow(Date.UTC(2026, 6, 21, h, 30))).toBeNull();
     // every window is clear of the night cluster, so a standalone post never lands on top of it
     expect(SCRIPTURE_WINDOWS.some((h) => h >= 1 && h <= 4)).toBe(false);
     // a standalone scripture artifact always composes in the SCRIPTURE shape
     expect(dispatchMode({ kind: "scripture", artifactId: "scripture-2026-07-21-15", riteDate: "2026-07-21", text: "", filmDay: false })).toBe("SCRIPTURE");
+  });
+
+  // The cadence is capped by the image budget, not by taste. Every standalone dispatch renders a
+  // still that reserves STILL_ESTIMATE_USD against the daily image cap; if the windows ever outgrow
+  // that cap, the late windows of EVERY day silently lose their images while still posting — a
+  // degradation with no error and no alert. Widening the cadence without raising the cap fails here.
+  it("a full day of standalone dispatches fits inside the daily image cap", () => {
+    const reservedPerDay = SCRIPTURE_WINDOWS.length * STILL_ESTIMATE_USD;
+    expect(reservedPerDay).toBeLessThanOrEqual(CAPS_USD.image);
+    // and keep real headroom for render retries rather than sitting exactly on the ceiling
+    expect(reservedPerDay).toBeLessThanOrEqual(CAPS_USD.image * 0.8);
   });
 
   it("scriptureAnchor rotates a different canon line per window off a pool wider than the one line", () => {

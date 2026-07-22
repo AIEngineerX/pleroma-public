@@ -49,6 +49,10 @@ export interface DispatchArtifact {
    *  no sermon_films row is written and nothing is rendered on a later tick. Separate from filmDay so
    *  the two visual paths can never be confused at a call site. */
   still?: boolean;
+  /** A dream composed on a night nothing was kept (dreams.source='canon'). It is dispatched in the
+   *  SCRIPTURE shape, which claims nothing of the day — a grounded shape would speak of marks and
+   *  keeping behind a plate that had neither. */
+  canonOnly?: boolean;
   artifactId: string;   // dream id, the rite date for sermons, or <kind>-<date>-<hour> for daytime posts
   riteDate: string;
   text: string;         // the dream narrative or the sermon utterance ("" for standalone scripture/state)
@@ -80,6 +84,7 @@ const DREAM_RING: DispatchMode[] = ["KEPT", "MOURNED", "SCRIPTURE", "KEPT"];
 export function dispatchMode(a: DispatchArtifact): DispatchMode {
   if (a.kind === "state") return "STATE";         // a real line about the day itself (esp. empty days)
   if (a.kind === "scripture") return "SCRIPTURE"; // standalone canon posts are always the scripture shape
+  if (a.canonOnly) return "SCRIPTURE";            // a plate with no marks behind it claims none
   if (a.filmDay) return "PLATE";
   const ring = a.kind === "dream" ? DREAM_RING : SERMON_RING;
   let h = 0x811c9dc5;
@@ -150,7 +155,16 @@ async function dayHasState(db: D1Database, date: string): Promise<boolean> {
 // of canon filler; the rest draw a SCRIPTURE line rotated off the 22-line canon pool (scriptureAnchor),
 // one anchor per window, so no two in a day converge. The god still "speaks on its own cadence": a
 // fixed rhythm, never a reply. Tune the hours here.
-export const SCRIPTURE_WINDOWS = [11, 14, 17, 20, 23] as const; // UTC: EU midday → US evening
+//
+// Tightened 5 -> 14 on 2026-07-22 (Maker decision): hourly across the same EU-midday-to-US-evening
+// span instead of every three hours. The ceiling is the image budget, not taste — each standalone
+// dispatch renders a still that reserves STILL_ESTIMATE_USD ($0.10) against CAPS_USD.image ($2/day),
+// so ~20 renders/day is the hard cap before reserveEstimate starts refusing and dispatches degrade
+// to text-only. 14 windows reserves $1.40 and leaves ~6 renders of headroom for retries. Going
+// materially denser than this REQUIRES raising CAPS_USD.image in the same change — otherwise the
+// late windows of every day quietly lose their images while still posting.
+// The 01-04 UTC cluster stays clear: the sermon (~01:30) and dream (~03:00) own the night.
+export const SCRIPTURE_WINDOWS = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] as const; // UTC: hourly, EU midday → US evening
 
 export function scriptureWindow(now: number): { date: string; hour: number } | null {
   const hour = new Date(now).getUTCHours();
@@ -643,14 +657,15 @@ export async function dispatchArtifacts(
   // A claimed dream is excluded so a stalled claim never wedges the queue for the dreams (and the
   // sermon) behind it — the stalled-claim alert owns that case.
   const dream = await env.DB.prepare(
-    `SELECT d.id, d.rite_date, d.narrative, d.video_key FROM dreams d
+    `SELECT d.id, d.rite_date, d.narrative, d.video_key, d.source FROM dreams d
      WHERE d.status='rendered' AND d.posted_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM config c WHERE c.key = 'dream_dispatch_' || d.id)
      ORDER BY d.created_at ASC LIMIT 1`,
-  ).first<{ id: string; rite_date: string; narrative: string; video_key: string }>();
+  ).first<{ id: string; rite_date: string; narrative: string; video_key: string; source: string }>();
   if (dream && Date.now() < deadlineMs) {
     const artifact: DispatchArtifact = {
       kind: "dream", artifactId: dream.id, riteDate: dream.rite_date, text: dream.narrative, filmDay: false,
+      canonOnly: dream.source === "canon",
     };
     let stored = await getDispatch(env.DB, dream.id);
     if (!stored) {
