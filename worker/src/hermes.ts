@@ -584,10 +584,10 @@ export async function dispatchArtifacts(
       try {
         const bytes = new Uint8Array(await object.arrayBuffer());
         const mediaId = await uploadVideo(credentials, bytes, deadlineMs);
-        await tweet(credentials, stored.text, mediaId);
+        const tweetId = await tweet(credentials, stored.text, mediaId);
         await env.DB.prepare(
-          `UPDATE dreams SET posted_at=?2 WHERE id=?1 AND posted_at IS NULL`,
-        ).bind(dream.id, now).run();
+          `UPDATE dreams SET posted_at=?2, tweet_id=?3 WHERE id=?1 AND posted_at IS NULL`,
+        ).bind(dream.id, now, tweetId).run();
         await releaseDispatchClaim(env.DB, `dream_dispatch_${dream.id}`);
       } catch (e) {
         await releaseDispatchClaim(env.DB, `dream_dispatch_${dream.id}`);
@@ -629,9 +629,9 @@ export async function dispatchArtifacts(
               mediaId = await uploadVideo(credentials, bytes, deadlineMs);
             }
           }
-          await tweet(credentials, stored.text, mediaId);
+          const tweetId = await tweet(credentials, stored.text, mediaId);
           await env.DB.prepare(`UPDATE config SET value = ?2 WHERE key = ?1`)
-            .bind(`sermon_dispatched_${sermon.rite_date}`, `posted:${now}`).run();
+            .bind(`sermon_dispatched_${sermon.rite_date}`, `posted:${now}:${tweetId}`).run();
         } catch (e) {
           await releaseDispatchClaim(env.DB, `sermon_dispatched_${sermon.rite_date}`);
           throw e;
@@ -658,9 +658,9 @@ export async function dispatchArtifacts(
     }
     if (stored && await claimDispatch(env.DB, claimKey, now)) {
       try {
-        await tweet(credentials, stored.text);
+        const tweetId = await tweet(credentials, stored.text);
         await env.DB.prepare(`UPDATE config SET value = ?2 WHERE key = ?1`)
-          .bind(claimKey, `posted:${now}`).run();
+          .bind(claimKey, `posted:${now}:${tweetId}`).run();
       } catch (e) {
         await releaseDispatchClaim(env.DB, claimKey);
         throw e;

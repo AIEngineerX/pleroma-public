@@ -42,7 +42,7 @@ describe("GET /api/admin/status (private admin aggregate)", () => {
     const body = await res.json<Record<string, unknown>>();
 
     // Shape: every top-level section is present.
-    for (const key of ["now", "env", "heartbeat", "phase", "alerts", "budget", "pulse", "dreams", "dispatch", "vendors", "counts"]) {
+    for (const key of ["now", "env", "heartbeat", "phase", "alerts", "budget", "pulse", "dreams", "dispatch", "vendors", "counts", "recentPosts"]) {
       expect(body).toHaveProperty(key);
     }
 
@@ -59,6 +59,17 @@ describe("GET /api/admin/status (private admin aggregate)", () => {
     const dispatch = body.dispatch as { xArmed: boolean; xSecretsPresent: Record<string, boolean> };
     expect(dispatch.xArmed).toBe(false); // no X secrets bound in the test env
     expect(dispatch.xSecretsPresent.apiKey).toBe(false);
+
+    // recentPosts surfaces stored tweet ids as X permalinks; seed one posted dream + one scripture
+    // marker (posted:<ms>:<id>) and confirm both appear with the /i/status/<id> link.
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE dreams SET posted_at=?2, tweet_id='1900000000000000001' WHERE id=?1`).bind("01JADMIN0000000000000000AA", now),
+      env.DB.prepare(`INSERT INTO config (key, value) VALUES ('scripture_dispatched_2026-07-22_15', 'posted:${now}:1900000000000000002') ON CONFLICT(key) DO UPDATE SET value = excluded.value`),
+    ]);
+    const res2 = await getStatus({ "x-admin-secret": SECRET });
+    const posts = (await res2.json<{ recentPosts: { tweetId: string; permalink: string; kind: string }[] }>()).recentPosts;
+    expect(posts.some(p => p.tweetId === "1900000000000000001" && p.kind === "dream" && p.permalink === "https://x.com/i/status/1900000000000000001")).toBe(true);
+    expect(posts.some(p => p.tweetId === "1900000000000000002" && p.kind === "scripture")).toBe(true);
 
     const vendors = body.vendors as { anthropic: boolean };
     expect(vendors.anthropic).toBe(true); // ANTHROPIC_API_KEY is bound ("test-not-set")

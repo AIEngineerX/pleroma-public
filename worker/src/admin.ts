@@ -46,6 +46,7 @@ export interface AdminStatus {
   };
   pulse: { state: string; buys: number; sells: number; holders: number };
   dreams: { byStatus: Record<string, number>; renderedUnposted: number; latestCreatedAt: number | null };
+  recentPosts: { kind: "dream" | "sermon" | "scripture"; label: string; at: number; tweetId: string; permalink: string }[];
   dispatch: {
     xSecretsPresent: { apiKey: boolean; apiSecret: boolean; accessToken: boolean; accessSecret: boolean };
     xArmed: boolean;
@@ -100,6 +101,30 @@ export async function getAdminStatus(env: Env, now: number = Date.now()): Promis
     ).bind(startOfDay).first<{ n: number }>(),
   ]);
 
+  // Recent posts with their X permalink — the audit trail that was missing (2026-07-22): dreams carry
+  // tweet_id on the row; sermon/scripture markers carry it inline as "posted:<ms>:<tweetId>". Only posts
+  // made after the tweet-id change appear (older ones stored no id). /i/status/<id> resolves regardless
+  // of handle, so no handle is stored server-side.
+  const [postedDreams, dispatchMarkers] = await Promise.all([
+    db.prepare(`SELECT rite_date, posted_at, tweet_id FROM dreams WHERE posted_at IS NOT NULL AND tweet_id IS NOT NULL ORDER BY posted_at DESC LIMIT 6`)
+      .all<{ rite_date: string; posted_at: number; tweet_id: string }>(),
+    db.prepare(`SELECT key, value FROM config WHERE (key LIKE 'sermon_dispatched_%' OR key LIKE 'scripture_dispatched_%') AND value LIKE 'posted:%:%'`)
+      .all<{ key: string; value: string }>(),
+  ]);
+  const recentPosts: AdminStatus["recentPosts"] = [];
+  for (const d of postedDreams.results) {
+    recentPosts.push({ kind: "dream", label: `dream · ${d.rite_date}`, at: d.posted_at, tweetId: d.tweet_id, permalink: `https://x.com/i/status/${d.tweet_id}` });
+  }
+  for (const m of dispatchMarkers.results) {
+    const parts = m.value.split(":"); // posted:<ms>:<tweetId>
+    if (parts.length < 3 || !parts[2]) continue;
+    const at = Number(parts[1]);
+    const isScripture = m.key.startsWith("scripture_");
+    const label = isScripture ? `scripture · ${m.key.slice("scripture_dispatched_".length)}` : `sermon · ${m.key.slice("sermon_dispatched_".length)}`;
+    recentPosts.push({ kind: isScripture ? "scripture" : "sermon", label, at: Number.isFinite(at) ? at : 0, tweetId: parts[2], permalink: `https://x.com/i/status/${parts[2]}` });
+  }
+  recentPosts.sort((a, b) => b.at - a.at);
+
   const alerts = await Promise.all(alertCodes.map(async (code) => {
     const raw = await configValue(db, `alert:${code}`);
     let detail: string | null = null, at: number | null = null;
@@ -140,6 +165,7 @@ export async function getAdminStatus(env: Env, now: number = Date.now()): Promis
       renderedUnposted,
       latestCreatedAt: latestDream?.created_at ?? null,
     },
+    recentPosts: recentPosts.slice(0, 8),
     dispatch: {
       xSecretsPresent,
       xArmed: xSecretsPresent.apiKey && xSecretsPresent.apiSecret && xSecretsPresent.accessToken && xSecretsPresent.accessSecret,
