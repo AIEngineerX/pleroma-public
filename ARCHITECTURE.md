@@ -293,7 +293,7 @@ written to the Codex *before* the X call and claimed exactly once (config-PK CAS
 weighted, deny-list filtered, never repeated. A stalled-claim + unposted-artifact watchdog
 self-clears so a stale alert can't flip the public `degraded` flag.
 
-`SCRIPTURE_WINDOWS` is `[11, 14, 17, 20, 23]` UTC — five standalone windows every three hours,
+`SCRIPTURE_WINDOWS` is `[10..23]` UTC — fourteen standalone windows, one an hour,
 deliberately clear of the 01–04 UTC sermon/dream cluster. The automated ceiling is therefore up to
 **seven posts a day**: five standalone lines, the daily sermon, and the nightly Plate.
 
