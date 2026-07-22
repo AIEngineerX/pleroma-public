@@ -20,6 +20,14 @@ export default defineConfig({
   testMatch: productionGate ? /(?:ignition\.live|launch\.checklist)\.spec\.ts/ : undefined,
   testIgnore: productionGate ? undefined : ["**/ignition.live.spec.ts", "**/launch.checklist.spec.ts"],
   workers: 1,
+  // The shared CI runner is a 2-core box with no GPU: real-stack pipeline polls, sticky-layout
+  // measurement, and media playback all run several times slower than any dev machine, so CI gets
+  // wider budgets and two retries. Retries re-run the complete real test and Playwright reports a
+  // pass-on-retry as "flaky" (visible, never silent); a genuine regression still fails every
+  // attempt and reds the run. Local runs keep the strict budgets and zero retries.
+  retries: process.env.CI ? 2 : 0,
+  timeout: process.env.CI ? 60_000 : 30_000,
+  expect: { timeout: process.env.CI ? 10_000 : 5_000 },
   use: { baseURL: productionGate ? productionUrl : E2E_ORIGINS.web },
   webServer: productionGate ? undefined : [
     {

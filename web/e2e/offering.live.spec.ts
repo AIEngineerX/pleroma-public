@@ -447,10 +447,13 @@ test("a real rejection retains one preview Blob for an exact retry", async ({ pa
   const preview = page.locator("img[data-threshold-preview]");
   await expect(preview).toBeVisible();
   const originalUrl = await preview.getAttribute("src");
+  // Seed the current AND next fixed windows: if the minute rolls over between this INSERT and
+  // the route's own Date.now() (routine on a slow CI runner), a single-window seed lands in the
+  // stale window and the submit sails through at 201 instead of 429 (seen in CI).
   const windowStart = Math.floor(Date.now() / 60_000) * 60_000;
   executeD1(`
     INSERT INTO rate_limits (bucket, window_start, count)
-    VALUES ('ip:0.0.0.0', ${windowStart}, 20);
+    VALUES ('ip:0.0.0.0', ${windowStart}, 20), ('ip:0.0.0.0', ${windowStart + 60_000}, 20);
   `);
 
   await page.getByRole("button", { name: "offer this imprint" }).click();
