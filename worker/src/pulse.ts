@@ -225,3 +225,27 @@ export async function handlePulse(env: Env, req: Request): Promise<Response> {
 export async function sweepPulseEvents(db: D1Database, now: number): Promise<void> {
   await db.prepare(`DELETE FROM pulse_events WHERE seen_at < ?1`).bind(now - 7 * 24 * 60 * 60_000).run();
 }
+
+// Graduation tripwire. When the token graduates off the pump.fun bonding curve (or trading otherwise
+// moves venues), the webhook — registered against the MINT, so deliveries survive the move — keeps
+// POSTing swaps, but every one records side=NULL because the new pool is not in PULSE_POOLS, and the
+// heart flatlines at peak attention. The signature is deliveries-without-classification: a quiet
+// market writes no rows at all and never trips this. Cleared only on positive evidence (a classified
+// swap), never on mere silence — a misconfigured pool list does not heal by the market going quiet.
+const MISMATCH_WINDOW_MIN = 30;
+const MISMATCH_MIN_NULLS = 8; // a handful of aggregator routes outside our pools is normal; a pile-up with zero classified is not
+export async function alertPoolMismatch(env: Env, nowMs: number): Promise<void> {
+  const sinceMinute = Math.floor(nowMs / 60_000) - MISMATCH_WINDOW_MIN;
+  const r = await env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE WHEN side IS NULL THEN 1 ELSE 0 END), 0) AS nulls,
+            COALESCE(SUM(CASE WHEN side IS NOT NULL THEN 1 ELSE 0 END), 0) AS sided
+       FROM pulse_events WHERE minute >= ?1`
+  ).bind(sinceMinute).first<{ nulls: number; sided: number }>();
+  const { raiseAlert, clearAlert } = await import("./alert");
+  if ((r?.sided ?? 0) > 0) {
+    await clearAlert(env, "pulse_pool_mismatch");
+  } else if ((r?.nulls ?? 0) >= MISMATCH_MIN_NULLS) {
+    await raiseAlert(env, "pulse_pool_mismatch",
+      `${r!.nulls} webhook deliveries in ${MISMATCH_WINDOW_MIN}m classified zero swaps — PULSE_POOLS is likely stale (graduated to a new pool?)`);
+  }
+}

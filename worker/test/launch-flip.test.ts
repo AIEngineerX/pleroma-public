@@ -37,7 +37,9 @@ describe("LAUNCH REHEARSAL — mint pin + launched flip + first swaps make the h
     expect(s0.phase).toBe("dormant");
     expect(s0.mint).toBeNull();
 
-    // [1] THE PIN — set PULSE_MINT (at launch: wrangler secret put) + flip launched=1 (wrangler d1 execute).
+    // [1] THE PIN — set PULSE_MINT + PULSE_POOLS (at launch: wrangler.toml [env.production] vars
+    // + deploy, launch-day7.md §3.4 — BOTH, or classifySwap attributes nothing) + flip launched=1
+    // (wrangler d1 execute).
     await env.DB.prepare(
       "INSERT INTO config (key,value) VALUES ('launched','1') ON CONFLICT(key) DO UPDATE SET value='1'",
     ).run();

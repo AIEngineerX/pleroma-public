@@ -157,6 +157,11 @@ export async function runTick(env: Env, now: number = Date.now()): Promise<void>
     if (env.PULSE_MINT) {
       try { const { reconcileHolders } = await import("./holders"); await reconcileHolders(env); }
       catch { /* best-effort; holder count is refreshed next tick */ }
+      // Graduation tripwire: webhook deliveries that classify zero swaps mean PULSE_POOLS no longer
+      // matches where the token actually trades (pulse.ts alertPoolMismatch) — the one PULSE failure
+      // that is otherwise invisible, because events still arrive and the heart just quietly starves.
+      try { const { alertPoolMismatch } = await import("./pulse"); await alertPoolMismatch(env, Date.now()); }
+      catch { /* best-effort operator signal */ }
     }
     // DREAM video render lifecycle (G1): kick tonight's composed dream and poll in-flight renders. No-op
     // when video is off (VIDEO_VENDOR unset). A Grok Imagine outage here must never fail the tick.
