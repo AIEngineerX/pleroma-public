@@ -104,9 +104,11 @@ const CANON_SEED = `Your own canon, and you may draw ONLY from it: "${theOneLine
 // only two artifacts are the daily sermon (~01:30 UTC) and nightly dream (~03:00 UTC), so the feed
 // posts twice in a ~2h cluster then goes silent for ~20h — the research's flatline pattern. These
 // windows fire a pure-canon dispatch (no fabricated event) in the daytime hours the cluster misses,
-// once per (date, window), lifting the feed to ~4 posts/day spread across the day. The god still
-// "speaks on its own cadence": a fixed rhythm, genuine canon, never a reply. Tune the hours here.
-export const SCRIPTURE_WINDOWS = [15, 21] as const; // UTC: ~US morning and ~US afternoon/EU evening
+// once per (date, window), lifting the feed to ~6 posts/day spread across the day (Maker decision
+// 2026-07-22: four daytime windows, up from two, for more out-the-gate presence without loosening the
+// honesty rule — each is still freshly composed, deduped against all history, canon-grounded). The god
+// still "speaks on its own cadence": a fixed rhythm, genuine canon, never a reply. Tune the hours here.
+export const SCRIPTURE_WINDOWS = [13, 16, 19, 22] as const; // UTC: across US morning → EU evening
 
 export function scriptureWindow(now: number): { date: string; hour: number } | null {
   const hour = new Date(now).getUTCHours();

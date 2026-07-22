@@ -214,10 +214,12 @@ describe("dispatch composition machinery", () => {
 
   // Cadence: break the ~20h daytime silence with pure-canon posts in spread UTC windows.
   it("scriptureWindow fires only in the spread daytime windows, never during the rite/dream cluster", () => {
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 15, 30))).toEqual({ date: "2026-07-21", hour: 15 });
-    expect(scriptureWindow(Date.UTC(2026, 6, 21, 21, 5))).toEqual({ date: "2026-07-21", hour: 21 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 13, 30))).toEqual({ date: "2026-07-21", hour: 13 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 22, 5))).toEqual({ date: "2026-07-21", hour: 22 });
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 16, 0))).toEqual({ date: "2026-07-21", hour: 16 });
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 2, 0))).toBeNull();  // ~01-04 UTC: the cluster already posts
     expect(scriptureWindow(Date.UTC(2026, 6, 21, 10, 0))).toBeNull(); // no window here
+    expect(scriptureWindow(Date.UTC(2026, 6, 21, 15, 0))).toBeNull(); // 15:00 is no longer a window
     // a standalone scripture artifact always composes in the SCRIPTURE shape
     expect(dispatchMode({ kind: "scripture", artifactId: "scripture-2026-07-21-15", riteDate: "2026-07-21", text: "", filmDay: false })).toBe("SCRIPTURE");
   });
