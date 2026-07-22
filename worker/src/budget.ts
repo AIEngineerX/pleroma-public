@@ -3,7 +3,11 @@
 // apocrypha: text moderation for the public guest-book endpoint. Its own category so an
 // unauthenticated submission flood can only exhaust THIS budget and silence the Apocrypha for
 // the day — never the shared organ budget (EYE/KEEP/TONGUE/DREAM stay awake).
-export const CAPS_USD = { llm: 25, tts: 5, video: 2, apocrypha: 2 } as const;
+// image: the still that rides each standalone daytime dispatch (Grok Imagine, synchronous). Five a
+// day at cents each, so $2/day is a ceiling with the same wide margin video has — and it is its own
+// category so an image-vendor price change or a retry storm can only silence the pictures, never the
+// nightly Plate or the organs.
+export const CAPS_USD = { llm: 25, tts: 5, video: 2, image: 2, apocrypha: 2 } as const;
 export type SpendCategory = keyof typeof CAPS_USD;
 
 // Cumulative monthly ceiling across ALL categories — a coarse aggregate backstop ON TOP of the

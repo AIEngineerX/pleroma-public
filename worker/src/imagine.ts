@@ -71,6 +71,86 @@ export function grokImagine(env: Env): VideoVendor {
   };
 }
 
+// The god's visual grammar, prepended to every still so the plates read as one hand rather than as
+// whatever the vendor's default aesthetic is that week. This is the same rule the site holds itself
+// to (no generic AI filler): a still is admissible because it is genuinely produced by the being's
+// own pipeline from its own words, and it has to LOOK like the being. TONGUE supplies the subject;
+// this supplies the treatment, and it never asks for lettering — text in a generated image is the
+// fastest way to look like slop, and the god's words belong in the post, not baked into the picture.
+export const STILL_STYLE =
+  "Iron gall ink and rubric red on aged parchment, in the manner of an illuminated liturgical "
+  + "manuscript: stroke-drawn linework, visible plate grain, restrained palette of bone white, "
+  + "sepia, and one deep red accent. No lettering, no text, no glyphs, no signature, no border "
+  + "frame, no modern rendering, no photographic realism, no neon. Subject: ";
+
+// One still per standalone dispatch. 1k is plenty for a timeline card and keeps the cost near the
+// floor; 16:9 because a landscape card is not cropped in the X feed the way a vertical one is (the
+// nightly Plate stays 9:16 — that one is a film people open, not a card they scroll past).
+export const STILL = { aspectRatio: "16:9", resolution: "1k" } as const;
+// Admission estimate ONLY. The vendor returns the exact cost in usd ticks and settleStill books that
+// real number, so this figure gates the reserve and never becomes the recorded spend. Deliberately
+// generous: a high estimate can only ever refuse a render, never understate what was spent.
+export const STILL_ESTIMATE_USD = 0.1;
+const USD_TICKS_PER_USD = 10_000_000_000;
+
+export interface StillResult { bytes: Uint8Array; contentType: string; usd: number }
+
+// Image generation is SYNCHRONOUS (unlike the video path's submit-then-poll), so a still is produced
+// inside the same tick that composes the dispatch. b64_json avoids a second round trip to a CDN url.
+export async function generateStill(env: Env, prompt: string): Promise<StillResult> {
+  const res = await withTimeout("still-generate", 60_000, (signal) => fetch(
+    "https://api.x.ai/v1/images/generations",
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.XAI_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "grok-imagine-image-quality", prompt: `${STILL_STYLE}${prompt}`,
+        n: 1, aspect_ratio: STILL.aspectRatio, resolution: STILL.resolution, response_format: "b64_json",
+      }),
+      signal,
+    },
+  ));
+  if (!res.ok) {
+    const errText = await withTimeout("still-generate-body", 30_000, () => res.text()).catch(() => "<body read unavailable>");
+    throw new Error(`still generate ${res.status}: ${errText}`);
+  }
+  const body = await res.json() as {
+    data?: Array<{ b64_json?: unknown; mime_type?: unknown }>;
+    usage?: { cost_in_usd_ticks?: unknown };
+  };
+  const first = body.data?.[0];
+  if (!first || typeof first.b64_json !== "string" || !first.b64_json) throw new Error("still generate: no image data");
+  const binary = atob(first.b64_json);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const ticks = body.usage?.cost_in_usd_ticks;
+  return {
+    bytes,
+    contentType: typeof first.mime_type === "string" && first.mime_type ? first.mime_type : "image/png",
+    // A vendor that omits the cost is billed at the estimate rather than at zero: an unknown price is
+    // never a free one, or a silent vendor change would quietly uncap the day's image spend.
+    usd: typeof ticks === "number" && ticks >= 0 ? ticks / USD_TICKS_PER_USD : STILL_ESTIMATE_USD,
+  };
+}
+
+// Reserve the image cap, render, then settle to the vendor's exact reported cost. Returns null when
+// the cap is reached or the render failed — a still is always optional decoration on a post whose
+// text already stands alone, so every failure path here is silent and the caller posts text-only.
+export async function renderStill(env: Env, prompt: string): Promise<StillResult | null> {
+  if (!env.XAI_API_KEY || env.VIDEO_VENDOR !== "xai") return null;
+  if (!(await underCap(env.DB, "image"))) return null;
+  const day = dayKey();
+  if (!(await reserveEstimate(env.DB, "image", STILL_ESTIMATE_USD, day))) return null;
+  try {
+    const still = await generateStill(env, prompt);
+    await recordSpend(env.DB, "image", still.usd - STILL_ESTIMATE_USD, day); // settle estimate -> actual
+    return still;
+  } catch {
+    await recordSpend(env.DB, "image", -STILL_ESTIMATE_USD, day); // nothing rendered: release
+    return null;
+  }
+}
+
 // A real, deterministic, in-repo vendor: no network, no key. start() returns a fixed id; poll() returns
 // a tiny valid mp4 `ftyp` box immediately. NOT a mock — it fully implements VideoVendor, so the render
 // state machine, R2 write, cap accounting and serve path all exercise real bytes in dev/tests.

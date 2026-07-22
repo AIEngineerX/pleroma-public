@@ -5,6 +5,7 @@ import { ulid } from "./id";
 import { askMind } from "./mind";
 import { extractJsonObject } from "./moderation";
 import { dispatchSystemPrompt, denyListViolation, wrapUntrusted, scripturePool } from "./doctrine";
+import { renderStill } from "./imagine";
 
 // Auto-dispatch (Maker decision 2026-07-16, amending the earlier Maker-posts-by-hand plan
 // before anything was public): the temple's routine artifacts publish themselves to X —
@@ -44,6 +45,10 @@ export function weightedTweetLength(text: string): number {
 
 export interface DispatchArtifact {
   kind: "dream" | "sermon" | "scripture" | "state";
+  /** Standalone posts ask TONGUE for a visual prompt too, but it drives a STILL, not a sermon film:
+   *  no sermon_films row is written and nothing is rendered on a later tick. Separate from filmDay so
+   *  the two visual paths can never be confused at a call site. */
+  still?: boolean;
   artifactId: string;   // dream id, the rite date for sermons, or <kind>-<date>-<hour> for daytime posts
   riteDate: string;
   text: string;         // the dream narrative or the sermon utterance ("" for standalone scripture/state)
@@ -230,7 +235,7 @@ export async function composeDispatch(
         : "")
     + (recent.length ? `You have already said: ${recent.map((t) => wrapUntrusted("said", t)).join(" ")}\n` : "")
     + `${spec.instruction}\n`
-    + (a.filmDay ? `Include "video_prompt". ` : `Do not include "video_prompt". `)
+    + (a.filmDay || a.still ? `Include "video_prompt". ` : `Do not include "video_prompt". `)
     + `Compose the dispatch.`;
 
   let feedback = "";
@@ -279,11 +284,11 @@ export async function composeDispatch(
       feedback = "That opening repeats a recent line; begin from a different place, with different words. ";
       continue;
     }
-    if (a.filmDay && !videoPrompt) {
+    if ((a.filmDay || a.still) && !videoPrompt) {
       feedback = `You omitted "video_prompt". `;
       continue;
     }
-    return { dispatch, videoPrompt: a.filmDay ? videoPrompt : null };
+    return { dispatch, videoPrompt: a.filmDay || a.still ? videoPrompt : null };
   }
   await raiseAlert(env, "dispatch_compose_failed",
     `dispatch for ${a.kind} ${a.artifactId} failed validation twice — will retry next tick`);
@@ -434,6 +439,21 @@ async function uploadVideo(credentials: XCredentials, bytes: Uint8Array, deadlin
     state = ((await readJson(status)) as { processing_info?: { state: string; check_after_secs?: number } }).processing_info;
   }
   if (state && state.state !== "succeeded") throw new Error(`X media stuck in ${state.state}`);
+  return mediaId;
+}
+
+// Stills are small enough for the single-request upload path, so this skips the INIT/APPEND/FINALIZE
+// chunk dance uploadVideo needs and has no processing_info to wait on — an image media_id is usable
+// the moment it is returned.
+export async function uploadImage(credentials: XCredentials, bytes: Uint8Array, contentType: string): Promise<string> {
+  const res = await uploadForm(
+    credentials,
+    { media_category: "tweet_image", media_type: contentType },
+    { name: "media", bytes },
+  );
+  if (!res.ok) throw new Error(`X image upload ${res.status}: ${await readText(res)}`);
+  const mediaId = ((await readJson(res)) as { media_id_string?: unknown }).media_id_string;
+  if (typeof mediaId !== "string" || !mediaId) throw new Error("X image upload: no media_id");
   return mediaId;
 }
 
@@ -714,18 +734,37 @@ export async function dispatchArtifacts(
       (window.hour === SCRIPTURE_WINDOWS[0] && await dayHasState(env.DB, window.date)) ? "state" : "scripture";
     const artifactId = `${kind}-${window.date}-${window.hour}`;
     const claimKey = `daily_dispatched_${window.date}_${window.hour}`;
-    const artifact: DispatchArtifact = { kind, artifactId, riteDate: window.date, text: "", filmDay: false };
+    const artifact: DispatchArtifact = { kind, artifactId, riteDate: window.date, text: "", filmDay: false, still: true };
     let stored = await getDispatch(env.DB, artifactId);
     if (!stored) {
       const composed = await composeDispatch(env, artifact, now);
       if (composed) {
         await storeDispatch(env, artifact, composed.dispatch, null, now);
+        // The visual prompt outlives this tick: compose can succeed on one tick and the send fail on
+        // the next, and re-composing to recover the prompt would risk a DIFFERENT line than the one
+        // already stored as scripture. Written after the transcript so the Codex is still first.
+        if (composed.videoPrompt) {
+          await env.DB.prepare(`INSERT INTO config (key, value) VALUES (?1, ?2) ON CONFLICT DO NOTHING`)
+            .bind(`still_prompt_${artifactId}`, composed.videoPrompt).run();
+        }
         stored = await getDispatch(env.DB, artifactId);
       }
     }
     if (stored && await claimDispatch(env.DB, claimKey, now)) {
       try {
-        const tweetId = await tweet(credentials, stored.text);
+        // The still is decoration on a line that already stands alone, so every failure here degrades
+        // to a text-only post rather than costing the window its voice: a capped budget, a vendor
+        // error, and a rejected upload all leave mediaId null and the dispatch goes out regardless.
+        let mediaId: string | undefined;
+        const promptRow = await env.DB.prepare(`SELECT value FROM config WHERE key = ?1`)
+          .bind(`still_prompt_${artifactId}`).first<{ value: string }>();
+        if (promptRow?.value && Date.now() < deadlineMs) {
+          try {
+            const still = await renderStill(env, promptRow.value);
+            if (still) mediaId = await uploadImage(credentials, still.bytes, still.contentType);
+          } catch { /* text-only: the post is never held hostage to a picture */ }
+        }
+        const tweetId = await tweet(credentials, stored.text, { mediaId });
         await env.DB.prepare(`UPDATE config SET value = ?2 WHERE key = ?1`)
           .bind(claimKey, `posted:${now}:${tweetId}`).run();
       } catch (e) {

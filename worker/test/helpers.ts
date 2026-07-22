@@ -21,6 +21,7 @@ import migration20 from "../migrations/0020_gesture.sql?raw";
 import migration21 from "../migrations/0021_apocrypha_spend.sql?raw";
 import migration22 from "../migrations/0022_dispatch_tweet_id.sql?raw";
 import migration23 from "../migrations/0023_replied_mentions.sql?raw";
+import migration24 from "../migrations/0024_image_spend.sql?raw";
 
 export async function applyMigrations(db: D1Database): Promise<void> {
   const statements = migration1.split(";").map(s => s.trim()).filter(Boolean);
@@ -151,6 +152,11 @@ export async function applyMigrations(db: D1Database): Promise<void> {
 
   // 0023 HERALD replied_mentions table.
   for (const stmt of migration23.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
+    await db.exec(stmt.replace(/\s+/g, " ").trim());
+  }
+
+  // 0024 rebuilds spend again to add the 'image' category; same handling as 0015 and 0021.
+  for (const stmt of migration24.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean)) {
     await db.exec(stmt.replace(/\s+/g, " ").trim());
   }
 }
