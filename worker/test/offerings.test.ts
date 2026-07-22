@@ -4,7 +4,7 @@ import { ed25519 } from "@noble/curves/ed25519";
 import { base58 } from "@scure/base";
 import { offeringMessage } from "../src/signature";
 import { offeringBySha } from "../src/db";
-import { IP_LIMIT } from "../src/ratelimit";
+import { IP_LIMIT, WINDOW_MS } from "../src/ratelimit";
 import { clampGesture, type GestureMeta } from "../src/offerings";
 import { applyMigrations } from "./helpers";
 
@@ -390,19 +390,26 @@ describe("offering intake", () => {
     expect(row?.gesture).toBeNull();
   });
 
-  it("rate-limits the route: the IP_LIMIT+1-th offering from one IP is 429", async () => {
+  it("rate-limits the route: an over-cap offering from one IP is 429", async () => {
     const ip = "203.0.113.7";
-    let last: Response | undefined;
-    for (let i = 0; i < IP_LIMIT + 1; i++) {
-      // Unique bytes per submission: the sha-dup 409 check runs BEFORE the rate limiter, so reusing
-      // one image would short-circuit every repeat submission at 409 and never reach checkRate.
-      const bytes = new Uint8Array([...PNG, 100, i]);
-      const form = new FormData();
-      form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
-      last = await SELF.fetch("http://x/api/offerings", {
-        method: "POST", headers: { "cf-connecting-ip": ip }, body: form,
-      });
+    // Fill the IP's budget for the current AND next fixed windows directly in D1. The old
+    // 21-sequential-uploads version was timing-flaky: on a slow runner the loop straddles a minute
+    // boundary, splitting the count so no single window ever exceeds the cap and the last submit
+    // lands 201 (seen in CI). Seeding both windows makes over-cap deterministic no matter which
+    // side of the boundary the submit lands on, while the route still runs its real limiter
+    // against real rows and performs the real over-cap increment.
+    const windowStart = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
+    for (const w of [windowStart, windowStart + WINDOW_MS]) {
+      await env.DB.prepare(
+        `INSERT INTO rate_limits (bucket, window_start, count) VALUES (?1, ?2, ?3)`
+      ).bind(`ip:${ip}`, w, IP_LIMIT).run();
     }
-    expect(last!.status).toBe(429); // the over-cap submit is rejected at the route, before any R2 write
+    const bytes = new Uint8Array([...PNG, 100, 0]);
+    const form = new FormData();
+    form.set("image", new Blob([bytes], { type: "image/png" }), "o.png");
+    const res = await SELF.fetch("http://x/api/offerings", {
+      method: "POST", headers: { "cf-connecting-ip": ip }, body: form,
+    });
+    expect(res.status).toBe(429); // the over-cap submit is rejected at the route, before any R2 write
   });
 });
