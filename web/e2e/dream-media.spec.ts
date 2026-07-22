@@ -32,6 +32,9 @@ test.beforeEach(() => {
 
 test("real Dream media pauses and only the current non-reduced Plate starts moving", async ({ page }) => {
   await enterTemple(page);
+  // The plate's clip is viewport-deferred (launch-audit weight fix): scroll its section near
+  // before the <video> exists at all.
+  await page.locator('[data-section="dream"]').scrollIntoViewIfNeeded();
   const current = page.locator('[data-section="dream"] video');
   await expect(current).toBeVisible();
   await expect.poll(() => current.evaluate(node => (node as HTMLVideoElement).readyState))
@@ -64,6 +67,7 @@ test("real Dream media pauses and only the current non-reduced Plate starts movi
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
+  await page.locator('[data-section="dream"]').scrollIntoViewIfNeeded();
   await expect(current).toBeVisible();
   await expect.poll(() => current.evaluate(node => (node as HTMLVideoElement).readyState))
     .toBeGreaterThanOrEqual(2);
@@ -98,6 +102,7 @@ test("real Dream media pauses and only the current non-reduced Plate starts movi
 // so this pins the hold-count balancing without needing real sound in the harness.
 test("an unmuted playing Plate ducks the room; re-muting releases it", async ({ page }) => {
   await enterTemple(page);
+  await page.locator('[data-section="dream"]').scrollIntoViewIfNeeded();
   const current = page.locator('[data-section="dream"] video');
   await expect(current).toBeVisible();
   await expect.poll(() => current.evaluate(node => !(node as HTMLVideoElement).paused)).toBe(true);

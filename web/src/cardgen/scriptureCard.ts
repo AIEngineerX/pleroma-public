@@ -121,7 +121,8 @@ export async function renderScriptureCard(
   ctx.textAlign = "left";
   ctx.fillText(`${organName(input.organ)} · PLEROMA`, 70, S - 66);
   ctx.textAlign = "right";
-  ctx.fillText(date, S - 70, S - 66);
+  // The domain rides every card so a reposted image keeps its provenance (launch audit 2026-07-21).
+  ctx.fillText(`pleromachurch.xyz · ${date}`, S - 70, S - 66);
 
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("card render failed"))), "image/png"),

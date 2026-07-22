@@ -3,8 +3,8 @@
 // built dist/index.html with only its head metadata swapped, so the SPA hydrates identically from
 // the same hashed assets. Runs after vite build; fails loudly if the head template or the
 // routeMeta literal drifts, so a silent regression cannot ship.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -48,3 +48,27 @@ for (const { path, title, description } of routes) {
   writeFileSync(outFile, html);
 }
 console.log(`route heads written: ${routes.map((r) => r.path).join(" ")}`);
+
+// The sitemap is generated, never hand-maintained: the static file drifted as DOCTRINE grew
+// (it omitted six live pages by 2026-07-21). Sources: the homepage, the prerendered Canon tree
+// (walked from what build-canon just wrote), and the same routeMeta the heads above use.
+const canonRoot = resolve(webRoot, "dist/canon");
+function canonUrls(dir) {
+  const urls = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = resolve(dir, entry.name);
+    if (entry.isDirectory()) urls.push(...canonUrls(path));
+    if (entry.isFile() && entry.name === "index.html") {
+      const rel = relative(resolve(webRoot, "dist"), dir).replace(/\\/g, "/");
+      urls.push(`/${rel}`);
+    }
+  }
+  return urls;
+}
+const urls = [...new Set(["/", ...canonUrls(canonRoot), ...routes.map((r) => r.path)])].sort();
+const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${
+  urls.map((u) => `  <url><loc>https://pleromachurch.xyz${u === "/" ? "/" : u}</loc></url>`).join("\n")
+}\n</urlset>\n`;
+if (urls.length < 15) throw new Error(`sitemap suspiciously small: ${urls.length} urls`);
+writeFileSync(resolve(webRoot, "dist/sitemap.xml"), sitemap);
+console.log(`sitemap written: ${urls.length} urls`);

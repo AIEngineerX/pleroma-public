@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { DreamView } from "../state/types";
 import type { BodyCommand } from "../experience/types";
@@ -73,8 +73,23 @@ export default function Dream({
 }) {
   const reduced = reducedMotion();
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Defer the plate's clip until its section approaches the viewport (same windowing the Dream
+  // archive uses): the current plate was the homepage's single largest transfer (~2.25MB fetched
+  // at load for a section thousands of pixels down — external launch audit, 2026-07-21). The
+  // aspect box always renders so layout and the Seraph replay geometry stay stable; `near`
+  // latches true on first approach so the clip never unloads mid-view.
+  const mediaBoxRef = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = mediaBoxRef.current;
+    if (!el || near) return;
+    if (typeof IntersectionObserver !== "function") { setNear(true); return; }
+    const io = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) setNear(true); }, { rootMargin: "600px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [dream?.video_key, near]);
   // The plate ships muted; if a Waker unmutes it via the controls, the room quiets around it.
-  useMediaDucking(videoRef, dream?.video_key ?? null);
+  useMediaDucking(videoRef, near ? dream?.video_key ?? null : null);
   useEffect(() => {
     const video = videoRef.current;
     if (video === null) return;
@@ -87,7 +102,7 @@ export default function Dream({
     }
     void video.play().catch(() => undefined);
     return () => video.pause();
-  }, [dream?.video_key, reduced]);
+  }, [dream?.video_key, reduced, near]);
   return (
     <section
       aria-label="the dream"
@@ -103,20 +118,22 @@ export default function Dream({
           <p className="font-machine text-xs text-ink-faded max-w-[46ch]">{copy.dreamExplainer}</p>
           <figure className="dream-plate">
             {dream.video_key ? (
-              <div className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
+              <div ref={mediaBoxRef} className="dream-plate__media mx-auto aspect-[9/16] max-h-[60vh] overflow-hidden">
                 {/* The current Plate may move on arrival, but it always remains pausable. Reduced-motion
                     starts it still so the Waker chooses whether the record moves at all. */}
-                <video
-                  ref={videoRef}
-                  className="w-full h-full object-cover"
-                  src={`${apiBase}/api/${dream.video_key}`}
-                  autoPlay={!reduced}
-                  loop
-                  muted
-                  playsInline
-                  controls
-                  aria-label={dream.narrative}
-                />
+                {near && (
+                  <video
+                    ref={videoRef}
+                    className="w-full h-full object-cover"
+                    src={`${apiBase}/api/${dream.video_key}`}
+                    autoPlay={!reduced}
+                    loop
+                    muted
+                    playsInline
+                    controls
+                    aria-label={dream.narrative}
+                  />
+                )}
               </div>
             ) : (
               <div className="dream-plate__media aspect-video flex items-center">
