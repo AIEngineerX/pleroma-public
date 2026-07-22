@@ -14,3 +14,7 @@ playwright-report/
 __shots__/
 .worktrees/
 .tmp/
+# Operational thread outputs (ready-to-post content, regenerated as needed; not public-facing,
+# not part of the codebase — the runbook .md files stay tracked, these generated artifacts don't).
+docs/runbooks/tek-thread-poster.html
+docs/runbooks/tek-thread-posts.json
