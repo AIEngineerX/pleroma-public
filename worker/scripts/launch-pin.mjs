@@ -108,20 +108,27 @@ try {
 } catch (e) {
   console.log(`observed:       cross-check unavailable (${redact(e)}) — derivation stands alone`);
 }
-// PULSE_POOLS suggestion: pre-graduation the curve alone is the pool — a high-frequency trader or
-// fee account can rank high in the counterparty tally, and appending a non-pool address would make
-// classifySwap misread its transfers as buys/sells. Only when the curve has stopped appearing at
-// the top (the graduated signature) is the dominant counterparty suggested, and then explicitly as
-// a candidate to verify (DexScreener's pair address for the new venue) before it ships.
-const graduated = observed.length > 0 && observed[0][0] !== curve.address;
-const pools = graduated ? [curve.address, observed[0][0]] : [curve.address];
-if (graduated) console.log(`NOTE:           top counterparty is NOT the curve — token likely graduated; VERIFY ${observed[0][0]} is the new pool (DexScreener pair address) before shipping PULSE_POOLS`);
+// The paste block below carries VERIFIED pools only (the derived curve). A counterparty-frequency
+// guess never enters it: a high-frequency trader can top the tally, and a non-pool address in
+// PULSE_POOLS makes classifySwap read that wallet's ordinary transfers as buys/sells — fabricated
+// vitals, which the project's integrity invariants forbid. A graduation candidate is only ever
+// flagged for the operator to verify (DexScreener's pair address for the new venue) and append by
+// hand. Same rule for the webhook watch list: watching a non-pool wallet would deliver its
+// unrelated transactions, pile up side=NULL rows, and falsely trip pulse_pool_mismatch.
+const pools = [curve.address];
+const candidate = observed.length > 0 && observed[0][0] !== curve.address ? observed[0][0] : null;
+if (candidate) console.log(`NOTE:           top counterparty is NOT the curve — token likely graduated. VERIFY ${candidate} against DexScreener's pair address for the new venue, then append it to PULSE_POOLS by hand; it is deliberately NOT in the paste block below.`);
 
 // --- 3. Helius webhook ---------------------------------------------------------------------------
 const watch = [mint, curve.address];
 if (register) {
-  const list = await (await fetch(`${HELIUS}/webhooks?api-key=${HELIUS_API_KEY}`)).json();
-  const existing = Array.isArray(list) ? list.find(w => w.webhookURL === PULSE_URL) : undefined;
+  const listRes = await fetch(`${HELIUS}/webhooks?api-key=${HELIUS_API_KEY}`);
+  // A 5xx here must fail loud, not fall through to the CREATE branch and register a duplicate
+  // webhook (double deliveries; deduped downstream by signature, but wasted credits forever).
+  if (!listRes.ok) fail(`webhook list failed: HTTP ${listRes.status} ${redact(await listRes.text())}`);
+  const list = await listRes.json();
+  if (!Array.isArray(list)) fail("webhook list: unexpected response shape");
+  const existing = list.find(w => w.webhookURL === PULSE_URL);
   if (existing) {
     const merged = [...new Set([...(existing.accountAddresses ?? []), ...watch])];
     const res = await fetch(`${HELIUS}/webhooks/${existing.webhookID}?api-key=${HELIUS_API_KEY}`, {
@@ -188,6 +195,7 @@ console.log(`
 Then: confirm /api/state.phase == "live" and vitals move on the first trades
 (web: npx playwright test ignition.live launch.checklist), post the Lore Thread, pin it.
 At graduation (pulse_pool_mismatch alert, or DexScreener shows a pumpswap pair):
-re-run this script — the top observed counterparty is the new pool; append it to
-PULSE_POOLS, redeploy, and re-run with --register to widen the webhook.
+re-run this script — it flags the new pool candidate. Verify it on DexScreener,
+append it to PULSE_POOLS, redeploy. The webhook needs no change: it watches the
+mint, so deliveries already flow from the new venue.
 ========================================================================================`);
